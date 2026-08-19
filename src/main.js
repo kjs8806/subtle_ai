@@ -1,5 +1,5 @@
 import './style.css'
-import { createSubscriptionRecord, parseReceipt } from './services/receiptPipeline.js'
+import { createPipelineRecords, monthlySpendFor } from './data/subscriptionModel.js'
 
 const APP_CONFIG = { name: 'Subtle AI', tagline: 'your AI subscription optimizer' }
 const subscriptions = [
@@ -16,11 +16,8 @@ const actions = [
   { id: 'price', priority: 'low', tone: 'plum', icon: '↗', label: 'Priority 03 · Price increase detected', title: 'Canva Pro', body: '$14.99 → $17.99/month. That change adds $36 to your yearly spend.', saving: '+$36/yr', primary: 'View details', secondary: 'Dismiss' },
 ]
 const money = (value) => `$${value.toFixed(2)}`
-const monthlySpend = subscriptions.reduce((sum, item) => sum + (item.cadence === 'yearly' ? item.cost / 12 : item.cost), 0)
-const pipelineRecords = subscriptions.map((item) => {
-  const evidence = parseReceipt({ id: `demo-${item.id}`, subject: `${item.name} ${item.plan} receipt`, sender: `${item.name.toLowerCase()}@receipts.example`, receivedAt: item.confirmed, body: `${item.name} subscription payment ${money(item.cost)} ${item.cadence}` })
-  return createSubscriptionRecord(evidence, { id: String(item.id), plan: item.plan, currentPrice: item.cost, billingCycle: item.cadence, nextRenewal: item.next, category: item.category })
-})
+const monthlySpend = monthlySpendFor(subscriptions)
+const pipelineRecords = createPipelineRecords(subscriptions)
 subscriptions.forEach((item, index) => { item.pipelineRecord = pipelineRecords[index] })
 const brand = () => `<a class="brand" href="#overview" aria-label="${APP_CONFIG.name} home"><span class="brand-mark" aria-hidden="true"><span class="brand-glyph">${APP_CONFIG.name.charAt(0).toLowerCase()}</span></span><span>${APP_CONFIG.name}</span></a>`
 

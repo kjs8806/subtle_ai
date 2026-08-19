@@ -8,6 +8,10 @@ const MERCHANT_RULES = [
   { pattern: /nordvpn/i, canonicalService: 'NordVPN', category: 'Security' },
 ]
 
+const OVERLAP_PAIRS = new Set([
+  ['Dropbox', 'Google One'].sort().join('|'),
+])
+
 const RECEIPT_TERMS = /receipt|renewal|renewed|membership|invoice|subscription|trial|payment/i
 const CURRENCY_PATTERN = /(?:USD|US\$|\$)\s?([0-9]+(?:\.[0-9]{2})?)/i
 const CADENCE_PATTERN = /(monthly|per month|\/month|annual|yearly|per year|\/year)/i
@@ -20,6 +24,41 @@ const confidenceFor = ({ merchant, amount, cadence, nextRenewal }) => {
   return { score: 0.42, state: 'inferred' }
 }
 
+export const createEvidence = (data) => ({
+  id: data.id,
+  type: data.type,
+  sourceId: data.sourceId,
+  sourceLabel: data.sourceLabel,
+  rawMerchant: data.rawMerchant,
+  canonicalService: data.canonicalService,
+  amount: data.amount,
+  cadence: data.cadence,
+  nextRenewal: data.nextRenewal,
+  receivedAt: data.receivedAt,
+  confidence: data.confidence,
+  excerpt: data.excerpt,
+})
+
+export const createPriceObservation = ({ amount, observedAt }) => ({ amount, observedAt })
+
+export const createBillingEvent = ({ amount, billedAt }) => ({ amount, billedAt })
+
+export const createRecommendationEvidence = (evidenceIds = []) => evidenceIds.map((evidenceId) => ({ evidenceId }))
+
+export const createRecommendation = (data) => ({
+  ...data,
+  evidenceIds: data.evidenceIds || [],
+  evidence: createRecommendationEvidence(data.evidenceIds),
+})
+
+export const createSubscription = (data) => ({
+  ...data,
+  evidence: data.evidence || [],
+  priceHistory: data.priceHistory || [],
+  billingHistory: data.billingHistory || [],
+  recommendations: data.recommendations || [],
+})
+
 export const normalizeMerchant = (rawMerchant = '') => {
   const rule = MERCHANT_RULES.find(({ pattern }) => pattern.test(rawMerchant))
   return rule || { canonicalService: rawMerchant.trim() || 'Unknown service', category: 'Other' }
@@ -31,13 +70,14 @@ export const parseReceipt = ({ id, subject = '', sender = '', receivedAt, body =
 
   const merchantMatch = MERCHANT_RULES.find(({ pattern }) => pattern.test(rawText))
   const merchant = merchantMatch?.canonicalService || sender.split('@')[0] || 'Unknown service'
-  const amount = Number(rawText.match(CURRENCY_PATTERN)?.[1] || 0)
+  const amountMatch = rawText.match(CURRENCY_PATTERN)
+  const amount = amountMatch ? Number(amountMatch[1]) : null
   const cadenceMatch = rawText.match(CADENCE_PATTERN)?.[1]?.toLowerCase()
   const cadence = cadenceMatch?.includes('year') || cadenceMatch === 'annual' ? 'yearly' : cadenceMatch ? 'monthly' : null
   const nextRenewal = rawText.match(DATE_PATTERN)?.[1] || null
   const confidence = confidenceFor({ merchant: merchantMatch, amount, cadence, nextRenewal })
 
-  return {
+  return createEvidence({
     id: `evidence-${id}`,
     type: 'gmail_receipt',
     sourceId: id,
@@ -50,13 +90,13 @@ export const parseReceipt = ({ id, subject = '', sender = '', receivedAt, body =
     receivedAt: receivedAt || null,
     confidence,
     excerpt: subject,
-  }
+  })
 }
 
 export const createSubscriptionRecord = (evidence, overrides = {}) => {
   if (!evidence) return null
   const normalized = normalizeMerchant(evidence.canonicalService || evidence.rawMerchant)
-  return {
+  return createSubscription({
     id: overrides.id || evidence.canonicalService.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
     canonicalService: normalized.canonicalService,
     rawMerchant: evidence.rawMerchant,
@@ -68,11 +108,11 @@ export const createSubscriptionRecord = (evidence, overrides = {}) => {
     confidence: overrides.confidence || evidence.confidence,
     source: evidence.sourceLabel,
     evidence: [evidence],
-    priceHistory: overrides.priceHistory || [{ amount: evidence.amount, observedAt: evidence.receivedAt }],
-    billingHistory: overrides.billingHistory || [{ amount: evidence.amount, billedAt: evidence.receivedAt }],
+    priceHistory: overrides.priceHistory || [createPriceObservation({ amount: evidence.amount, observedAt: evidence.receivedAt })],
+    billingHistory: overrides.billingHistory || [createBillingEvent({ amount: evidence.amount, billedAt: evidence.receivedAt })],
     recommendations: overrides.recommendations || [],
     category: overrides.category || normalized.category,
-  }
+  })
 }
 
 export const detectPriceChange = (priceHistory = []) => {
@@ -86,9 +126,12 @@ export const detectPriceChange = (priceHistory = []) => {
 export const buildRecommendations = (record, relatedRecords = []) => {
   const recommendations = []
   const priceChange = detectPriceChange(record.priceHistory)
-  if (priceChange) recommendations.push({ type: 'price_increase', priority: 'medium', ...priceChange, evidenceIds: record.evidence.map(({ id }) => id) })
-  const overlap = relatedRecords.find((related) => related.category === record.category && related.id !== record.id)
-  if (overlap) recommendations.push({ type: 'possible_overlap', priority: 'high', relatedSubscriptionId: overlap.id, reason: `Both ${record.canonicalService} and ${overlap.canonicalService} provide ${record.category.toLowerCase()} services.`, evidenceIds: [...record.evidence, ...overlap.evidence].map(({ id }) => id) })
+  if (priceChange) recommendations.push(createRecommendation({ type: 'price_increase', priority: 'medium', ...priceChange, evidenceIds: record.evidence.map(({ id }) => id) }))
+  const overlap = relatedRecords.find((related) => {
+    const pair = [record.canonicalService, related.canonicalService].sort().join('|')
+    return related.id !== record.id && OVERLAP_PAIRS.has(pair)
+  })
+  if (overlap) recommendations.push(createRecommendation({ type: 'possible_overlap', priority: 'high', relatedSubscriptionId: overlap.id, reason: `Both ${record.canonicalService} and ${overlap.canonicalService} provide ${record.category.toLowerCase()} services.`, evidenceIds: [...record.evidence, ...overlap.evidence].map(({ id }) => id) }))
   return recommendations
 }
 
