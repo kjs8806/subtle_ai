@@ -1,0 +1,7 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "flutter": true,
+        "dart": true,
+        "npx create-vite@latest": true
+    }
+}
