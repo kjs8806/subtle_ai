@@ -10,7 +10,8 @@ Subtle AI is a Vite-powered JavaScript web application and installable PWA. `ind
 
 ## Modules
 
-- `src/main.js` renders the prototype dashboard, owns demo UI state, and wires browser events.
+- `src/main.js` bootstraps the prototype dashboard, owns derived UI state, and wires browser events.
+- `src/data/demoSubscriptions.js` contains static presentation fixtures for demo subscriptions and the savings action feed. These are not the normalized production subscription-domain entities.
 - `src/data/subscriptionModel.js` calculates demo recurring spend and adapts demo records into pipeline records.
 - `src/services/receiptPipeline.js` parses receipt-like text and creates plain-object evidence, subscription, billing, price-observation, and recommendation entities.
 - `src/style.css` contains the application presentation styles.

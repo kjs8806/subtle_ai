@@ -14,7 +14,18 @@ import {
   normalizeMerchant,
   parseReceipt,
 } from '../src/services/receiptPipeline.js'
-import { monthlySpendFor } from '../src/data/subscriptionModel.js'
+import { createPipelineRecords, monthlySpendFor } from '../src/data/subscriptionModel.js'
+import { demoSubscriptions, savingsActions } from '../src/data/demoSubscriptions.js'
+
+test('adapts all demo subscriptions through the subscription model', () => {
+  const monthlySpend = monthlySpendFor(demoSubscriptions)
+  const pipelineRecords = createPipelineRecords(demoSubscriptions)
+
+  assert.equal(typeof monthlySpend, 'number')
+  assert.equal(pipelineRecords.length, demoSubscriptions.length)
+  assert.equal(pipelineRecords.filter(Boolean).length, demoSubscriptions.length)
+  assert.equal(savingsActions.length > 0, true)
+})
 
 test('creates explicit domain entities as plain objects', () => {
   const evidence = createEvidence({ id: 'evidence-1', type: 'gmail_receipt', confidence: { score: 0.9, state: 'confirmed' } })
