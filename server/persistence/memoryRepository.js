@@ -1,0 +1,68 @@
+import { randomUUID } from 'node:crypto'
+
+const clone = (value) => structuredClone(value)
+
+export const createMemoryRepository = () => {
+  const users = new Map([['mock-user', { id: 'mock-user', email: 'demo@example.com', name: 'Demo User' }]])
+  const connections = new Map()
+  const subscriptions = new Map()
+  const evidence = new Map()
+  const billingEvents = new Set()
+  const scans = new Map()
+
+  return {
+    getUser: (id) => clone(users.get(id) || null),
+    getConnection: (userId) => clone(connections.get(userId) || { status: 'not_connected', scanStatus: 'idle' }),
+    authorizeConnection: (userId) => {
+      const connection = { id: connections.get(userId)?.id || randomUUID(), userId, provider: 'gmail', status: 'connected', scanStatus: 'idle', lastScanAt: null }
+      connections.set(userId, connection)
+      return clone(connection)
+    },
+    disconnectConnection: (userId) => {
+      const connection = connections.get(userId)
+      if (!connection) return clone({ status: 'not_connected', scanStatus: 'idle' })
+      connection.status = 'not_connected'
+      connection.scanStatus = 'idle'
+      connections.set(userId, connection)
+      return clone(connection)
+    },
+    beginScan: (userId) => {
+      const connection = connections.get(userId)
+      if (!connection || connection.status !== 'connected') return null
+      const scan = { id: randomUUID(), userId, status: 'scanning', startedAt: new Date().toISOString(), completedAt: null, found: 0 }
+      scans.set(scan.id, scan)
+      connection.scanStatus = 'scanning'
+      connections.set(userId, connection)
+      return clone(scan)
+    },
+    completeScan: (userId, scanId, found, status = 'complete') => {
+      const scan = scans.get(scanId)
+      const connection = connections.get(userId)
+      if (!scan || !connection) return null
+      scan.status = status
+      scan.found = found
+      scan.completedAt = new Date().toISOString()
+      connection.scanStatus = status === 'failed' ? 'error' : 'idle'
+      connection.lastScanAt = scan.completedAt
+      scans.set(scanId, scan)
+      connections.set(userId, connection)
+      return clone(scan)
+    },
+    getScan: (id) => clone(scans.get(id) || null),
+    upsertMessage: (connectionId, providerMessageId) => `${connectionId}:${providerMessageId}`,
+    persistParsedEvidence: (userId, parsed) => {
+      const existing = [...evidence.values()].find((item) => item.userId === userId && item.sourceId === parsed.sourceId)
+      if (existing) return { subscription: clone(subscriptions.get(existing.subscriptionId)), evidence: clone(existing), created: false }
+      const evidenceId = randomUUID()
+      const subscriptionId = randomUUID()
+      const record = { ...parsed, id: evidenceId, userId, subscriptionId, provenance: { canonicalService: 'confirmed', amount: parsed.amount === null ? 'inferred' : 'confirmed', cadence: parsed.cadence ? 'confirmed' : 'inferred' } }
+      const subscription = { id: subscriptionId, userId, canonicalService: parsed.canonicalService, rawMerchant: parsed.rawMerchant, plan: 'Unknown plan', currentPrice: parsed.amount, billingCycle: parsed.cadence || 'unknown', nextRenewal: parsed.nextRenewal, status: 'active', source: 'Gmail receipt', evidence: [record], priceHistory: [{ amount: parsed.amount, observedAt: parsed.receivedAt }], billingHistory: [{ amount: parsed.amount, billedAt: parsed.receivedAt }], fieldObservations: Object.entries(record.provenance).map(([field, provenance]) => ({ field, value: record[field] ?? null, provenance, confidence: parsed.confidence.score, evidenceId })) }
+      evidence.set(evidenceId, record)
+      subscriptions.set(subscriptionId, subscription)
+      billingEvents.add(`${subscriptionId}:${evidenceId}`)
+      return { subscription: clone(subscription), evidence: clone(record), created: true }
+    },
+    listSubscriptions: (userId) => clone([...subscriptions.values()].filter((item) => item.userId === userId)),
+    getSubscription: (userId, id) => clone([...subscriptions.values()].find((item) => item.userId === userId && item.id === id) || null),
+  }
+}

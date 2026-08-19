@@ -1,47 +1,82 @@
 # Technical Decisions
 
-This register records production architecture decisions that are still open. No production integration should be added until the relevant decision has an owner and approval.
+This register records production architecture decisions and remaining release gates. FEATURE-001's technical decisions were approved by the project owner on 2026-08-19.
 
-## Open Decisions
+## FEATURE-001 Approved Decisions
+
+These decisions authorize implementation of the FEATURE-001 vertical slice within the stated scope. They do not authorize AI recommendations, continuous synchronization, notifications, multiple Gmail accounts, or unrelated production integrations.
+
+### Identity And Authorization
+
+- Use Google OIDC identity for FEATURE-001.
+- Keep authentication and Gmail authorization as separate flows.
+- Request only `openid`, `email`, and `profile` during sign-in; Gmail authorization is not part of sign-in.
+- Use an opaque server session sent only through an `HttpOnly`, `Secure`, `SameSite=Lax` cookie.
+- Store only a hash of the session token server-side.
+
+### Backend And Persistence
+
+- Use Node.js with Fastify for the future backend.
+- Expose a same-origin `/api/v1` JSON API.
+- Use PostgreSQL for account-scoped persistence.
+- Assign stable persisted subscription IDs at the persistence/resolution boundary, not from Gmail message IDs or canonical merchant names alone.
+- Keep persistence adapters outside `src/services/receiptPipeline.js`.
+
+### Gmail And Scanning
+
+- Request only `https://www.googleapis.com/auth/gmail.readonly` for Gmail access.
+- Store Gmail refresh tokens only on the server and encrypt them at rest.
+- Do not add continuous or background synchronization to FEATURE-001.
+- Make scans explicit user-triggered operations.
+
+### Deferred And Release-Gated Work
+
+- AI extraction and recommendations are deferred.
+- Notifications are deferred.
+- A full public retention, export, and deletion policy remains a public-release gate.
+
+## Remaining Broader Release Decisions
+
+The following questions remain open outside the approved FEATURE-001 implementation scope.
 
 ### Authentication And User Accounts
 
-- **Status:** Open
+- **Status:** Open beyond FEATURE-001
 - **Question:** How will users authenticate, and how will account ownership and deletion be represented?
 - **Owner:** Tech Lead with Founder approval
 - **Constraint:** User data must be isolated by account before Gmail evidence or persistence is introduced.
 
 ### Backend And API
 
-- **Status:** Open
+- **Status:** Open beyond FEATURE-001
 - **Question:** What server runtime and API boundary will own authenticated operations, provider callbacks, recommendation generation, and synchronization jobs?
 - **Owner:** Tech Lead
 - **Constraint:** Browser code must not receive long-lived provider credentials or AI secrets.
 
 ### Persistent Database
 
-- **Status:** Open
+- **Status:** Open beyond FEATURE-001
 - **Question:** Which database and schema will store users, data-source connections, evidence, subscriptions, billing events, price observations, recommendations, and audit metadata?
 - **Owner:** Tech Lead
 - **Constraint:** Recommendation evidence links must remain durable and queryable.
 
 ### Gmail Integration
 
-- **Status:** Open
+- **Status:** Open beyond FEATURE-001
 - **Question:** What Gmail permission scope, OAuth flow, token storage, sync cadence, revocation flow, and retention policy will be used?
 - **Owner:** Tech Lead with Founder approval
 - **Constraint:** Request the minimum permission scope and keep refresh tokens server-side.
 
 ### AI Extraction And Recommendations
 
-- **Status:** Open
+- **Status:** Deferred beyond FEATURE-001
 - **Question:** Which extraction and recommendation responsibilities, if any, should use AI, and how will outputs be validated against receipt evidence?
 - **Owner:** Tech Lead with Product Owner approval
 - **Constraint:** AI output cannot become an unsupported financial claim; every recommendation must retain evidence and confidence metadata.
 
 ### Background Synchronization
 
-- **Status:** Open
+- **Status:** Deferred beyond FEATURE-001
 - **Question:** Where will scheduled Gmail synchronization run, how will retries and idempotency work, and how will partial failures be surfaced?
 - **Owner:** Tech Lead
 - **Constraint:** Sync jobs must be idempotent and observable before production use.
@@ -55,4 +90,4 @@ This register records production architecture decisions that are still open. No 
 
 ## Decision Rule
 
-Until these decisions are approved, keep the application local and deterministic. Do not add Gmail OAuth, a backend, a database, AI providers, push notifications, or background jobs to the current prototype.
+For FEATURE-001, implementation may proceed using the approved decisions above. Keep AI providers, notifications, continuous/background synchronization, and other out-of-scope integrations deferred. Do not expand beyond FEATURE-001 without a new approved decision.
