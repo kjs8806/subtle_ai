@@ -6,7 +6,7 @@
 
 ## Lifecycle
 
-**Proposed → Product Defined → Design Ready → Technical Ready → Implementing → Review → Changes Required / Approved → QA Approved → Released → Measured**
+**Proposed → Product Defined → Design Ready → Technical Ready → Implementing → Review → Changes Required / Approved → QA Approved → Done → Released → Measured**
 
 Release is distinct from code complete. A feature can move backward when new evidence invalidates an earlier gate.
 
@@ -32,8 +32,9 @@ The Coordinator is not another decision authority. Each specialist records durab
 6. **Review:** CI and Codex self-checks run; Tech Lead performs technical review; Designer and Product Owner review affected areas.
 7. **Changes Required / Approved:** findings are assigned to the actual owner and resolved or explicitly dispositioned.
 8. **QA Approved:** independent QA maps criteria and regressions to evidence on the exact commit.
-9. **Released:** approved environment deployment and recovery checks complete.
-10. **Measured:** outcome is reviewed when metrics exist.
+9. **Done:** all applicable implementation, review, documentation, CI, traceability, and approval gates in the Definition of Done are complete. Done means code-complete and approved; it does not mean deployed.
+10. **Released:** an authorized owner deploys the approved commit or artifact, records the environment and recovery checkpoint, and completes release smoke checks.
+11. **Measured:** outcome is reviewed when metrics exist.
 
 See [Definition of Ready](DEFINITION_OF_READY.md) and [Definition of Done](DEFINITION_OF_DONE.md).
 

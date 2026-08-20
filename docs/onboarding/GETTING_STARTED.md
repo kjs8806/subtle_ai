@@ -26,7 +26,7 @@ npm ci
 npm run dev
 ```
 
-The local command starts Fastify (normally port 8787) and Vite (normally port 5173). Use the URLs emitted by the processes because an occupied port may change the client URL.
+The local Fastify API binds to `127.0.0.1:8787`. Vite normally uses port 5173, but may select another client port when occupied; use its emitted URL. The configured client/API relationship does not automatically follow an arbitrary API port change, so do not change port 8787 without an approved configuration update.
 
 ## Validate the checkout
 
@@ -51,17 +51,22 @@ npm run test:server
 
 ## Reading order
 
-1. [Product](../product/PRODUCT.md) and [roadmap](../product/ROADMAP.md)
+1. [Product](../product/PRODUCT.md), [roadmap](../product/ROADMAP.md), and [product decisions](../product/PRODUCT_DECISIONS.md)
 2. [Active FEATURE-001 specification](../product/features/FEATURE-001.md)
 3. [Architecture](../engineering/ARCHITECTURE.md) and [technical decisions](../engineering/TECH_DECISIONS.md)
-4. [UX principles](../design/UX_PRINCIPLES.md) and [design system](../design/DESIGN_SYSTEM.md)
+4. [UX principles](../design/UX_PRINCIPLES.md), [design system](../design/DESIGN_SYSTEM.md), and [design decisions](../design/DESIGN_DECISIONS.md)
 5. [Delivery process](../process/DELIVERY_PROCESS.md), [Ready](../process/DEFINITION_OF_READY.md), and [Done](../process/DEFINITION_OF_DONE.md)
 6. [Test strategy](../quality/TEST_STRATEGY.md) and [contribution guide](../../CONTRIBUTING.md)
+7. [Development](../engineering/DEVELOPMENT.md), [engineering tests](../engineering/TESTING.md), [security](../engineering/SECURITY.md), [deployment](../engineering/DEPLOYMENT.md), and [migrations](../engineering/MIGRATIONS.md)
+8. [AI usage policy](../ai/AI_USAGE_POLICY.md) and the role contract assigned by the Coordinator in [roles](../ai/roles/)
+9. [Onboarding simulation](../quality/ONBOARDING_SIMULATION.md)
+
+The tracked onboarding simulation is [GitHub Issue #8](https://github.com/kjs8806/subscription_app/issues/8). It is currently **Blocked**, not Ready or eligible for implementation, until its issue record supplies the required draft PR exact commit, CI evidence, and canonical links. Always inspect the live issue status before acting.
 
 ## First contribution
 
-1. Select a small, Ready issue from the project tracker.
-2. Inspect one completed issue → specification → PR → CI → QA chain.
+1. Ask the Coordinator to designate and link an actual small issue whose live lifecycle status satisfies Ready. [Issue #8](https://github.com/kjs8806/subscription_app/issues/8) tracks the simulation itself and is currently Blocked; it is not an eligible onboarding implementation task.
+2. Inspect a Coordinator-linked completed or supervised issue → specification → PR → CI → QA chain. Onboarding verification remains blocked until a real example is supplied.
 3. Create a short-lived branch and follow the linked approved plan.
 4. Open a PR using the repository template; do not push directly to `main`.
 5. Ask the relevant role owner to review the first contribution.

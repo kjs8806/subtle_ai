@@ -8,7 +8,14 @@ Subtle AI is **your AI subscription optimizer**: a responsive Vite/JavaScript PW
 - [Product and current milestone](docs/product/PRODUCT.md)
 - [Roadmap](docs/product/ROADMAP.md)
 - [Architecture](docs/engineering/ARCHITECTURE.md)
+- [Technical decisions](docs/engineering/TECH_DECISIONS.md)
+- [Development and engineering tests](docs/engineering/DEVELOPMENT.md)
+- [Security and deployment](docs/engineering/SECURITY.md)
+- [Migrations and ADRs](docs/engineering/MIGRATIONS.md)
 - [Delivery process](docs/process/DELIVERY_PROCESS.md)
+- [Definition of Ready](docs/process/DEFINITION_OF_READY.md) and [Definition of Done](docs/process/DEFINITION_OF_DONE.md)
+- [AI usage policy](docs/ai/AI_USAGE_POLICY.md) and [role contracts](docs/ai/roles/)
+- [Onboarding simulation](docs/quality/ONBOARDING_SIMULATION.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## Local development

@@ -22,7 +22,7 @@ A feature is Ready for Development only when every applicable owner has supplied
 
 - Owning modules, architecture, APIs/data, security/privacy, migrations/recovery, tests, dependencies, and implementation sequence are defined.
 - Required ADRs/decision-register entries are approved.
-- No unresolved P0 technical or security blocker remains.
+- No unresolved Critical or High issue, defect, or risk blocks implementation under the severity policy in [TEST_STRATEGY.md](../quality/TEST_STRATEGY.md).
 - Codex instructions identify boundaries, validation, and prohibited scope.
 
 ## QA gate

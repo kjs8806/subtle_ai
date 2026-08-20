@@ -6,6 +6,7 @@
 - **Approvers:**
 - **Related issue/feature:**
 - **Supersedes / superseded by:**
+- **Applicability:** Current implementation / future target / both
 
 ## Context
 
@@ -34,3 +35,11 @@ Describe compatibility, rollout, rollback or recovery, and data protection.
 ## Validation
 
 List tests, evidence, monitoring, and review needed to confirm the decision.
+
+## Testing and operations
+
+Describe CI, integration/end-to-end/security testing, deployment, observability, incident, ownership, and ongoing maintenance impact.
+
+## Deferred questions
+
+List unresolved questions, their owners, blocking status, and the decision/event that must resolve them.

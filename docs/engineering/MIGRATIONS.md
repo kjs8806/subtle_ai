@@ -18,6 +18,10 @@
 8. Require a verified backup/restore path before production schema changes.
 9. Test migrations against a disposable PostgreSQL environment before activation, including empty, representative, rerun/idempotency where applicable, and failure cases.
 10. QA records exact migration version, database version, environment, results, defects, and recovery evidence.
+11. Backfills are bounded, resumable, idempotent where feasible, observable, and safe to stop/restart; record progress and failure handling without sensitive data.
+12. Assess lock duration, table size, runtime, resource use, and application availability. Use timeouts, batching, or an online approach when needed.
+13. Separate destructive column/table removal from the compatibility release that stops using it; removal occurs only after verification and an approved recovery checkpoint.
+14. State the minimum/maximum compatible application versions and verify backup freshness and restore usability before execution.
 
 ## Activation gate
 

@@ -16,6 +16,10 @@ Architecture, data model, APIs, security, privacy implementation, technical feas
 - Does not treat target architecture as current implementation.
 - Escalates material cost, security risk, product impact, or delivery tradeoffs to the Founder through the Coordinator.
 
+## Does not own
+
+Implementation execution, product acceptance, UX acceptance, independent QA, repository merge, deployment, or release approval. The Tech Lead reviews Codex output but does not replace those gates.
+
 ## Required outputs
 
 - Technical plan with affected modules, risks, dependencies, data/security/migration impacts, sequence, and validation.

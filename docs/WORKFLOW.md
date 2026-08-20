@@ -9,7 +9,7 @@ This file is retained for compatibility with existing links. It does not define 
 
 The canonical lifecycle is:
 
-**Proposed → Product Defined → Design Ready → Technical Ready → Implementing → Review → Changes Required / Approved → QA Approved → Released → Measured**
+**Proposed → Product Defined → Design Ready → Technical Ready → Implementing → Review → Changes Required / Approved → QA Approved → Done → Released → Measured**
 
 Use these authoritative records:
 
