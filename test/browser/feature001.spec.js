@@ -51,7 +51,8 @@ test('disclosure can be cancelled with Not now', async ({ page }) => {
   await page.getByRole('button', { name: 'Connect Gmail' }).click()
   await expect(page.getByRole('dialog', { name: 'Connect Gmail' })).toBeVisible()
   await page.getByRole('button', { name: 'Not now' }).click()
-  await expect(page.getByText('Authorization cancelled')).toBeVisible()
+  await expect(page.locator('[data-source="gmail"] .connected')).toHaveText('Authorization cancelled')
+  await expect(page.getByRole('status')).toContainText('Authorization cancelled')
 })
 
 test('successful authorization scans and creates a discovered row', async ({ page }) => {
