@@ -34,15 +34,20 @@ const mockApi = async (page, scenario = 'success') => {
   })
 }
 
-const connect = async (page) => {
+const openApp = async (page) => {
   await page.goto('/')
+  await expect(page.getByRole('button', { name: 'Connect Gmail' })).toBeVisible()
+}
+
+const connect = async (page) => {
+  await openApp(page)
   await page.getByRole('button', { name: 'Connect Gmail' }).click()
   await page.getByRole('button', { name: /Continue to Gmail/ }).click()
 }
 
 test('disclosure can be cancelled with Not now', async ({ page }) => {
   await mockApi(page)
-  await page.goto('/')
+  await openApp(page)
   await page.getByRole('button', { name: 'Connect Gmail' }).click()
   await expect(page.getByRole('dialog', { name: 'Connect Gmail' })).toBeVisible()
   await page.getByRole('button', { name: 'Not now' }).click()
@@ -94,7 +99,7 @@ test('disconnect prevents scanning in the UI', async ({ page }) => {
 })
 
 test('seeded subscription detail and manual entry still work', async ({ page }) => {
-  await mockApi(page); await page.goto('/')
+  await mockApi(page); await openApp(page)
   await page.locator('[data-subscription-id="1"]').click()
   await expect(page.getByRole('dialog')).toContainText('Netflix')
   await page.keyboard.press('Escape')
@@ -111,7 +116,7 @@ test('switching subscriptions clears stale detail history', async ({ page }) => 
 })
 
 test('unknown values are not fabricated or added to spend', async ({ page }) => {
-  await mockApi(page, 'unknown'); await page.goto('/')
+  await mockApi(page, 'unknown'); await openApp(page)
   const before = await page.locator('[data-spend]').innerText()
   await page.getByRole('button', { name: 'Connect Gmail' }).click(); await page.getByRole('button', { name: /Continue/ }).click()
   await expect(page.locator('[data-remote-id="remote-unknown"]')).toContainText('Not included')
@@ -119,7 +124,7 @@ test('unknown values are not fabricated or added to spend', async ({ page }) => 
 })
 
 test('dialog traps focus, supports Escape, restores focus and announces state', async ({ page }) => {
-  await mockApi(page); await page.goto('/')
+  await mockApi(page); await openApp(page)
   const trigger = page.getByRole('button', { name: 'Connect Gmail' }); await trigger.focus(); await trigger.click()
   await expect(page.getByRole('button', { name: 'Close Gmail connection dialog' })).toBeFocused()
   await expect(page.locator('.app-shell')).toHaveAttribute('inert', '')
@@ -128,7 +133,7 @@ test('dialog traps focus, supports Escape, restores focus and announces state', 
 })
 
 test('visible brand and document title use the centralized app name', async ({ page }) => {
-  await mockApi(page); await page.goto('/')
+  await mockApi(page); await openApp(page)
   await expect(page).toHaveTitle('Subtle AI — your AI subscription optimizer')
   await expect(page.locator('.brand').first()).toContainText('Subtle AI')
 })

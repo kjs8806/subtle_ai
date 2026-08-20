@@ -41,10 +41,12 @@ const createDialog = ({ appName, onContinue, onCancel }) => {
 }
 
 export const initGmailDiscovery = ({ appName, onSubscriptions, onReview }) => {
-  const source = document.querySelector('.sources-card .source-row:first-of-type')
+  const source = document.querySelector('[data-source="gmail"]')
+  const primary = document.querySelector('.sources-card .connect-button')
+  if (!source || !primary) throw new Error('Gmail discovery initialization failed: required Gmail source controls are missing')
   const message = source.querySelector('div span')
   const status = source.querySelector('.connected')
-  const primary = document.querySelector('.sources-card .connect-button')
+  if (!message || !status) throw new Error('Gmail discovery initialization failed: required Gmail source status elements are missing')
   const controls = document.createElement('div')
   controls.className = 'gmail-controls'
   const disconnect = document.createElement('button')
