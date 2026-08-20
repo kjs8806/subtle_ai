@@ -6,7 +6,7 @@
 - Design: **DESIGN READY**
 - Lifecycle: **IMPLEMENTING**
 - Priority: **P0 — Active milestone**
-- Next owner: **Codex / implementation**
+- Next owner: **Codex / implementation under the approved Tech Lead plan**
 - Founder decision required now: **None**
 
 ## Objective
@@ -164,7 +164,7 @@ Document reusable source states, external-authorization disclosure, non-blocking
 
 ## Technical status and implementation boundary
 
-The FEATURE-001 technical decisions are approved in `docs/engineering/TECH_DECISIONS.md`. The current partial implementation includes the mock Fastify `/api/v1` boundary, mock Gmail authorization and scanning, in-memory account-scoped persistence and idempotency, provenance fields, a PostgreSQL migration schema, frontend source/scanning/discovery states, service-worker API cache exclusion, and automated domain/API coverage.
+The canonical approved technical-plan and target-architecture artifact for FEATURE-001 is `docs/engineering/ARCHITECTURE.md`, and the canonical approved technical decision artifact is `docs/engineering/TECH_DECISIONS.md`. These remain authoritative unless a more specific approved technical-plan document is added and linked here. The current partial implementation includes the mock Fastify `/api/v1` boundary, mock Gmail authorization and scanning, in-memory account-scoped persistence and idempotency, provenance fields, a PostgreSQL migration schema, frontend source/scanning/discovery states, service-worker API cache exclusion, and automated domain/API coverage.
 
 This remains a mock vertical slice, not a production Gmail integration. Real Google OIDC and Gmail OAuth, secure server-side token encryption and rotation, the PostgreSQL runtime adapter and deployment, production secret management, and real-provider integration/end-to-end validation remain incomplete. Public data-lifecycle behavior also remains release-gated.
 
@@ -182,4 +182,4 @@ Never place refresh tokens, provider credentials, AI keys, or long-lived secrets
 
 ## Implementation handoff
 
-Codex is the next owner. Continue the approved implementation plan from the existing mock slice, using the decision register and architecture documents as constraints. Keep real Gmail and PostgreSQL production work clearly separated from mock behavior, add tests for each completed increment, and do not claim the feature is production-ready until the remaining provider, persistence, security, and end-to-end work is implemented and independently validated.
+Codex is the implementation owner under the approved Tech Lead plan. Continue from the existing mock slice using the decision register, architecture documents, and Tech Lead instructions as constraints. Record implementation-level self-checks and return any architectural deviation to the Tech Lead before proceeding. After implementation, the Tech Lead performs technical review, CI must pass, and independent QA validates the acceptance criteria and regressions. Security-sensitive, high-risk, or major architectural changes require an additional qualified or Founder-directed review. Keep real Gmail and PostgreSQL production work clearly separated from mock behavior, add tests for each completed increment, and do not claim the feature is production-ready until the remaining provider, persistence, security, and end-to-end work is implemented and independently validated.
