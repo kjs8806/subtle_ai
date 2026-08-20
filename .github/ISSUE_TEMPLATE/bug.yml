@@ -1,0 +1,51 @@
+name: Bug
+description: Report a reproducible defect
+title: "[BUG] "
+labels: ["bug", "triage"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What is wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Open...
+        2. Select...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and evidence
+      description: Browser, device, branch/commit, logs, screenshots, or test output.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Suspected decision area
+      options:
+        - Clear implementation defect
+        - Product requirement is unclear
+        - UX behavior is unclear
+        - Technical design is unclear
+        - Unknown
+    validations:
+      required: true
