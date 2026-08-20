@@ -49,11 +49,11 @@ Navigation remains **Overview**, **Subscriptions**, and **Savings**.
 
 ## Authorized boundaries
 
-The approved work is the existing prototype plus the mock-backed FEATURE-001 vertical slice. It may preserve and validate deterministic parsing, stable IDs, provenance, evidence, confidence, idempotency, account-scoped mock behavior, and the current UI.
+The approved work is the existing prototype plus the canonical FEATURE-001 vertical slice. It may preserve and validate deterministic parsing, stable IDs, provenance, evidence, confidence, idempotency, account-scoped behavior, and the current UI. Controlled real-provider implementation and validation are authorized only within [FEATURE-001](features/FEATURE-001.md) and only after its approved technical and security gates are satisfied.
 
 The following are not authorized by this baseline:
 
-- Public or production Gmail integration.
+- Public production rollout, Gmail access beyond FEATURE-001, or release before all required security, privacy, and QA gates are complete.
 - Continuous/background Gmail monitoring or jobs.
 - Bank integrations or financial transactions.
 - AI-provider integration or unsupported AI-generated claims.

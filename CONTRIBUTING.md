@@ -1,6 +1,6 @@
 # Contributing to Subtle AI
 
-GitHub is the durable source of truth. Read [Getting Started](docs/onboarding/GETTING_STARTED.md), the [Delivery Process](docs/process/DELIVERY_PROCESS.md), [Definition of Ready](docs/process/DEFINITION_OF_READY.md), [Definition of Done](docs/process/DEFINITION_OF_DONE.md), [AI Usage Policy](docs/ai/AI_USAGE_POLICY.md), [Security](docs/engineering/SECURITY.md), [Migration Rules](docs/engineering/MIGRATIONS.md), and [Test Strategy](docs/quality/TEST_STRATEGY.md).
+GitHub is the durable source of truth. Read [Getting Started](docs/onboarding/GETTING_STARTED.md), [Development](docs/engineering/DEVELOPMENT.md), [Engineering Testing](docs/engineering/TESTING.md), the [Delivery Process](docs/process/DELIVERY_PROCESS.md), [Definition of Ready](docs/process/DEFINITION_OF_READY.md), [Definition of Done](docs/process/DEFINITION_OF_DONE.md), [AI Usage Policy](docs/ai/AI_USAGE_POLICY.md), [Security](docs/engineering/SECURITY.md), [Migration Rules](docs/engineering/MIGRATIONS.md), the [ADR index](docs/engineering/adr/README.md), and [Test Strategy](docs/quality/TEST_STRATEGY.md).
 
 ## Before development
 
