@@ -44,6 +44,8 @@ git diff --check
 
 Run the narrowest relevant test first. User-facing changes also require applicable loading, empty, error, success, responsive, accessibility, and regression evidence.
 
+Specialist review and manual QA apply to the exact PR head commit. PR CI validates the synthetic candidate merge for that recorded head and base. Record the reviewed PR head SHA, base SHA, candidate merge SHA, and CI run URL. Any PR head change invalidates prior specialist review, QA evidence, and CI evidence; rerun the affected checks and reviews.
+
 ## Pull requests
 
 Use the PR template. Link the issue/specification/plan, provide an acceptance-criteria matrix or QA-report link, describe risk and security impact, and record exact validation results. Prefer short-lived, reviewable PRs and squash merge unless individual commits have lasting value.

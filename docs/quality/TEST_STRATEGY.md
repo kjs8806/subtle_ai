@@ -18,7 +18,9 @@ npm run build
 git diff --check
 ```
 
-Required CI and applicable manual evidence must pass on the exact reviewed commit.
+Specialist review and manual evidence apply to the exact PR head commit. Pull-request CI validates GitHub's synthetic candidate merge for that recorded head and base. Evidence records the reviewed PR head SHA, base SHA, candidate merge SHA, and CI run URL.
+
+Any PR head change invalidates prior specialist review, QA evidence, and CI evidence. The affected checks and reviews must run again against the new head and its new candidate merge.
 
 ## Coverage layers
 
@@ -41,7 +43,7 @@ Every user-facing PR or QA report maps each applicable criterion:
 | --- | --- | --- | --- | --- | --- |
 | AC-01 | Expected behavior | Automated/manual | Link or command output | Pass/Fail | Issue or None |
 
-Evidence must include the exact commit SHA, environment, browser/device or runtime, setup/data, expected and actual result, and artifact links. A new commit invalidates affected evidence until rerun.
+Evidence must include the exact reviewed PR head SHA, environment, browser/device or runtime, setup/data, expected and actual result, and artifact links. CI evidence also includes the base SHA, synthetic candidate merge SHA, and CI run URL.
 
 ## Independence and severity
 

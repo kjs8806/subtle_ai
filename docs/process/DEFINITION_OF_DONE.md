@@ -33,9 +33,9 @@ A feature is Done only when all applicable evidence is complete. Code complete i
 
 ## Automated and coordination gates
 
-- Required CI checks pass.
+- Required CI checks pass on the synthetic candidate merge for the recorded reviewed PR head and base. The PR records the reviewed head SHA, base SHA, candidate merge SHA, and CI run URL.
 - Coordinator confirms issue → specification → plan/decision → branch → PR → tests/reviews → QA traceability and closes blockers.
 - Founder approves merge/release while the workflow remains supervised.
 - If released, deployment, smoke test, monitoring, and rollback/recovery evidence are recorded.
 
-Any new code commit invalidates affected review or QA evidence until rerun.
+Any PR head change invalidates prior specialist review, QA evidence, and CI evidence until the affected checks and reviews run again against the new head and its new candidate merge.

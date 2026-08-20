@@ -22,7 +22,10 @@ Link the canonical QA report or complete this table. Follow [`docs/quality/TEST_
 - [ ] `npm run build`
 - [ ] `git diff --check`
 - [ ] Manual/automated QA evidence is attached for affected user behavior.
-- **Tested commit:**
+- **Reviewed PR head SHA:**
+- **Base SHA:**
+- **CI candidate merge SHA:**
+- **CI run URL:**
 - **Environment:**
 
 ## States and experience

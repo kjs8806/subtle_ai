@@ -10,7 +10,7 @@
 
 Verify that a contributor without access to private AI conversations can set up the project, understand it, find work, and follow the delivery process using only the repository and linked project records.
 
-Issue #8 is the canonical simulation task. It is currently **Blocked**, not Ready or eligible for implementation, until the live issue links a draft PR at an exact commit, CI evidence, and the required canonical records. Inspect its current lifecycle status before every run; this document must not be treated as evidence that the issue is Ready.
+Issue #8 is the canonical simulation task. It is currently **Blocked**, not Ready or eligible for implementation, until the live issue links a draft PR at an exact reviewed head commit, CI for the associated base and synthetic candidate merge, and the required canonical records. Inspect its current lifecycle status before every run; this document must not be treated as evidence that the issue is Ready.
 
 ## Independence and starting record
 
@@ -34,8 +34,10 @@ The Coordinator supplies real records. Placeholders are intentionally incomplete
 - [ ] Completed or supervised example issue: `TBD`
 - [ ] Approved feature specification and acceptance criteria: `TBD`
 - [ ] Approved design and technical plan/ADR, when applicable: `TBD`
-- [ ] Pull request and exact tested commit: `TBD`
-- [ ] CI run for that exact commit: `TBD`
+- [ ] Pull request and exact reviewed PR head SHA: `TBD`
+- [ ] Base SHA for the recorded head: `TBD`
+- [ ] Synthetic candidate merge SHA: `TBD`
+- [ ] CI run URL for that head/base/candidate identity: `TBD`
 - [ ] Tech Lead, Product Designer, and Product Owner reviews as applicable: `TBD`
 - [ ] QA report and acceptance-criteria matrix: `TBD`
 - [ ] Release record, or explicit confirmation that release is not applicable: `TBD`
@@ -96,7 +98,7 @@ The simulation passes only when:
 - Documented commands work in the recorded environment, or a verified defect is filed with an owner.
 - The tester correctly distinguishes approved work from proposed candidates and blocked tasks.
 - No Critical or High onboarding gap remains open.
-- Evidence identifies the exact commit tested and CI results for that commit.
+- Manual and specialist evidence identifies the exact reviewed PR head; CI evidence identifies that head, its base, the synthetic candidate merge, and the CI run URL.
 
 ## Verdict
 
@@ -104,12 +106,15 @@ The simulation passes only when:
 - **Changes Required:** the run completed but correctable non-blocking gaps remain.
 - **Blocked:** required inputs, access, evidence, or Critical/High gaps prevent a valid run.
 
-Current verdict: **Blocked**. Issue #8 does not yet contain all required exact-commit and canonical-chain evidence.
+Current verdict: **Blocked**. Issue #8 does not yet contain all required reviewed-head, base, candidate-merge, CI-run, and canonical-chain evidence.
 
 ## QA sign-off
 
 - Verdict: `Blocked / Changes Required / Approved`
-- Tested commit: `TBD`
+- Reviewed PR head SHA: `TBD`
+- Base SHA: `TBD`
+- Candidate merge SHA: `TBD`
+- CI run URL: `TBD`
 - QA owner: `TBD`
 - Date: `TBD`
 - Report/evidence link: `TBD`
