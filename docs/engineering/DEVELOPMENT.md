@@ -8,13 +8,13 @@
 
 ## Commands
 
-- npm install
+- npm ci
 - npm run dev
 - npm test
 - npm run build
 - git diff --check
 
-The current repository has no committed lockfile, so CI uses npm install. Adding and maintaining package-lock.json should be a near-term reproducibility improvement; after it is committed, CI should switch to npm ci.
+The repository commits `package-lock.json`. Use `npm ci` for reproducible installs in CI and when validating a clean checkout. Use `npm install` only when intentionally changing dependencies and update the lockfile in the same change.
 
 ## Architecture rules
 
@@ -35,6 +35,15 @@ The current repository has no committed lockfile, so CI uses npm install. Adding
 6. Resolve technical review and CI findings.
 7. Obtain independent QA for user-facing or risk-sensitive changes.
 8. Merge only after required approvals.
+
+## Current and planned quality automation
+
+Current CI installs from the lockfile, runs the test suite, builds the application, and checks the complete push or pull-request change range for whitespace errors.
+
+The following remain planned gaps:
+
+- Add an explicit lint/static-analysis and code-formatting toolchain, then make those checks required in CI. `git diff --check` detects whitespace errors but is not a substitute for linting or formatting validation.
+- Add GitHub's dependency-review workflow after confirming that the action is supported and enabled for this private repository. Dependabot remains enabled for npm and GitHub Actions updates in the meantime.
 
 ## Environment and secrets
 
