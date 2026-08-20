@@ -1,87 +1,26 @@
-# Delivery Workflow and Source of Truth
+# Workflow
 
-## Roles
+> **Owner:** Project Coordinator  
+> **Status:** Navigation summary  
+> **Canonical process:** [DELIVERY_PROCESS.md](process/DELIVERY_PROCESS.md)  
+> **Last reviewed:** 2026-08-20
 
-- Founder: major product, business, security-risk, cost, and architectural tradeoffs.
-- Product Owner: what to build, why, priority, scope, and product acceptance.
-- Product Designer: user flow, interaction, states, accessibility, and design consistency.
-- Project Coordinator: workflow, specialist invocation, handoffs, blockers, traceability, and approval tracking.
-- Tech Lead sub-agent: architecture, technical planning, implementation instructions, security and testing strategy, and technical review.
-- Codex: implementation of the approved technical plan, implementation-level self-checks, tests, and repository validation.
-- QA: independent verification of requirements, regressions, and release quality.
+This file is retained for compatibility with existing links. It does not define a competing workflow.
 
-The Project Coordinator invokes the Tech Lead as a dedicated specialist. The Coordinator does not replace specialist authority, and Codex is not the architecture authority.
+The canonical lifecycle is:
 
-## Source precedence
+**Proposed → Product Defined → Design Ready → Technical Ready → Implementing → Review → Changes Required / Approved → QA Approved → Released → Measured**
 
-1. Explicit Founder decision.
-2. Latest approved decision from the role owning that domain.
-3. Approved repository documentation.
-4. Current implementation.
-5. Historical chat discussion.
+Use these authoritative records:
 
-GitHub is the durable source of truth. Meaningful conflicts must be surfaced to the owning role and resolved in the repository.
+- [Delivery process and routing](process/DELIVERY_PROCESS.md)
+- [Definition of Ready](process/DEFINITION_OF_READY.md)
+- [Definition of Done](process/DEFINITION_OF_DONE.md)
+- [Coordinator runbook](ai/COORDINATOR_RUNBOOK.md)
+- [AI usage policy and roles](ai/AI_USAGE_POLICY.md)
+- [Test strategy](quality/TEST_STRATEGY.md)
+- [FEATURE-001](product/features/FEATURE-001.md)
 
-## Lifecycle
+GitHub issue → specification/design → technical plan/ADR → branch → PR → CI/reviews → QA evidence → release record.
 
-1. Proposed
-2. Product Defined
-3. Design Ready
-4. Technical Ready
-5. Implementing
-6. Review
-7. Changes Required or Approved
-8. QA Approved
-9. Released
-10. Measured, when applicable
-
-The repository may use equivalent GitHub labels, but feature documents must state their current lifecycle stage.
-
-## Required traceability
-
-GitHub issue → feature specification → approved technical plan → branch → pull request → automated tests → technical review → QA evidence → release record.
-
-Each PR must link its issue and specification and explain how acceptance criteria were validated.
-
-## Specialist handoff contract
-
-Every Coordinator handoff to the Tech Lead must include:
-
-- Relevant GitHub issue and approved acceptance criteria.
-- Approved product and design specifications.
-- Current architecture documents and technical decisions.
-- Relevant code, migrations, tests, CI output, and other review evidence.
-- The precise deliverable expected from the Tech Lead.
-
-The Tech Lead returns an approved technical plan or review findings through repository artifacts. Codex receives that approved plan and does not silently change architecture, requirements, or UX decisions.
-
-## Feedback routing
-
-- Missing product behavior → Product Owner.
-- Unclear interaction or UI state → Product Designer.
-- Architecture, security, data, API, or testing strategy → Tech Lead sub-agent.
-- Clear implementation defect → Codex under the approved plan; return to Tech Lead if the fix changes architecture.
-- Major scope, business, security-risk, cost, or delivery tradeoff → Founder.
-
-QA does not invent requirements, and implementation does not silently reinterpret them.
-
-## Review safeguards
-
-The Tech Lead reviews technical correctness after implementation, but is not the only quality gate for work it directed:
-
-- CI must pass.
-- Codex records implementation-level self-checks.
-- Independent QA validates requirements and regressions.
-- Security-sensitive, high-risk, or major architectural changes require an additional qualified review or Founder-directed review before merge.
-
-## Feature records
-
-Current canonical FEATURE-001 product and UX record:
-
-- docs/product/features/FEATURE-001.md
-- docs/engineering/ARCHITECTURE.md — canonical approved FEATURE-001 technical plan and target architecture
-- docs/engineering/TECH_DECISIONS.md — canonical approved FEATURE-001 technical decision register
-
-Unless a more specific approved technical-plan artifact is added and linked from the feature record, these two engineering documents are the authoritative technical-plan and decision artifacts for FEATURE-001 traceability.
-
-Do not create duplicate specifications with conflicting content. Technical decisions belong in docs/engineering, while PRs and QA reports link back to the canonical feature record.
+GitHub is the durable source of truth. Route product questions to the Product Owner, UX questions to the Designer, technical questions to the Tech Lead, clear implementation defects to Codex, validation to QA, and major product/security/cost/access/release decisions to the Founder.

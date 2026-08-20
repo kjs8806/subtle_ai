@@ -1,65 +1,51 @@
 # Contributing to Subtle AI
 
-GitHub is the durable source of truth. Chats and sub-agents may help produce decisions, designs, plans, code, and reviews, but approved outcomes must be recorded in the repository.
+GitHub is the durable source of truth. Read [Getting Started](docs/onboarding/GETTING_STARTED.md), the [Delivery Process](docs/process/DELIVERY_PROCESS.md), [Definition of Ready](docs/process/DEFINITION_OF_READY.md), and [Definition of Done](docs/process/DEFINITION_OF_DONE.md).
 
 ## Before development
 
-1. Start from a GitHub issue.
-2. Assign or confirm a FEATURE-XXX identifier for product work.
-3. Ensure product requirements and acceptance criteria are approved.
-4. Ensure affected UX behavior and states are Design Ready.
-5. Have the Project Coordinator invoke the Tech Lead sub-agent with the complete handoff contract.
-6. Ensure major technical work has a written, approved technical plan and any required decision-register updates.
-7. Create a short-lived branch:
-   - feature/FEATURE-XXX-short-name
-   - fix/FEATURE-XXX-short-name
-   - chore/short-name
+1. Start from a GitHub issue with a feature ID when applicable.
+2. Confirm the issue satisfies the Definition of Ready: approved product criteria, affected UX, technical plan/decisions, and QA testability.
+3. Read relevant product, design, architecture, security, migration, ADR, and feature documents.
+4. Create a short-lived branch:
+   - `feature/FEATURE-XXX-short-name`
+   - `fix/FEATURE-XXX-short-name`
+   - `chore/short-name`
 
-Do not start production integrations that remain blocked in docs/engineering/TECH_DECISIONS.md.
+Do not start integrations blocked by `docs/engineering/TECH_DECISIONS.md`. Automation and AI identities may not push to `main`, merge, release, deploy, or bypass required checks.
 
-## Tech Lead handoff contract
+## Role boundaries
 
-The handoff must identify:
+- Product Owner owns what, why, priority, scope, and acceptance criteria.
+- Designer owns user experience and UX review.
+- Tech Lead sub-agent owns architecture, technical plans/instructions, and technical review.
+- Codex implements the approved plan and records self-checks.
+- QA independently validates criteria, regressions, and release quality.
+- Coordinator tracks and routes work; it does not replace specialist authority.
 
-- The GitHub issue and approved acceptance criteria.
-- Approved product and design specifications.
-- Relevant architecture and technical decisions.
-- Relevant code, migrations, tests, CI output, and other evidence.
-- The precise requested deliverable: plan, implementation instructions, risk assessment, or technical review.
+See [role contracts](docs/ai/roles/) and the [Coordinator runbook](docs/ai/COORDINATOR_RUNBOOK.md).
 
-The Tech Lead owns architecture, technical planning, implementation instructions, security and testing strategy, and technical review. Codex implements the approved plan and performs implementation-level self-checks; Codex must not silently assume architecture authority.
+## Implementation
 
-## Development
-
-- Read relevant product, design, architecture, technical-decision, and approved technical-plan documents.
-- Make the smallest focused change.
+- Make the smallest focused change and preserve existing user work.
 - Preserve stable subscription IDs and evidence traceability.
-- Keep credentials and long-lived secrets out of browser code and Git.
-- Add or update tests for changed behavior.
-- Update documentation when behavior, architecture, or decisions change.
-- Record any necessary deviation and return it to the Tech Lead for approval before proceeding.
+- Keep facts, inferences, and recommendations distinct.
+- Keep credentials, tokens, personal data, and long-lived secrets out of browser code, logs, and Git.
+- Add or update tests and documentation for changed behavior.
+- Return any product, UX, or architectural deviation to its owner before proceeding.
 
 ## Validation
 
-Run:
+```sh
+npm test
+npm run build
+git diff --check
+```
 
-- npm test
-- npm run build
-- git diff --check
-
-Record additional manual QA for user-facing behavior, including loading, empty, error, success, responsive, and accessibility states where applicable.
+Run the narrowest relevant test first. User-facing changes also require applicable loading, empty, error, success, responsive, accessibility, and regression evidence.
 
 ## Pull requests
 
-Use the repository template. Link the issue and feature specification, map acceptance criteria, describe risk, attach QA evidence, and list known gaps. Keep PRs reviewable and short-lived. Prefer squash merge unless individual commits have lasting value.
+Use the PR template. Link the issue/specification/plan, provide an acceptance-criteria matrix or QA-report link, describe risk and security impact, and record exact validation results. Prefer short-lived, reviewable PRs and squash merge unless individual commits have lasting value.
 
-A PR should not merge until:
-
-- CI passes.
-- Codex implementation self-checks are recorded.
-- Tech Lead review findings are resolved.
-- Independent QA validates applicable requirements and regressions.
-- Appropriate product and design approvals are recorded.
-- Security-sensitive, high-risk, or major architectural changes receive an additional qualified review or Founder-directed review.
-
-The Tech Lead must not be the only reviewer of an implementation it closely directed.
+A PR must not merge until required CI passes, Tech Lead findings are resolved, independent QA approves the exact commit, affected product/design approvals are recorded, and the Definition of Done is satisfied. Security-sensitive, high-risk, or major architecture changes require an additional qualified or Founder-directed review.

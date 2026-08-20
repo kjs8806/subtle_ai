@@ -1,66 +1,68 @@
 # Architecture
 
-## Status
+> **Owner:** Tech Lead  
+> **Status:** Current prototype plus explicitly labeled FEATURE-001 target  
+> **Last reviewed:** 2026-08-20
 
-This document describes the current implemented prototype. It is not a production target architecture.
+## Current implemented system
 
-## Application
+Subtle AI is a Vite JavaScript ES-module web application and installable PWA. `index.html` loads `src/main.js`; the browser owns prototype UI state and seeded/manual data.
 
-Subtle AI is a Vite-powered JavaScript web application and installable PWA. `index.html` provides the document shell and loads `src/main.js` as an ES module. The browser owns the current application state; there is no server-side runtime.
+The repository also contains a **local mock backend**:
 
-## Modules
+- `server/app.js`: Fastify `/api/v1` boundary and mock FEATURE-001 routes.
+- `server/gmail/fakeProvider.js`: deterministic authorization/scan scenarios; no Google API call.
+- `server/persistence/memoryRepository.js`: account-scoped in-memory state that resets on restart.
+- `migrations/001_feature_001.sql`: planned PostgreSQL schema, not executed by the local app.
 
-- `src/main.js` bootstraps the prototype dashboard, owns derived UI state, and wires browser events.
-- `src/data/demoSubscriptions.js` contains static presentation fixtures for demo subscriptions and the savings action feed. These are not the normalized production subscription-domain entities.
-- `src/data/subscriptionModel.js` calculates demo recurring spend and adapts demo records into pipeline records.
-- `src/services/receiptPipeline.js` parses receipt-like text and creates plain-object evidence, subscription, billing, price-observation, and recommendation entities.
-- `src/style.css` contains the application presentation styles.
-- `server/app.js` provides the local Fastify API boundary and mock-provider FEATURE-001 routes; it uses an in-memory repository for development and tests.
-- `server/gmail/fakeProvider.js` provides deterministic authorization and scan scenarios. No Google API or Gmail SDK is present.
-- `server/persistence/memoryRepository.js` provides account-scoped local persistence for mock validation; PostgreSQL is represented by the migration only.
-- `public/sw.js` provides service-worker installation, shell caching, and same-origin runtime caching. `/api/**` requests are network-only.
+The presence of server code does not mean a production backend, identity system, Gmail integration, token store, or database runtime exists.
 
-## Data And Persistence
+## Frontend and domain modules
 
-Seeded data remains hardcoded in the browser bundle. FEATURE-001 mock API state is held in memory and is not production persistence. There is no real Google/Gmail integration, PostgreSQL runtime, continuous synchronization, or background job. Receipt evidence is created deterministically from local demo or fake-provider messages.
+- `src/main.js`: dashboard bootstrap, derived UI state, rendering, and events.
+- `src/data/demoSubscriptions.js`: presentation fixtures; not normalized production entities.
+- `src/data/subscriptionModel.js`: recurring-spend calculation and demo-to-pipeline adapter.
+- `src/services/receiptPipeline.js`: deterministic parsing, normalization, evidence, subscription, billing, price observation, merging, and recommendation logic.
+- `src/services/feature001Api.js`: browser adapter for the local `/api/v1` mock flow.
+- `src/style.css`: current presentation system.
+- `public/sw.js`: shell/runtime cache; `/api/**` is network-only.
 
-## Domain Flow
+## Current data flow
 
 ```text
-demo subscription data
-    -> receiptPipeline.parseReceipt
-    -> Evidence
-    -> createSubscriptionRecord
-    -> Subscription with billing and price observations
-    -> buildRecommendations
+seeded subscription or fake provider message
+  → receiptPipeline.parseReceipt
+  → evidence and field provenance
+  → stable subscription record
+  → billing/price observations
+  → deterministic recommendations where supported
+  → ID-backed list and Subscription Detail
 ```
 
-Recommendations retain both `evidenceIds` and structured evidence references so claims can remain traceable as the model evolves.
+Recommendations retain evidence IDs and related subscription IDs. Facts, inferences, and recommendations remain distinct.
 
-## Security Boundaries
+## Security boundary
 
-There are currently no authenticated or user-specific data boundaries. No provider credentials, OAuth tokens, or AI secrets are present in the client application. A future Gmail or AI integration must not place provider secrets in browser code.
+The mock flow has no production identity or user-data boundary. No provider refresh token, credential, or AI secret may enter browser code. API requests are network-only in the service worker. See [SECURITY.md](SECURITY.md).
 
-## Testing
+## FEATURE-001 approved target — not current implementation
 
-The domain pipeline is tested with Node's built-in test runner in `test/receiptPipeline.test.js`. The browser UI currently has no automated interaction test suite.
+Within the approved FEATURE-001 scope:
 
-## Production Readiness
+- Preserve the Vite PWA and deterministic receipt pipeline.
+- Use a Node.js/Fastify same-origin `/api/v1` backend boundary.
+- Establish application identity separately from explicit Gmail authorization.
+- Issue opaque secure server-managed sessions.
+- Store provider refresh tokens encrypted and server-side only.
+- Use least-privilege read-only Gmail access.
+- Persist account-scoped source connections, scans, messages, subscriptions, evidence, billing, price, and provenance in PostgreSQL.
+- Keep scans explicitly user-triggered; background/continuous sync is deferred.
+- Populate the existing ID-backed UI and retain seeded/manual behavior.
 
-The prototype plus mock FEATURE-001 slice is not yet a production architecture. Real Gmail, PostgreSQL deployment, and public data-lifecycle behavior remain release-gated.
+The current mock API shape is implemented. Real Google OIDC/Gmail OAuth, secure token rotation/storage, PostgreSQL runtime/deployment, production secrets, public data lifecycle, staging, monitoring, and real-provider end-to-end validation remain incomplete and release-gated.
 
-## FEATURE-001 Target Architecture
+## Testing and operations
 
-This section describes the approved target for FEATURE-001. The local mock backend and API shape are implemented; real Google Gmail access and production PostgreSQL deployment are not.
+Current automated coverage includes domain, repository, and API tests using Node’s test runner, plus the Vite build. Browser interaction, production-provider, database-runtime, migration-environment, staging, and deployment smoke coverage remain gaps. See [TESTING.md](TESTING.md), [TEST_STRATEGY.md](../quality/TEST_STRATEGY.md), [MIGRATIONS.md](MIGRATIONS.md), and [DEPLOYMENT.md](DEPLOYMENT.md).
 
-- The existing Vite PWA remains the frontend and continues to support seeded and manual prototype behavior.
-- A future Node.js and Fastify backend would expose a same-origin `/api/v1` JSON API.
-- Google OIDC would establish application identity; Gmail authorization would be a separate, explicit user action.
-- A future PostgreSQL persistence layer would store account-scoped users, identities, sessions, Gmail source connections, scan runs, messages, subscriptions, evidence, billing events, price observations, and field-level provenance.
-- The server would issue an opaque `HttpOnly`, `Secure`, `SameSite=Lax` session cookie and would never expose provider refresh tokens to the browser.
-- FEATURE-001 scans would be explicit user-triggered operations with no continuous or background synchronization.
-- Gmail access would use only the approved read-only scope, with refresh tokens encrypted and stored server-side.
-- The deterministic receipt pipeline would remain independent of the backend and database. Server adapters would pass provider messages into its existing contract and persist its output.
-- AI recommendations, notifications, and public retention/export/deletion behavior are deferred or remain release gates.
-
-The corresponding FEATURE-001 technical decisions are approved in `TECH_DECISIONS.md`; implementation may proceed within this scope. This does not make any target component current or authorize out-of-scope integrations.
+Approved technical decisions live in [TECH_DECISIONS.md](TECH_DECISIONS.md) and consequential future decisions use [ADRs](adr/README.md). Target descriptions do not authorize integrations beyond their approved decision and feature scope.
