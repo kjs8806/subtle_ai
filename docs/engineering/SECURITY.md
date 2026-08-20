@@ -42,4 +42,4 @@ Document assets, trust boundaries, actors, abuse cases, mitigations, and residua
 - Monitoring, incident response, and rollback procedure.
 - Privacy-policy and consent review.
 
-Security-sensitive decisions must be recorded in TECH_DECISIONS.md or an engineering ADR and receive the approvals stated there.
+The Tech Lead sub-agent owns security architecture and strategy within approved product scope. Security-sensitive decisions must be recorded in TECH_DECISIONS.md or an engineering ADR and receive the approvals stated there. High-risk security changes also require independent QA plus an additional qualified or Founder-directed review; Tech Lead approval alone is insufficient.
