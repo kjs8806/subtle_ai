@@ -24,9 +24,15 @@ CI runs these checks automatically.
 
 Every user-facing PR must map applicable acceptance criteria to automated tests or recorded manual QA. A passing unit suite alone is not product acceptance.
 
-## Independent QA
+## Review sequence and independence
 
-QA reviews after CI and technical self-review. QA records environment, commit, scenarios, results, evidence, defects, regression coverage, and release recommendation. Product or UX ambiguity returns to the appropriate owner rather than being guessed.
+1. Codex records implementation-level self-checks against the approved technical plan.
+2. CI runs the required automated gates.
+3. The Tech Lead sub-agent reviews architecture, security, maintainability, technical correctness, and testing strategy.
+4. Independent QA validates acceptance criteria, regressions, edge cases, and release quality.
+5. Security-sensitive, high-risk, or major architectural changes receive an additional qualified review or Founder-directed review.
+
+The Tech Lead is not the only reviewer of an implementation it directed. QA records environment, commit, scenarios, results, evidence, defects, regression coverage, and release recommendation. Product or UX ambiguity returns to the appropriate owner rather than being guessed.
 
 ## Known gaps
 
