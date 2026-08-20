@@ -31,6 +31,14 @@ export const createMemoryRepository = () => {
       connections.set(userId, connection)
       return clone(connection)
     },
+    expireConnection: (userId) => {
+      const connection = connections.get(userId)
+      if (!connection) return clone({ status: 'not_connected', scanStatus: 'idle' })
+      connection.status = 'reconnect_required'
+      connection.scanStatus = 'idle'
+      connections.set(userId, connection)
+      return clone(connection)
+    },
     beginScan: (userId) => {
       const connection = connections.get(userId)
       if (!connection || connection.status !== 'connected') return null

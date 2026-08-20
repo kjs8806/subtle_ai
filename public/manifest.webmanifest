@@ -1,6 +1,6 @@
 {
-  "name": "Subtle AI",
-  "short_name": "Subtle AI",
+  "name": "Subscription optimizer",
+  "short_name": "Optimizer",
   "description": "Your AI subscription optimizer.",
   "start_url": "/",
   "display": "standalone",

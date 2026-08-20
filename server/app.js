@@ -44,7 +44,12 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = cre
     oauthStates.delete(request.query.state)
     reply.clearCookie('subtle_oauth_state', { path: '/' })
     if (!request.query.state || request.query.state !== request.cookies.subtle_oauth_state || !expiresAt || expiresAt <= now()) return reply.code(400).send({ error: { code: 'invalid_oauth_state', message: 'Invalid authorization state' } })
-    const result = await provider.exchangeAuthorizationCode({ code: request.query.code })
+    let result
+    try {
+      result = await provider.exchangeAuthorizationCode({ code: request.query.code })
+    } catch {
+      return reply.code(502).send({ error: { code: 'authorization_failed', message: 'Gmail authorization could not be completed' } })
+    }
     if (result.status !== 'authorized') return reply.code(400).send({ error: { code: result.status, message: 'Authorization was not completed' } })
     const token = sessions.issue(userId)
     reply.setCookie(SESSION_COOKIE, token, { httpOnly: true, secure: production, sameSite: 'lax', path: '/', maxAge: 8 * 60 * 60 })
@@ -61,6 +66,8 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = cre
   app.post('/api/v1/sources/gmail/authorize', { preHandler: requireUser }, async (request) => ({ ...(repository.authorizeConnection(request.user.id)), status: 'connected' }))
   app.get('/api/v1/sources/gmail/callback', { preHandler: requireUser }, async (request) => ({ status: 'connected', query: request.query }))
   app.post('/api/v1/sources/gmail/scan', { preHandler: requireUser }, async (request, reply) => {
+    const existingConnection = repository.getConnection(request.user.id)
+    if (existingConnection.status === 'reconnect_required') return reply.code(401).send({ error: { code: 'reconnect_required', message: 'Gmail permission expired. Reconnect to continue.' } })
     const scan = repository.beginScan(request.user.id)
     if (!scan) return reply.code(409).send({ error: { code: 'source_not_connected', message: 'Connect Gmail before scanning' } })
     try {
@@ -79,6 +86,10 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = cre
     } catch (error) {
       request.log.error({ err: error, scanId: scan.id }, 'Gmail scan failed')
       repository.completeScan(request.user.id, scan.id, 0, 'failed')
+      if (error.code === 'reconnect_required') {
+        repository.expireConnection(request.user.id)
+        return reply.code(401).send({ error: { code: 'reconnect_required', message: 'Gmail permission expired. Reconnect to continue.' } })
+      }
       return reply.code(502).send({ error: { code: 'scan_failed', message: 'Gmail receipts could not be scanned' } })
     }
   })

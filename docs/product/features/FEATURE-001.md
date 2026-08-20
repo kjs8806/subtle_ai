@@ -164,7 +164,9 @@ Document reusable source states, external-authorization disclosure, non-blocking
 
 ## Technical status and implementation boundary
 
-The canonical approved technical-plan and target-architecture artifact for FEATURE-001 is `docs/engineering/ARCHITECTURE.md`, and the canonical approved technical decision artifact is `docs/engineering/TECH_DECISIONS.md`. These remain authoritative unless a more specific approved technical-plan document is added and linked here. The current partial implementation includes the mock Fastify `/api/v1` boundary, mock Gmail authorization and scanning, in-memory account-scoped persistence and idempotency, provenance fields, a PostgreSQL migration schema, frontend source/scanning/discovery states, service-worker API cache exclusion, and automated domain/API coverage.
+The canonical approved technical-plan and target-architecture artifact for FEATURE-001 is `docs/engineering/ARCHITECTURE.md`, and the canonical approved technical decision artifact is `docs/engineering/TECH_DECISIONS.md`. These remain authoritative unless a more specific approved technical-plan document is added and linked here. The current partial implementation includes the mock Fastify `/api/v1` boundary, mock Gmail authorization and scanning, in-memory account-scoped persistence and idempotency, provenance fields, a PostgreSQL migration schema, frontend source/scanning/discovery states, service-worker API cache exclusion, automated domain/API coverage, and Playwright browser acceptance coverage for F001-T1.
+
+F001-T1 traceability: GitHub Issue #10 maps acceptance criteria 1–19 to `test/server.test.js`, `test/browser/feature001.spec.js`, and `test/browser/responsive.spec.js`. Browser coverage remains mock-provider evidence and does not authorize or represent production Gmail access.
 
 This remains a mock vertical slice, not a production Gmail integration. Real Google OIDC and Gmail OAuth, secure server-side token encryption and rotation, the PostgreSQL runtime adapter and deployment, production secret management, and real-provider integration/end-to-end validation remain incomplete. Public data-lifecycle behavior also remains release-gated.
 

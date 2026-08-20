@@ -74,6 +74,41 @@ test('mock authorization and scan create one evidence-backed subscription idempo
   assert.equal(detail.json().fieldObservations.find(({ field }) => field === 'amount').provenance, 'confirmed')
 })
 
+test('fake authorization URL completes the session-producing callback route', async () => {
+  const app = buildApp()
+  const start = await app.inject({ method: 'GET', url: '/api/v1/auth/google/start' })
+  const state = start.cookies.find(({ name }) => name === 'subtle_oauth_state').value
+  assert.match(start.json().url, /^\/api\/v1\/auth\/google\/callback\?/)
+  const callback = await app.inject({
+    method: 'GET',
+    url: start.json().url,
+    cookies: { subtle_oauth_state: state },
+  })
+  assert.equal(callback.statusCode, 200)
+  assert.ok(callback.cookies.some(({ name }) => name === 'subtle_session'))
+})
+
+test('authorization cancellation and provider failure are distinct', async () => {
+  const cancelledProvider = {
+    createAuthorizationRequest: ({ state }) => ({ url: `/api/v1/auth/google/callback?state=${state}&code=cancel` }),
+    exchangeAuthorizationCode: async () => ({ status: 'cancelled' }),
+  }
+  const cancelledApp = buildApp({ provider: cancelledProvider })
+  const cancelledStart = await cancelledApp.inject({ method: 'GET', url: '/api/v1/auth/google/start' })
+  const cancelledState = cancelledStart.cookies.find(({ name }) => name === 'subtle_oauth_state').value
+  const cancelled = await cancelledApp.inject({ method: 'GET', url: cancelledStart.json().url, cookies: { subtle_oauth_state: cancelledState } })
+  assert.equal(cancelled.statusCode, 400)
+  assert.equal(cancelled.json().error.code, 'cancelled')
+
+  const failedProvider = { ...cancelledProvider, exchangeAuthorizationCode: async () => { throw new Error('provider unavailable') } }
+  const failedApp = buildApp({ provider: failedProvider })
+  const failedStart = await failedApp.inject({ method: 'GET', url: '/api/v1/auth/google/start' })
+  const failedState = failedStart.cookies.find(({ name }) => name === 'subtle_oauth_state').value
+  const failed = await failedApp.inject({ method: 'GET', url: failedStart.json().url, cookies: { subtle_oauth_state: failedState } })
+  assert.equal(failed.statusCode, 502)
+  assert.equal(failed.json().error.code, 'authorization_failed')
+})
+
 test('disconnect prevents future scans', async () => {
   const app = buildApp()
   const session = await authorize(app)

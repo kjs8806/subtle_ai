@@ -42,3 +42,24 @@ h1, h2 { margin: 0; font: 500 clamp(50px, 6vw, 80px)/.98 'Playfair Display', ser
 @media (max-width: 900px) { .app-nav nav { margin-left: 0; }.dashboard-grid { grid-template-columns: 1fr; }.side-column { grid-template-columns: repeat(3, 1fr); }.assistant-card { grid-row: span 2; }.calendar-card, .sources-card { min-width: 0; }.subscription-row { grid-template-columns: 32px 1.2fr 1fr 70px 65px 20px; }.subscription-next { display: none; } }
 @media (max-width: 650px) { .wrap { width: min(100% - 32px, 560px); }.app-nav { height: 68px; }.app-nav nav { display: none; }.nav-actions { gap: 11px; }.app-content { padding-top: 36px; }.welcome-row { display: block; }.welcome-row h1 { font-size: 34px; }.add-button { margin-top: 25px; }.summary-grid { grid-template-columns: 1fr 1fr; }.summary-grid article { min-height: 154px; padding: 17px; }.summary-grid .count-card { grid-column: span 2; min-height: auto; }.spend-value, .savings-value, .count-value { font-size: 31px; }.mini-bars { margin-top: 12px; }.source-stack { margin-top: 12px; }.dashboard-grid { gap: 34px; }.section-bar h2 { font-size: 25px; }.feed-status { font-size: 8px; }.action-card { padding: 16px 14px; }.action-footer { display: block; }.action-footer strong { display: block; margin-top: 10px; }.small-button { font-size: 9px; }.side-column { display: block; }.side-column section { margin-bottom: 13px; }.subscription-row { grid-template-columns: 29px minmax(0, 1fr) 60px 20px; gap: 8px; min-height: 65px; }.subscription-signal { display: none; }.subscription-price { font-size: 10px; }.subscription-name strong { font-size: 11px; }.subscription-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.app-footer { flex-wrap: wrap; gap: 15px; }.app-footer span:nth-child(2) { order: 3; width: 100%; }.modal, .detail-modal { padding: 25px; }.detail-hero h2 { font-size: 27px; }.detail-stats { gap: 8px; }.detail-stats strong { font-size: 14px; }.compare-table, .history-grid { grid-template-columns: 1fr; }.detail-modal { max-height: calc(100vh - 20px); } }
 @media (max-width: 720px) { .wrap { width: min(100% - 40px, 560px); }.nav { height: 76px; }.nav-links { display: none; }.hero { display: block; padding-top: 60px; }.hero-text { font-size: 15px; }.hero-art { min-height: 420px; margin-top: 36px; }.art-wash { width: 350px; height: 350px; }.overview-card { width: min(370px, 90%); }.floating-tag { right: 0; bottom: 5%; }.proof { display: block; padding-bottom: 48px; }.proof-logos { justify-content: space-between; margin-top: 24px; gap: 10px; }.proof-logos b { font-size: 12px !important; }.features { padding-top: 52px; }.section-heading { display: block; margin-bottom: 40px; }.section-heading .eyebrow { margin-bottom: 24px; }.feature-grid { display: block; }.feature-grid article, .feature-grid article:first-child { padding: 28px 0 32px; border-left: 0; border-top: 1px solid var(--line); }.feature-grid h3 { margin: 17px 0 10px; }.feature-grid p { min-height: auto; }.feature-grid a { margin-top: 14px; }.footer { flex-wrap: wrap; gap: 18px; }.footer span:last-child { width: 100%; } }
+
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; margin: -1px; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+.gmail-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.gmail-controls button { min-height: 44px; }
+.dialog-actions { display: grid; gap: 6px; }
+.dialog-actions .secondary-action { min-height: 44px; margin-left: 0; }
+.evidence-summary, .empty-history { color: #697276; font-size: 11px; line-height: 1.5; }
+
+@media (max-width: 650px) {
+  .app-shell { padding-bottom: 64px; }
+  .app-nav nav { position: fixed; z-index: 8; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; margin: 0; border-top: 1px solid #dfe4dc; background: #fbfcf8; }
+  .app-nav nav a { min-height: 52px; padding: 17px 8px; text-align: center; }
+  .app-nav nav .nav-active::after { top: -1px; bottom: auto; }
+  .modal-backdrop, .detail-backdrop { align-items: end; padding: 0; }
+  .modal, .detail-modal { width: 100%; max-height: calc(100dvh - 24px); border-radius: 14px 14px 0 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

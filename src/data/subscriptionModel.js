@@ -3,7 +3,9 @@ import { createSubscriptionRecord, parseReceipt } from '../services/receiptPipel
 const money = (value) => `$${value.toFixed(2)}`
 
 export const monthlySpendFor = (subscriptions = []) => subscriptions.reduce(
-  (sum, item) => sum + (item.cadence === 'yearly' ? item.cost / 12 : item.cost),
+  (sum, item) => sum + (Number.isFinite(item.cost) && ['monthly', 'yearly'].includes(item.cadence)
+    ? (item.cadence === 'yearly' ? item.cost / 12 : item.cost)
+    : 0),
   0,
 )
 

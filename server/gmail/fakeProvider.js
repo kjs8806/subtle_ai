@@ -6,13 +6,24 @@ const scenarios = {
 }
 
 export const createFakeGmailProvider = () => ({
-  createAuthorizationRequest: ({ state }) => ({ url: `/api/v1/sources/gmail/callback?state=${encodeURIComponent(state)}&code=mock-success` }),
+  createAuthorizationRequest: ({ state }) => {
+    const authScenario = process.env.MOCK_GMAIL_AUTH_SCENARIO || 'success'
+    const code = authScenario === 'cancelled' ? 'mock-cancel' : authScenario === 'failure' ? 'mock-error' : 'mock-success'
+    return { url: `/api/v1/auth/google/callback?state=${encodeURIComponent(state)}&code=${code}` }
+  },
   exchangeAuthorizationCode: async ({ code }) => {
     if (code === 'mock-cancel') return { status: 'cancelled' }
     if (code === 'mock-error') throw new Error('Mock authorization failed')
     return { status: 'authorized', refreshToken: 'mock-refresh-token' }
   },
-  listCandidateMessages: async () => scenarios[process.env.MOCK_GMAIL_SCENARIO || 'success'],
+  listCandidateMessages: async () => {
+    if (process.env.MOCK_GMAIL_SCENARIO === 'expired') {
+      const error = new Error('Mock Gmail permission expired')
+      error.code = 'reconnect_required'
+      throw error
+    }
+    return scenarios[process.env.MOCK_GMAIL_SCENARIO || 'success']
+  },
   getMessage: async (message) => message,
   revokeConnection: async () => ({ status: 'disconnected' }),
 })

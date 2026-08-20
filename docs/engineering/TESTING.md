@@ -7,6 +7,7 @@ The project uses Node's built-in test runner and the Vite production build.
 Required for every pull request:
 
 - npm test
+- npm run test:browser
 - npm run build
 - git diff --check
 
@@ -40,9 +41,13 @@ Every user-facing PR must map applicable acceptance criteria to automated tests 
 
 The Tech Lead is not the only reviewer of an implementation it directed. QA records environment, reviewed PR head, scenarios, results, evidence, defects, regression coverage, and release recommendation. Product or UX ambiguity returns to the appropriate owner rather than being guessed.
 
+## Browser acceptance coverage
+
+Playwright covers the fake-provider FEATURE-001 flow, including disclosure and cancellation, authorization and scan outcomes, remote-ID detail and matching evidence, disconnect/reconnect behavior, unknown-value handling, seeded/manual regressions, stale-detail prevention, keyboard/dialog/live-region behavior, responsive navigation, mobile overflow, and reduced motion. Install its Chromium runtime with `npx playwright install chromium` when it is not already present.
+
 ## Known gaps
 
-The browser UI currently lacks an automated interaction suite. Real Gmail, PostgreSQL runtime, staging, and production end-to-end coverage remain release-gated.
+Real Gmail, PostgreSQL runtime, staging, and production end-to-end coverage remain release-gated.
 
 The repository also lacks an explicit lint/static-analysis and code-formatting gate; `git diff --check` covers whitespace only. Adding and enforcing those tools in CI is planned.
 
