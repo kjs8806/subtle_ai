@@ -1,0 +1,43 @@
+name: Feature
+description: Propose product work that can enter the Subtle AI lifecycle
+title: "[FEATURE] "
+labels: ["feature", "proposed"]
+body:
+  - type: input
+    id: feature_id
+    attributes:
+      label: Feature ID
+      description: Use FEATURE-XXX when assigned.
+      placeholder: FEATURE-XXX
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: What problem should be solved, and for whom?
+    validations:
+      required: true
+  - type: textarea
+    id: value
+    attributes:
+      label: Expected user value
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Initial scope and exclusions
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Proposed acceptance criteria
+  - type: dropdown
+    id: owner
+    attributes:
+      label: Next owner
+      options:
+        - Product Owner
+        - Product Designer
+        - Tech Lead
+        - Founder
+    validations:
+      required: true
