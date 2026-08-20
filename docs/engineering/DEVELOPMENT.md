@@ -25,16 +25,19 @@ The repository commits `package-lock.json`. Use `npm ci` for reproducible instal
 - Keep API requests network-only in the service worker.
 - Do not add production Gmail, AI, bank, notification, or background-sync integrations outside approved technical decisions.
 
+The Tech Lead sub-agent owns architecture, technical planning, implementation instructions, security and testing strategy, and technical review. Codex implements the approved plan and performs implementation-level self-checks. Any architectural deviation must return to the Tech Lead for approval and repository documentation.
+
 ## Branch and review process
 
 1. Sync main and create a short-lived feature, fix, or chore branch.
-2. Read the relevant feature and engineering documents.
+2. Read the relevant feature, design, engineering, and approved technical-plan documents.
 3. Implement the smallest focused change.
-4. Run tests, build, and whitespace checks.
+4. Run tests, build, and whitespace checks; record Codex self-check evidence.
 5. Open a pull request using the template.
-6. Resolve technical review and CI findings.
+6. Resolve Tech Lead technical review and CI findings.
 7. Obtain independent QA for user-facing or risk-sensitive changes.
-8. Merge only after required approvals.
+8. Obtain an additional qualified or Founder-directed review for security-sensitive, high-risk, or major architectural changes.
+9. Merge only after required approvals.
 
 ## Current and planned quality automation
 
