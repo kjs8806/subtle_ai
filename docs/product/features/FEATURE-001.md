@@ -6,7 +6,7 @@
 - Design: **DESIGN READY**
 - Lifecycle: **IMPLEMENTING**
 - Priority: **P0 — Active milestone**
-- Next owner: **Codex / implementation**
+- Next owner: **Codex / implementation under the approved Tech Lead plan**
 - Founder decision required now: **None**
 
 ## Objective
@@ -182,4 +182,4 @@ Never place refresh tokens, provider credentials, AI keys, or long-lived secrets
 
 ## Implementation handoff
 
-Codex is the next owner. Continue the approved implementation plan from the existing mock slice, using the decision register and architecture documents as constraints. Keep real Gmail and PostgreSQL production work clearly separated from mock behavior, add tests for each completed increment, and do not claim the feature is production-ready until the remaining provider, persistence, security, and end-to-end work is implemented and independently validated.
+Codex is the implementation owner under the approved Tech Lead plan. Continue from the existing mock slice using the decision register, architecture documents, and Tech Lead instructions as constraints. Record implementation-level self-checks and return any architectural deviation to the Tech Lead before proceeding. After implementation, the Tech Lead performs technical review, CI must pass, and independent QA validates the acceptance criteria and regressions. Security-sensitive, high-risk, or major architectural changes require an additional qualified or Founder-directed review. Keep real Gmail and PostgreSQL production work clearly separated from mock behavior, add tests for each completed increment, and do not claim the feature is production-ready until the remaining provider, persistence, security, and end-to-end work is implemented and independently validated.
