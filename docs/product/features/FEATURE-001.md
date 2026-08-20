@@ -4,9 +4,9 @@
 
 - Product: **PRODUCT DEFINED**
 - Design: **DESIGN READY**
-- Lifecycle: **DESIGN READY**
-- Priority: **P0 — Next milestone**
-- Next owner: **Tech Lead**
+- Lifecycle: **IMPLEMENTING**
+- Priority: **P0 — Active milestone**
+- Next owner: **Codex / implementation**
 - Founder decision required now: **None**
 
 ## Objective
@@ -162,22 +162,13 @@ Document reusable source states, external-authorization disclosure, non-blocking
 18. New branding resolves through APP_CONFIG.name.
 19. The complete meaningful test passes: **Connect Gmail → discover receipt → create evidence-backed subscription → open it → inspect matching evidence.**
 
-## Tech Lead decisions required before implementation
+## Technical status and implementation boundary
 
-Read docs/engineering/ARCHITECTURE.md and docs/engineering/TECH_DECISIONS.md, then decide:
+The FEATURE-001 technical decisions are approved in `docs/engineering/TECH_DECISIONS.md`. The current partial implementation includes the mock Fastify `/api/v1` boundary, mock Gmail authorization and scanning, in-memory account-scoped persistence and idempotency, provenance fields, a PostgreSQL migration schema, frontend source/scanning/discovery states, service-worker API cache exclusion, and automated domain/API coverage.
 
-1. Authentication and account ownership.
-2. Backend runtime and API contract.
-3. Database schema and evidence retention.
-4. Gmail OAuth scope and secure token storage.
-5. Sync idempotency, retries, and partial failures.
-6. Secret management and deployment.
-7. Security controls.
-8. Testing strategy and migration impact.
-9. Implementation sequencing.
-10. Precise GitHub Copilot instructions.
+This remains a mock vertical slice, not a production Gmail integration. Real Google OIDC and Gmail OAuth, secure server-side token encryption and rotation, the PostgreSQL runtime adapter and deployment, production secret management, and real-provider integration/end-to-end validation remain incomplete. Public data-lifecycle behavior also remains release-gated.
 
-Never place refresh tokens, provider credentials, AI keys, or long-lived secrets in browser code. Preserve the Vite PWA and deterministic receipt pipeline. Do not begin production Gmail integration until the technical decision register is updated and approved.
+Never place refresh tokens, provider credentials, AI keys, or long-lived secrets in browser code. Preserve the Vite PWA and deterministic receipt pipeline. Implementation must remain within the approved FEATURE-001 scope.
 
 ## Open follow-up questions before public release
 
@@ -189,6 +180,6 @@ Never place refresh tokens, provider credentials, AI keys, or long-lived secrets
 - Broader-rollout success metrics.
 - Final consent copy after OAuth scope approval.
 
-## Tech Lead handoff
+## Implementation handoff
 
-Using this approved product and UX specification, define the unresolved technical decisions, testing strategy, migration impact, implementation sequence, and precise Copilot instructions. End with **Technical Status: TECHNICAL READY** only when every blocking decision is resolved.
+Codex is the next owner. Continue the approved implementation plan from the existing mock slice, using the decision register and architecture documents as constraints. Keep real Gmail and PostgreSQL production work clearly separated from mock behavior, add tests for each completed increment, and do not claim the feature is production-ready until the remaining provider, persistence, security, and end-to-end work is implemented and independently validated.
