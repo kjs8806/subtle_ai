@@ -19,6 +19,18 @@ Describe the user-visible and technical changes.
 - [ ] git diff --check
 - [ ] Manual or automated QA evidence is attached for user-facing changes.
 
+## QA evidence
+
+- **Tested commit:** <!-- Full commit SHA -->
+- **Environment:** <!-- Browser/device, OS, runtime, deployment or local setup -->
+- **Scenarios and results:**
+  - <!-- Scenario / expected result / actual result / pass or fail -->
+- **Evidence links:** <!-- Screenshots, recordings, logs, artifacts, or test output -->
+- **Defects found:** <!-- Issue links, severity, or None -->
+- **Regression notes:** <!-- Existing areas checked and results -->
+- **QA recommendation:** <!-- Approved / Changes required / Blocked -->
+- **QA report link:** <!-- Link to docs/features/.../QA_REPORT.md or equivalent -->
+
 ## Risk and security
 
 - [ ] No credentials, tokens, sensitive receipt content, or personal data were committed.
