@@ -3,6 +3,8 @@ export const config = {
   host: process.env.HOST || '127.0.0.1',
   gmailProvider: process.env.GMAIL_PROVIDER || 'mock',
   sessionSecret: process.env.SESSION_SECRET || 'local-development-only',
+  production: process.env.NODE_ENV === 'production',
+  publicOrigin: process.env.PUBLIC_ORIGIN || 'http://127.0.0.1:5173',
 }
 
 if (config.gmailProvider !== 'mock') {
