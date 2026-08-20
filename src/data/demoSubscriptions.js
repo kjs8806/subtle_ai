@@ -8,7 +8,7 @@ export const demoSubscriptions = [
 ]
 
 export const savingsActions = [
-  { id: 'overlap', priority: 'high', tone: 'coral', icon: '↔', label: 'Priority 01 · Potential overlap', title: 'Dropbox + Google One', body: 'Both plans provide cloud storage. You spend $359.76/year combined.', saving: '$192/yr', primary: 'Compare plans', secondary: 'Keep both' },
-  { id: 'renewal', priority: 'medium', tone: 'amber', icon: '◷', label: 'Priority 02 · Renewal in 6 days', title: 'NordVPN — $119.99', body: 'Your annual plan renews August 23. You subscribed approximately 11 months ago.', saving: '', primary: 'Review subscription', secondary: 'Keep it' },
-  { id: 'price', priority: 'low', tone: 'plum', icon: '↗', label: 'Priority 03 · Price increase detected', title: 'Canva Pro', body: '$14.99 → $17.99/month. That change adds $36 to your yearly spend.', saving: '+$36/yr', primary: 'View details', secondary: 'Dismiss' },
+  { id: 'overlap', priority: 'high', tone: 'coral', icon: '↔', label: 'Potential overlap', affectedServices: ['Dropbox', 'Google One'], title: 'Cloud storage overlap', body: 'Both plans provide cloud storage. You spend $359.76/year combined.', impactLabel: 'Potential savings', saving: '$191.88/year', monthlySavings: 15.99, primary: 'Compare plans', secondary: 'Keep both' },
+  { id: 'renewal', priority: 'medium', tone: 'amber', icon: '◷', label: 'Renewal in 6 days', affectedServices: ['NordVPN'], title: 'Annual renewal approaching', body: 'Your annual plan renews August 23. You subscribed approximately 11 months ago.', saving: '', primary: 'Review subscription', secondary: 'Keep it' },
+  { id: 'price', priority: 'low', tone: 'plum', icon: '↗', label: 'Price increase detected', affectedServices: ['Canva Pro'], title: 'Monthly price increased', body: '$14.99 → $17.99/month. That change adds $36 to your yearly spend.', impactLabel: 'Yearly impact', saving: '+$36/year', primary: 'View details', secondary: 'Dismiss' },
 ]
