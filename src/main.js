@@ -16,7 +16,7 @@ const brand = `<a class="brand" href="#overview" aria-label="${APP_CONFIG.name} 
 
 document.title = `${APP_CONFIG.name} — ${APP_CONFIG.tagline}`
 const app = document.querySelector('#app')
-app.innerHTML = `<main class="app-shell">${navigationMarkup(brand)}${overviewMarkup({ subscriptions, actions: savingsActions, monthlySpend: monthlySpendFor(subscriptions) })}<footer class="app-footer wrap">${brand}<span>Private by design</span></footer></main>${gmailDisclosureMarkup()}${detailMarkup()}<div class="dialog-backdrop" data-add-dialog hidden><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="add-title"><button class="dialog-close" data-close-dialog aria-label="Close">×</button><h2 id="add-title">Add a subscription</h2><form><label>Service name<input required></label><button class="primary-button" type="submit">Add to overview</button></form></section></div>`
+app.innerHTML = `<main class="app-shell">${navigationMarkup(brand)}${overviewMarkup({ subscriptions, actions: savingsActions, monthlySpend: monthlySpendFor(subscriptions) })}<footer class="app-footer wrap">${brand}<span>Private by design</span></footer></main>${gmailDisclosureMarkup()}${detailMarkup()}<div class="dialog-backdrop" data-add-dialog hidden><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="add-title"><button class="dialog-close" data-close-dialog aria-label="Close">×</button><p class="eyebrow">Manual entry</p><h2 id="add-title">Add a subscription</h2><form class="subscription-form"><label>Service name<input name="name" placeholder="e.g. Netflix" required></label><div class="form-row"><label>Cost<input name="cost" type="number" min="0" step="0.01" inputmode="decimal" placeholder="22.99" required></label><label>Billing cadence<select name="cadence"><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></label></div><button class="primary-button form-submit" type="submit">Add to overview</button></form></section></div>`
 
 initializeNavigation(app)
 const live = createLiveRegion()
@@ -33,7 +33,18 @@ document.querySelectorAll('[data-action-target]').forEach(button => button.addEv
   renderDetail(detailRoot, subscriptions.find(item => item.name === names[button.dataset.actionTarget]), detailDialog)
 }))
 document.querySelector('[data-open-add]').addEventListener('click', event => addDialog.open(event.currentTarget))
-addRoot.querySelector('form').addEventListener('submit', event => { event.preventDefault(); addDialog.close(); live.announce('Subscription entry ready to be added.') })
+addRoot.querySelector('form').addEventListener('submit', event => {
+  event.preventDefault()
+  const data = new FormData(event.currentTarget)
+  const name = data.get('name').trim(); const cost = Number(data.get('cost')); const cadence = data.get('cadence')
+  const item = { id: `manual-${Date.now()}`, name, plan: 'Added manually', category: 'Other', cost, cadence, next: 'Not provided', icon: name.charAt(0).toUpperCase(), tone: 'navy', takeTone: 'good', signal: '', source: 'Manual entry', confirmed: null, confidence: 'User provided', history: [], bills: [] }
+  subscriptions.push(item)
+  document.querySelector('.subscription-list').insertAdjacentHTML('beforeend', subscriptionRow(item))
+  wireRows(document.querySelector('.subscription-list'))
+  document.querySelector('[data-spend]').textContent = money(monthlySpendFor(subscriptions))
+  document.querySelector('[data-count]').textContent = subscriptions.length
+  event.currentTarget.reset(); addDialog.close(); live.announce(`${name} added.`)
+})
 
 const setGmailState = (state, copy, action = 'connect') => {
   status.textContent = state; message.textContent = copy; gmailButton.dataset.gmailAction = action

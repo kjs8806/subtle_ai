@@ -5,5 +5,6 @@ export const initializeNavigation = (root) => {
   const close = (restore = false) => { menu.hidden = true; button.setAttribute('aria-expanded', 'false'); if (restore) button.focus() }
   button.addEventListener('click', () => { const opening = menu.hidden; menu.hidden = !opening; button.setAttribute('aria-expanded', String(opening)); if (opening) menu.querySelector('a').focus() })
   menu.addEventListener('click', () => close())
+  menu.addEventListener('focusout', (event) => { if (!menu.contains(event.relatedTarget) && event.relatedTarget !== button) close() })
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !menu.hidden) close(true) })
 }
