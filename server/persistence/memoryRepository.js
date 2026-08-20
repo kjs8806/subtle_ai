@@ -11,6 +11,11 @@ export const createMemoryRepository = () => {
   const scans = new Map()
 
   return {
+    createUser: ({ id = randomUUID(), email, name }) => {
+      const user = { id, email, name }
+      users.set(id, user)
+      return clone(user)
+    },
     getUser: (id) => clone(users.get(id) || null),
     getConnection: (userId) => clone(connections.get(userId) || { status: 'not_connected', scanStatus: 'idle' }),
     authorizeConnection: (userId) => {
@@ -38,7 +43,7 @@ export const createMemoryRepository = () => {
     completeScan: (userId, scanId, found, status = 'complete') => {
       const scan = scans.get(scanId)
       const connection = connections.get(userId)
-      if (!scan || !connection) return null
+      if (!scan || scan.userId !== userId || !connection) return null
       scan.status = status
       scan.found = found
       scan.completedAt = new Date().toISOString()
@@ -48,15 +53,33 @@ export const createMemoryRepository = () => {
       connections.set(userId, connection)
       return clone(scan)
     },
-    getScan: (id) => clone(scans.get(id) || null),
+    getScan: (userId, id) => {
+      const scan = scans.get(id)
+      return clone(scan?.userId === userId ? scan : null)
+    },
     upsertMessage: (connectionId, providerMessageId) => `${connectionId}:${providerMessageId}`,
-    persistParsedEvidence: (userId, parsed) => {
+    persistParsedEvidence: (userId, parsed, { failBeforeCommit = false } = {}) => {
+      const connection = connections.get(userId)
+      if (!connection || connection.status !== 'connected') throw new Error('Connected source required')
       const existing = [...evidence.values()].find((item) => item.userId === userId && item.sourceId === parsed.sourceId)
       if (existing) return { subscription: clone(subscriptions.get(existing.subscriptionId)), evidence: clone(existing), created: false }
       const evidenceId = randomUUID()
-      const subscriptionId = randomUUID()
+      // Merchant identity is account-scoped and requires both normalized service and
+      // raw merchant agreement. Canonical service alone is never enough to merge.
+      const candidates = [...subscriptions.values()].filter((item) => item.userId === userId
+        && item.canonicalService === parsed.canonicalService
+        && item.rawMerchant === parsed.rawMerchant)
+      if (candidates.length > 1) return { created: false, ambiguous: true }
+      const subscriptionId = candidates[0]?.id || randomUUID()
       const record = { ...parsed, id: evidenceId, userId, subscriptionId, provenance: { canonicalService: 'confirmed', amount: parsed.amount === null ? 'inferred' : 'confirmed', cadence: parsed.cadence ? 'confirmed' : 'inferred' } }
-      const subscription = { id: subscriptionId, userId, canonicalService: parsed.canonicalService, rawMerchant: parsed.rawMerchant, plan: 'Unknown plan', currentPrice: parsed.amount, billingCycle: parsed.cadence || 'unknown', nextRenewal: parsed.nextRenewal, status: 'active', source: 'Gmail receipt', evidence: [record], priceHistory: [{ amount: parsed.amount, observedAt: parsed.receivedAt }], billingHistory: [{ amount: parsed.amount, billedAt: parsed.receivedAt }], fieldObservations: Object.entries(record.provenance).map(([field, provenance]) => ({ field, value: record[field] ?? null, provenance, confidence: parsed.confidence.score, evidenceId })) }
+      const previous = candidates[0]
+      const observation = { amount: parsed.amount, observedAt: parsed.receivedAt }
+      const billing = { amount: parsed.amount, billedAt: parsed.receivedAt, evidenceId }
+      const fields = Object.entries(record.provenance).map(([field, provenance]) => ({ field, value: record[field] ?? null, provenance, confidence: parsed.confidence.score, evidenceId }))
+      const subscription = previous
+        ? { ...previous, currentPrice: parsed.amount ?? previous.currentPrice, billingCycle: parsed.cadence || previous.billingCycle, nextRenewal: parsed.nextRenewal || previous.nextRenewal, evidence: [...previous.evidence, record], priceHistory: [...previous.priceHistory, observation], billingHistory: [...previous.billingHistory, billing], fieldObservations: [...previous.fieldObservations, ...fields] }
+        : { id: subscriptionId, userId, canonicalService: parsed.canonicalService, rawMerchant: parsed.rawMerchant, plan: null, currentPrice: parsed.amount, billingCycle: parsed.cadence, nextRenewal: parsed.nextRenewal, status: 'active', source: 'Gmail receipt', evidence: [record], priceHistory: [observation], billingHistory: [billing], fieldObservations: fields }
+      if (failBeforeCommit) throw new Error('Simulated transaction failure')
       evidence.set(evidenceId, record)
       subscriptions.set(subscriptionId, subscription)
       billingEvents.add(`${subscriptionId}:${evidenceId}`)

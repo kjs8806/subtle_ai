@@ -21,6 +21,32 @@ test('health reports the mock provider', async () => {
   assert.deepEqual(response.json(), { status: 'ok', provider: 'mock' })
 })
 
+test('sets browser security headers', async () => {
+  const response = await buildApp().inject({ method: 'GET', url: '/api/v1/health' })
+  assert.match(response.headers['content-security-policy'], /default-src 'self'/)
+  assert.equal(response.headers['x-content-type-options'], 'nosniff')
+})
+
+test('production mutations reject cross-site and missing origins', async () => {
+  const app = buildApp({ production: true, publicOrigin: 'https://subtle.example' })
+  const missing = await app.inject({ method: 'POST', url: '/api/v1/auth/logout' })
+  const crossSite = await app.inject({ method: 'POST', url: '/api/v1/auth/logout', headers: { origin: 'https://attacker.example' } })
+  assert.equal(missing.statusCode, 403)
+  assert.equal(crossSite.statusCode, 403)
+  assert.equal(crossSite.json().error.code, 'invalid_origin')
+})
+
+test('expired oauth state is rejected', async () => {
+  let time = 0
+  const app = buildApp({ now: () => time })
+  const start = await app.inject({ method: 'GET', url: '/api/v1/auth/google/start' })
+  const state = start.cookies.find(({ name }) => name === 'subtle_oauth_state').value
+  time = 10 * 60 * 1000 + 1
+  const response = await app.inject({ method: 'GET', url: `/api/v1/auth/google/callback?state=${state}&code=mock-success`, cookies: { subtle_oauth_state: state } })
+  assert.equal(response.statusCode, 400)
+  assert.equal(response.json().error.code, 'invalid_oauth_state')
+})
+
 test('rejects protected routes without a session', async () => {
   const app = buildApp()
   const response = await app.inject({ method: 'GET', url: '/api/v1/subscriptions' })

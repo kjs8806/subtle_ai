@@ -6,15 +6,20 @@ import { config } from './config/env.js'
 import { createFakeGmailProvider } from './gmail/fakeProvider.js'
 import { createMemoryRepository } from './persistence/memoryRepository.js'
 import { SESSION_COOKIE, createSessionManager } from './security/session.js'
+import { createRateLimiter, enforceSameOrigin, securityHeaders } from './security/http.js'
 import { parseReceipt } from '../src/services/receiptPipeline.js'
 
 const userId = 'mock-user'
 
-export const buildApp = ({ repository = createMemoryRepository(), provider = createFakeGmailProvider(), sessions = createSessionManager() } = {}) => {
-  const app = Fastify({ logger: false, bodyLimit: 64 * 1024 })
-  const oauthStates = new Set()
+export const buildApp = ({ repository = createMemoryRepository(), provider = createFakeGmailProvider(), sessions = createSessionManager(), production = config.production, publicOrigin = config.publicOrigin, now = () => Date.now() } = {}) => {
+  const logger = production ? { redact: ['req.headers.authorization', 'req.headers.cookie', 'res.headers.set-cookie', '*.refreshToken', '*.body'] } : false
+  const app = Fastify({ logger, bodyLimit: 64 * 1024 })
+  const oauthStates = new Map()
   app.register(cookie)
   app.decorateRequest('user', null)
+  app.addHook('onRequest', securityHeaders)
+  app.addHook('onRequest', createRateLimiter())
+  app.addHook('onRequest', enforceSameOrigin({ production, origin: publicOrigin }))
   app.addHook('preHandler', async (request) => {
     const session = sessions.resolve(request.cookies[SESSION_COOKIE])
     request.user = session?.userId ? repository.getUser(session.userId) : null
@@ -29,17 +34,20 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = cre
   app.get('/api/v1/session', async (request) => ({ authenticated: Boolean(request.user), user: request.user }))
   app.get('/api/v1/auth/google/start', async (request, reply) => {
     const state = randomUUID()
-    oauthStates.add(state)
-    reply.setCookie('subtle_oauth_state', state, { httpOnly: true, secure: true, sameSite: 'lax', path: '/' })
+    oauthStates.set(state, now() + 10 * 60 * 1000)
+    reply.setCookie('subtle_oauth_state', state, { httpOnly: true, secure: production, sameSite: 'lax', path: '/', maxAge: 600 })
     return provider.createAuthorizationRequest({ state })
   })
   app.get('/api/v1/auth/google/callback', async (request, reply) => {
     requireQuery(request, ['state', 'code'])
-    if (!request.query.state || request.query.state !== request.cookies.subtle_oauth_state || !oauthStates.delete(request.query.state)) return reply.code(400).send({ error: { code: 'invalid_oauth_state', message: 'Invalid authorization state' } })
+    const expiresAt = oauthStates.get(request.query.state)
+    oauthStates.delete(request.query.state)
+    reply.clearCookie('subtle_oauth_state', { path: '/' })
+    if (!request.query.state || request.query.state !== request.cookies.subtle_oauth_state || !expiresAt || expiresAt <= now()) return reply.code(400).send({ error: { code: 'invalid_oauth_state', message: 'Invalid authorization state' } })
     const result = await provider.exchangeAuthorizationCode({ code: request.query.code })
     if (result.status !== 'authorized') return reply.code(400).send({ error: { code: result.status, message: 'Authorization was not completed' } })
     const token = sessions.issue(userId)
-    reply.setCookie(SESSION_COOKIE, token, { httpOnly: true, secure: true, sameSite: 'lax', path: '/' })
+    reply.setCookie(SESSION_COOKIE, token, { httpOnly: true, secure: production, sameSite: 'lax', path: '/', maxAge: 8 * 60 * 60 })
     repository.authorizeConnection(userId)
     return { status: 'authorized' }
   })
@@ -69,8 +77,9 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = cre
       const completed = repository.completeScan(request.user.id, scan.id, found)
       return { ...completed, ambiguous }
     } catch (error) {
+      request.log.error({ err: error, scanId: scan.id }, 'Gmail scan failed')
       repository.completeScan(request.user.id, scan.id, 0, 'failed')
-      return reply.code(502).send({ error: { code: 'scan_failed', message: error.message } })
+      return reply.code(502).send({ error: { code: 'scan_failed', message: 'Gmail receipts could not be scanned' } })
     }
   })
   app.post('/api/v1/sources/gmail/disconnect', { preHandler: requireUser }, async (request) => { await provider.revokeConnection(); return repository.disconnectConnection(request.user.id) })
