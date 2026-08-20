@@ -31,3 +31,7 @@ QA reviews after CI and technical self-review. QA records environment, commit, s
 ## Known gaps
 
 The browser UI currently lacks an automated interaction suite. Real Gmail, PostgreSQL runtime, staging, and production end-to-end coverage remain release-gated.
+
+The repository also lacks an explicit lint/static-analysis and code-formatting gate; `git diff --check` covers whitespace only. Adding and enforcing those tools in CI is planned.
+
+A dependency-review workflow is also planned, but it must not be enabled until support for this private repository is confirmed. Dependabot remains enabled for npm and GitHub Actions dependency updates.
