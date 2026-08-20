@@ -19,7 +19,7 @@ A feature is Done only when all applicable evidence is complete. Code complete i
 
 ## Designer gate
 
-- Affected UI is reviewed on the exact candidate commit for flow, states, responsive behavior, accessibility, and consistency.
+- Affected UI is reviewed on the exact reviewed PR head SHA for flow, states, responsive behavior, accessibility, and consistency.
 
 ## Product Owner gate
 
@@ -27,7 +27,7 @@ A feature is Done only when all applicable evidence is complete. Code complete i
 
 ## QA gate
 
-- The acceptance-criteria matrix passes on the exact commit.
+- The acceptance-criteria matrix passes on the exact reviewed PR head SHA.
 - Applicable regression, edge, accessibility, security, migration, and end-to-end coverage passes.
 - No unresolved Critical or High defect remains; recommendation is Approved.
 
