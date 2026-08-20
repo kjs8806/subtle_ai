@@ -1,7 +1,7 @@
 # Deployment
 
-> **Owner:** Tech Lead  
-> **Status:** No production deployment exists  
+> **Owner:** Tech Lead
+> **Status:** No production deployment exists
 > **Last reviewed:** 2026-08-20
 
 ## Current state

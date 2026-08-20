@@ -1,8 +1,8 @@
 # Getting Started
 
-> **Owner:** Project Coordinator  
-> **Technical reviewer:** Tech Lead  
-> **Status:** Onboarding baseline  
+> **Owner:** Project Coordinator
+> **Technical reviewer:** Tech Lead
+> **Status:** Onboarding baseline
 > **Last reviewed:** 2026-08-20
 
 ## Goal

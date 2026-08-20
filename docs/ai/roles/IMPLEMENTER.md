@@ -1,7 +1,7 @@
 # Implementer Role
 
-> **Role owner:** Codex  
-> **Status:** Stable role contract  
+> **Role owner:** Codex
+> **Status:** Stable role contract
 > **Last reviewed:** 2026-08-20
 
 ## Owns

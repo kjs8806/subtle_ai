@@ -1,8 +1,8 @@
 # Test Strategy
 
-> **Owner:** QA/Test Engineer  
-> **Technical contributor:** Tech Lead  
-> **Status:** Canonical quality policy  
+> **Owner:** QA/Test Engineer
+> **Technical contributor:** Tech Lead
+> **Status:** Canonical quality policy
 > **Last reviewed:** 2026-08-20
 
 `docs/engineering/TESTING.md` describes current implementation-level testing. This document defines independent quality and release evidence.

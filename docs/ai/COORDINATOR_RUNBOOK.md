@@ -1,7 +1,7 @@
 # Coordinator Runbook
 
-> **Owner:** Project Coordinator  
-> **Status:** Canonical agent-coordination procedure  
+> **Owner:** Project Coordinator
+> **Status:** Canonical agent-coordination procedure
 > **Last reviewed:** 2026-08-20
 
 ## Purpose

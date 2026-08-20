@@ -1,7 +1,7 @@
 # UX Principles
 
-> **Owner:** Senior Product Designer  
-> **Status:** Approved baseline  
+> **Owner:** Senior Product Designer
+> **Status:** Approved baseline
 > **Last reviewed:** 2026-08-20
 
 1. **Lead with the next useful action.** Prioritize what a user can review or do over passive insight volume.

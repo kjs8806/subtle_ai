@@ -1,7 +1,7 @@
 # Project Glossary
 
-> **Owner:** Project Coordinator  
-> **Status:** Maintained reference  
+> **Owner:** Project Coordinator
+> **Status:** Maintained reference
 > **Last reviewed:** 2026-08-20
 
 | Term | Meaning |

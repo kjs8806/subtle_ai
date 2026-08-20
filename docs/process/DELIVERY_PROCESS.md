@@ -1,7 +1,7 @@
 # Delivery Process
 
-> **Owner:** Project Coordinator  
-> **Status:** Canonical workflow  
+> **Owner:** Project Coordinator
+> **Status:** Canonical workflow
 > **Last reviewed:** 2026-08-20
 
 ## Lifecycle

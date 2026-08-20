@@ -1,7 +1,7 @@
 # Architecture Decision Records
 
-> **Owner:** Tech Lead  
-> **Status:** Active process  
+> **Owner:** Tech Lead
+> **Status:** Active process
 > **Last reviewed:** 2026-08-20
 
 Use ADRs for durable, consequential architecture choices with meaningful alternatives or operational consequences. Smaller status questions may remain in `../TECH_DECISIONS.md`; an approved ADR should be linked from that register.

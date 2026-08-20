@@ -1,8 +1,8 @@
 # AI Usage Policy
 
-> **Owner:** Project Coordinator  
-> **Technical and security reviewer:** Tech Lead  
-> **Status:** Required control  
+> **Owner:** Project Coordinator
+> **Technical and security reviewer:** Tech Lead
+> **Status:** Required control
 > **Last reviewed:** 2026-08-20
 
 ## Operating rule

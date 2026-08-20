@@ -1,7 +1,7 @@
 # Definition of Ready
 
-> **Owner:** Project Coordinator  
-> **Status:** Required implementation gate  
+> **Owner:** Project Coordinator
+> **Status:** Required implementation gate
 > **Last reviewed:** 2026-08-20
 
 A feature is Ready for Development only when every applicable owner has supplied and approved its gate.

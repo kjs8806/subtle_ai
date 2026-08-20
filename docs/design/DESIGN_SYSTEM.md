@@ -1,7 +1,7 @@
 # Design System
 
-> **Owner:** Senior Product Designer  
-> **Status:** Current prototype reference  
+> **Owner:** Senior Product Designer
+> **Status:** Current prototype reference
 > **Last reviewed:** 2026-08-20
 
 This document records the current system; it does not authorize a visual redesign. Implementation details remain in `src/style.css`.

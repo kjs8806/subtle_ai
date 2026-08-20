@@ -1,8 +1,8 @@
 # Workflow
 
-> **Owner:** Project Coordinator  
-> **Status:** Navigation summary  
-> **Canonical process:** [DELIVERY_PROCESS.md](process/DELIVERY_PROCESS.md)  
+> **Owner:** Project Coordinator
+> **Status:** Navigation summary
+> **Canonical process:** [DELIVERY_PROCESS.md](process/DELIVERY_PROCESS.md)
 > **Last reviewed:** 2026-08-20
 
 This file is retained for compatibility with existing links. It does not define a competing workflow.

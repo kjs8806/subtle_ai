@@ -1,8 +1,8 @@
 # Release Checklist
 
-> **Owner:** QA/Test Engineer  
-> **Coordinator:** Project Coordinator  
-> **Status:** Production release gate  
+> **Owner:** QA/Test Engineer
+> **Coordinator:** Project Coordinator
+> **Status:** Production release gate
 > **Last reviewed:** 2026-08-20
 
 The project currently has no production deployment. This checklist does not authorize one.

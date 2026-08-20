@@ -1,7 +1,7 @@
 # Product
 
-> **Owner:** Product Owner  
-> **Status:** Approved baseline  
+> **Owner:** Product Owner
+> **Status:** Approved baseline
 > **Last reviewed:** 2026-08-20
 
 ## Positioning

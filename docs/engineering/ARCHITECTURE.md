@@ -1,7 +1,7 @@
 # Architecture
 
-> **Owner:** Tech Lead  
-> **Status:** Current prototype plus explicitly labeled FEATURE-001 target  
+> **Owner:** Tech Lead
+> **Status:** Current prototype plus explicitly labeled FEATURE-001 target
 > **Last reviewed:** 2026-08-20
 
 ## Current implemented system

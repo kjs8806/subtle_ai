@@ -1,7 +1,7 @@
 # Definition of Done
 
-> **Owner:** Project Coordinator  
-> **Status:** Required completion gate  
+> **Owner:** Project Coordinator
+> **Status:** Required completion gate
 > **Last reviewed:** 2026-08-20
 
 A feature is Done only when all applicable evidence is complete. Code complete is not release complete.

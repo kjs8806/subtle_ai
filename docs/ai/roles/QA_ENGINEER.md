@@ -1,7 +1,7 @@
 # QA/Test Engineer Role
 
-> **Role owner:** QA/Test Engineer  
-> **Status:** Stable role contract  
+> **Role owner:** QA/Test Engineer
+> **Status:** Stable role contract
 > **Last reviewed:** 2026-08-20
 
 ## Owns

@@ -1,7 +1,7 @@
 # Senior Product Designer Role
 
-> **Role owner:** Senior Product Designer  
-> **Status:** Stable role contract  
+> **Role owner:** Senior Product Designer
+> **Status:** Stable role contract
 > **Last reviewed:** 2026-08-20
 
 ## Owns

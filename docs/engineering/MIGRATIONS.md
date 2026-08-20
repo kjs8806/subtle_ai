@@ -1,7 +1,7 @@
 # Database Migration and Recovery Rules
 
-> **Owner:** Tech Lead  
-> **Status:** Approved policy; runtime tooling not implemented  
+> **Owner:** Tech Lead
+> **Status:** Approved policy; runtime tooling not implemented
 > **Last reviewed:** 2026-08-20
 
 `migrations/001_feature_001.sql` is a planned PostgreSQL schema. The current app does not connect to or execute migrations against PostgreSQL.

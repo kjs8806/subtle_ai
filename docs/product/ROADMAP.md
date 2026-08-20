@@ -1,14 +1,14 @@
 # Roadmap
 
-> **Owner:** Product Owner  
-> **Status:** Approved current ordering  
+> **Owner:** Product Owner
+> **Status:** Approved current ordering
 > **Last reviewed:** 2026-08-20
 
 ## Now — P0
 
 ### FEATURE-001: Evidence-Backed Gmail Receipt Ingestion
 
-**Status:** Implementing  
+**Status:** Implementing
 **Specification:** [FEATURE-001.md](features/FEATURE-001.md)
 
 Complete and independently validate the mock vertical slice, then resolve the production gates before any real-provider rollout. The meaningful test is receipt discovery through evidence review, not connection alone.

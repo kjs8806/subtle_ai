@@ -1,7 +1,7 @@
 # Design Decision Log
 
-> **Owner:** Senior Product Designer  
-> **Status:** Approved decisions  
+> **Owner:** Senior Product Designer
+> **Status:** Approved decisions
 > **Last reviewed:** 2026-08-20
 
 | ID | Decision |

@@ -1,7 +1,7 @@
 # Product Decision Log
 
-> **Owner:** Product Owner  
-> **Status:** Approved decisions  
+> **Owner:** Product Owner
+> **Status:** Approved decisions
 > **Last reviewed:** 2026-08-20
 
 | ID | Decision | Rationale |
