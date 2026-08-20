@@ -1,43 +1,53 @@
 ## Feature or issue
 
-Link the GitHub issue and feature specification.
+- **Issue:**
+- **Feature specification:**
+- **Approved design / technical plan / ADRs:**
 
 ## Summary
 
-Describe the user-visible and technical changes.
+Describe user-visible and technical changes and confirm the branch stayed within approved scope.
 
-## Acceptance criteria
+## Acceptance-criteria matrix
 
-- [ ] Each applicable acceptance criterion is mapped to implementation or tests.
-- [ ] Loading, empty, error, and success states are addressed when applicable.
-- [ ] Accessibility and responsive behavior are addressed when applicable.
+Link the canonical QA report or complete this table. Follow [`docs/quality/TEST_STRATEGY.md`](../docs/quality/TEST_STRATEGY.md).
+
+| AC ID | Scenario | Implementation/test | Evidence | Result | Defect |
+| --- | --- | --- | --- | --- | --- |
+| | | | | | |
 
 ## Validation
 
-- [ ] npm test
-- [ ] npm run build
-- [ ] git diff --check
-- [ ] Manual or automated QA evidence is attached for user-facing changes.
+- [ ] `npm test`
+- [ ] `npm run build`
+- [ ] `git diff --check`
+- [ ] Manual/automated QA evidence is attached for affected user behavior.
+- **Reviewed PR head SHA:**
+- **Base SHA:**
+- **CI candidate merge SHA:**
+- **CI run URL:**
+- **Environment:**
 
-## QA evidence
+## States and experience
 
-- **Tested commit:** <!-- Full commit SHA -->
-- **Environment:** <!-- Browser/device, OS, runtime, deployment or local setup -->
-- **Scenarios and results:**
-  - <!-- Scenario / expected result / actual result / pass or fail -->
-- **Evidence links:** <!-- Screenshots, recordings, logs, artifacts, or test output -->
-- **Defects found:** <!-- Issue links, severity, or None -->
-- **Regression notes:** <!-- Existing areas checked and results -->
-- **QA recommendation:** <!-- Approved / Changes required / Blocked -->
-- **QA report link:** <!-- Link to docs/features/.../QA_REPORT.md or equivalent -->
+- [ ] Loading, empty, error, cancelled, and success states are addressed when applicable.
+- [ ] Responsive behavior and accessibility are addressed when applicable.
+- [ ] Designer review is linked for user-facing changes.
+- [ ] Product acceptance is linked.
 
-## Risk and security
+## Risk, security, and data
 
-- [ ] No credentials, tokens, sensitive receipt content, or personal data were committed.
-- [ ] Authentication, authorization, privacy, retention, and migration impacts were considered.
-- [ ] Database migrations are reviewed and reversible where feasible, or the limitation is documented.
-- [ ] Architecture and decision records were updated when necessary.
+- [ ] No credentials, tokens, sensitive receipt content, personal data, or populated environment files were committed.
+- [ ] Authentication, authorization, privacy, retention, logging, and least privilege were considered.
+- [ ] Migration, compatibility, backup, rollback/recovery, and data impact are addressed when applicable.
+- [ ] Architecture, ADRs, technical decisions, and documentation were updated when required.
+- [ ] No blocked production integration was introduced.
 
-## Review notes
+## Reviews and remaining gaps
 
-List known limitations, follow-up work, screenshots, and reviewer guidance.
+- **Codex self-check:**
+- **Tech Lead review:**
+- **QA recommendation:** Approved / Changes required / Blocked
+- **QA report/evidence:**
+- **Known limitations/follow-ups:**
+- **Founder decision required:** None / describe
