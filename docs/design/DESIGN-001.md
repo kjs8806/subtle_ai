@@ -1,7 +1,7 @@
 # DESIGN-001 — Overview UX Simplification
 
 > **Owner:** Senior Product Designer  
-> **Status:** Proposed design specification  
+> **Status:** Product-approved design specification  
 > **Date:** 2026-08-20  
 > **Related:** [UX Principles](UX_PRINCIPLES.md), [Design System](DESIGN_SYSTEM.md), [Design Decisions](DESIGN_DECISIONS.md), [FEATURE-001](../product/features/FEATURE-001.md)
 
@@ -72,7 +72,8 @@ This design does **not** change product requirements, business rules, recommenda
 3. User continues to Gmail or selects **Not now**.
 4. During scanning, the rest of the app remains usable.
 5. Result is announced accessibly.
-6. Successful discovery ends in review of the discovered subscription and its evidence.
+6. If one subscription is discovered, the success flow may lead directly to review of that subscription and its evidence.
+7. If multiple subscriptions are discovered, the success flow must support reviewing the discovered subscriptions as a set and then inspecting individual evidence as needed.
 
 ## 5. Overview screen structure
 
@@ -202,9 +203,9 @@ Overview may show a lightweight status such as:
 - `Gmail connected`
 - `Reconnect needed`
 
-Detailed source management should live in an appropriate settings / connected-accounts location when that product area exists.
+Persistent source management is approved as part of the durable information architecture for a future **Settings / Connected accounts** destination.
 
-Until such a destination is approved, retain only the minimum source controls needed to satisfy FEATURE-001 without allowing them to visually compete with spend, recommendations, or subscriptions.
+Until that destination exists, retain the minimum source controls required by FEATURE-001 and keep them discoverable without allowing them to visually compete with spend, recommendations, or subscriptions.
 
 ## 6. Subscription list design
 
@@ -371,18 +372,14 @@ Examples:
 
 ## 9. Navigation
 
-Current `Overview | Subscriptions | Savings` navigation should be reconsidered because Savings is not a distinct enough destination in the current experience.
-
-Preferred design direction:
+For MVP, the approved top-level navigation is:
 
 - **Overview**
 - **Subscriptions**
 
-Recommendations live naturally within Overview.
+The top-level **Savings** destination is removed for MVP. Savings is an outcome, not currently a distinct enough destination. Recommendations live naturally within Overview under **Worth your attention**.
 
-However, removing or renaming a top-level destination changes product information architecture and therefore requires Product Owner approval before implementation.
-
-Until approved, do not silently remove the Savings destination.
+Future recommendation types or user actions that materially change product scope still require separate Product Owner approval.
 
 ### Mobile
 
@@ -424,7 +421,7 @@ Target Subscription Detail hierarchy:
 ```text
 SubscriptionDetail
 ├── IdentityAndCost
-├── RecommendationSummary? 
+├── RecommendationSummary?
 ├── EvidenceAndProvenance
 ├── PriceHistory
 └── BillingHistory
@@ -536,9 +533,17 @@ The subscription should immediately appear in the list and totals should update 
 
 ### Gmail discovery
 
-Success should communicate user value, not only technical connection.
+Success should communicate user value, not only technical connection, and must support one or many discoveries.
 
-Example:
+Single discovery example:
+
+`1 subscription found.`
+
+Primary action:
+
+**Review subscription**
+
+Multiple discovery example:
 
 `3 subscriptions found.`
 
@@ -634,7 +639,7 @@ Do not introduce a new color palette, illustration system, heavy gradients, glas
 
 ### Recommendations
 
-- [ ] `Savings feed` is replaced by an approved user-centered label, with **Worth your attention** as the design recommendation.
+- [ ] `Savings feed` is replaced by **Worth your attention**.
 - [ ] Each recommendation states the affected service(s), issue, supported impact, and one clear primary action.
 - [ ] Recommendations do not include redundant system metadata that does not help a user decide.
 - [ ] No separate `Subtle AI / Personalized analysis` card duplicates recommendation content.
@@ -660,9 +665,11 @@ Do not introduce a new color palette, illustration system, heavy gradients, glas
 - [ ] Authorization state and scanning state remain distinct.
 - [ ] Scanning does not block unrelated navigation.
 - [ ] Scan results and errors are announced accessibly.
+- [ ] Discovery success supports one or many found subscriptions without implying a single-result-only flow.
 
 ### Navigation and responsive behavior
 
+- [ ] MVP top-level navigation contains **Overview** and **Subscriptions**; **Savings** is not a separate top-level destination.
 - [ ] Mobile navigation has a discoverable replacement for desktop links.
 - [ ] No interactive target intended for touch is smaller than 44 × 44 CSS pixels without an approved exception.
 - [ ] No horizontal overflow occurs at supported mobile widths.
@@ -676,29 +683,39 @@ Do not introduce a new color palette, illustration system, heavy gradients, glas
 - [ ] State and recommendation meaning are not communicated by color alone.
 - [ ] Reduced-motion preference is respected.
 
-## 21. Product decisions requiring Product Owner approval
+## 21. Product-approved scope decisions
 
-DESIGN-001 recommends, but does not independently authorize:
+The Product Owner has approved the following for DESIGN-001:
 
-1. Removing or renaming the top-level **Savings** navigation destination.
-2. Moving persistent source management to a future **Settings / Connected accounts** destination.
-3. Any change to product scope, recommendation types, or approved user actions.
+1. Remove the top-level **Savings** navigation destination for MVP.
+2. Use **Overview** and **Subscriptions** as the MVP top-level navigation.
+3. Treat persistent source management in a future **Settings / Connected accounts** area as the durable information architecture; until then, minimum required source controls remain discoverable.
+4. Use **Worth your attention** as the recommendation-area label.
+5. Preserve evidence/provenance visibility, including field-level provenance where support differs.
+6. Keep neutral subscriptions visually quiet.
+7. Show potential savings only when supported by available evidence/data.
+8. Do not claim complete optimization in the no-recommendation state.
+9. Do not fabricate progress during Gmail scanning.
+10. Ensure Gmail disclosure does not imply narrower access than the actual OAuth permissions.
 
-The Coordinator should route these items to the Product Owner before implementation if the engineering plan depends on them.
+Any new recommendation type, user action, or other material product-scope change still requires separate Product Owner approval.
 
 ## 22. Tech Lead handoff notes
 
-The Tech Lead should preserve the existing Vite/JavaScript/PWA architecture unless a technical limitation requires otherwise.
+DESIGN-001 intentionally does not prescribe application architecture, framework, rendering technology, or delivery stack. Engineering owns those decisions.
 
-Implementation should focus on hierarchy and component simplification rather than a rewrite.
+The technical implementation must preserve the approved user experience, responsive behavior, accessibility behavior, supported product surfaces, and product scope defined here.
 
-Before issuing Copilot implementation instructions, the Tech Lead should identify:
+Implementation should focus on hierarchy and component simplification rather than introducing unnecessary UX complexity.
+
+Before issuing implementation-agent instructions, the Tech Lead should identify:
 
 - which existing Overview sections are removed, merged, or reordered
 - how recommendation rendering is reused after the AI-card merge
 - responsive navigation implementation
 - focus-management strategy for dialogs
 - live-region strategy for scanning and discovery
+- how one-versus-many Gmail discovery results transition into review
 - whether any current product requirement conflicts with the simplified subscription-row design
 
 ## 23. Design review gate
