@@ -27,3 +27,32 @@ test('handles empty and malformed payloads without exposing raw HTML', () => {
   const result = adaptGmailMessage({ id: 'malformed', payload: { mimeType: 'text/html', body: { data: '%%%not-base64%%%' } } })
   assert.equal(result.body, '')
 })
+
+test('handles a payload whose parts field is not an array without crashing', () => {
+  const result = adaptGmailMessage({ id: 'weird-parts', payload: { headers, mimeType: 'multipart/mixed', parts: 'not-an-array' } })
+  assert.equal(result.body, '')
+})
+
+test('skips a single decoded part that exceeds the size bound instead of allocating it', () => {
+  const huge = encoded('x'.repeat(500_000))
+  const result = adaptGmailMessage({ id: 'oversized', payload: { headers, mimeType: 'text/plain', body: { data: huge } } })
+  assert.equal(result.body, '')
+})
+
+test('bounds excessive MIME part counts instead of scanning every part', () => {
+  const parts = Array.from({ length: 1000 }, (_, i) => ({ mimeType: 'text/plain', body: { data: encoded(`part-${i}`) } }))
+  const result = adaptGmailMessage({ id: 'many-parts', payload: { headers, mimeType: 'multipart/mixed', parts } })
+  assert.equal(result.body.includes('part-999'), false)
+})
+
+test('bounds deeply nested MIME structures instead of recursing without limit', () => {
+  const leaf = { mimeType: 'text/plain', body: { data: encoded('deep receipt $9.99') } }
+  const nested = Array.from({ length: 500 }).reduce((inner) => ({ mimeType: 'multipart/mixed', parts: [inner] }), leaf)
+  const result = adaptGmailMessage({ id: 'deep-nesting', payload: { headers, mimeType: 'multipart/mixed', parts: [nested] } })
+  assert.equal(result.body, '')
+})
+
+test('normal receipt scenarios remain unaffected by the resource bounds', () => {
+  const result = adaptGmailMessage({ id: 'plain', payload: { headers, mimeType: 'text/plain', body: { data: encoded('Your receipt is $22.99') } } })
+  assert.equal(result.body, 'Your receipt is $22.99')
+})

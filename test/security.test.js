@@ -28,3 +28,24 @@ test('real provider requests only the approved OIDC and Gmail scopes', () => {
   assert.equal(signIn.searchParams.get('redirect_uri'), 'https://app.example/oidc')
   assert.equal(gmail.searchParams.get('redirect_uri'), 'https://app.example/gmail')
 })
+
+test('SEC-004: revokeConnection verifies the HTTP result, sends the token in the POST body, and treats network errors as failure', async () => {
+  const provider = (fetchImpl) => createGoogleProvider({ clientId: 'client', clientSecret: 'secret', oidcRedirectUri: 'https://app.example/oidc', gmailRedirectUri: 'https://app.example/gmail', fetchImpl })
+
+  let calledUrl = null
+  let calledBody = null
+  const success = provider(async (url, options) => { calledUrl = url; calledBody = options.body?.toString(); return { ok: true } })
+  const okResult = await success.revokeConnection({ token: 'refresh-token' })
+  assert.equal(okResult.status, 'disconnected')
+  assert.equal(calledUrl, 'https://oauth2.googleapis.com/revoke')
+  assert.match(calledBody, /token=refresh-token/)
+  assert.equal(calledUrl.includes('refresh-token'), false, 'the token must not be sent in the URL')
+
+  const httpFailure = provider(async () => ({ ok: false, status: 400 }))
+  const failedResult = await httpFailure.revokeConnection({ token: 'refresh-token' })
+  assert.equal(failedResult.status, 'revocation_failed')
+
+  const networkFailure = provider(async () => { throw new Error('network unreachable') })
+  const exceptionResult = await networkFailure.revokeConnection({ token: 'refresh-token' })
+  assert.equal(exceptionResult.status, 'revocation_failed')
+})

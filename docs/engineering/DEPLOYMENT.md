@@ -12,6 +12,8 @@ The current server configuration can fall back to a default session secret. That
 
 The controlled Codespaces Google configuration uses `GOOGLE_OIDC_REDIRECT_URI` for sign-in and `GOOGLE_GMAIL_REDIRECT_URI` for Gmail authorization. `TOKEN_ENCRYPTION_KEY` is required for encrypted refresh-token custody; secret values must remain outside Git.
 
+Session cookies, OAuth-state cookies, and same-origin enforcement on state-changing endpoints activate whenever `NODE_ENV=production` **or** `GMAIL_PROVIDER=google` — not on `NODE_ENV` alone. Codespaces forwards the validation URL over HTTPS while typically leaving `NODE_ENV` at its non-production default, so tying this hardening solely to `NODE_ENV` would leave it off during real-Gmail validation; `GMAIL_PROVIDER=google` is the explicit, always-on trigger for that environment instead.
+
 ## Runtime persistence configuration
 
 `PERSISTENCE_PROVIDER` selects what `node server/app.js` uses at startup, via the composition root in `server/bootstrap.js`:

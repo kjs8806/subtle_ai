@@ -108,17 +108,69 @@ test('disconnect prevents future scans', async () => {
 test('gmail identity mismatch does not connect the source', async () => {
   const provider = {
     ...createFakeGmailProvider(),
+    exchangeAuthorizationCode: async () => ({ status: 'authorized', subject: 'signed-in-subject', email: 'user@example.com', refreshToken: 'mock-refresh-token' }),
     exchangeGmailAuthorizationCode: async () => ({ status: 'authorized', subject: 'different-google-subject', refreshToken: 'never-store' }),
   }
   const app = buildApp({ provider, gmailProvider: 'google' })
   const session = await authorize(app)
-  const start = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/authorize', headers: { cookie: `subtle_session=${session}` } })
+  const start = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/authorize', headers: { cookie: `subtle_session=${session}`, origin: 'http://127.0.0.1:5173' } })
   const state = start.cookies.find(({ name }) => name === 'subtle_gmail_oauth_state').value
   const response = await app.inject({ method: 'GET', url: `/api/v1/sources/gmail/callback?state=${state}&code=mock-success`, headers: { cookie: `subtle_session=${session}; subtle_gmail_oauth_state=${state}` } })
   assert.equal(response.statusCode, 409)
   assert.equal(response.json().error.code, 'identity_mismatch')
   const source = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers: { cookie: `subtle_session=${session}` } })
   assert.equal(source.json().status, 'not_connected')
+})
+
+test('secure mode issues session and oauth-state cookies with HttpOnly, Secure, and SameSite=Lax', async () => {
+  const app = buildApp({ production: true, publicOrigin: 'https://subtle.example' })
+  const start = await app.inject({ method: 'GET', url: '/api/v1/auth/google/start' })
+  const stateCookie = start.cookies.find(({ name }) => name === 'subtle_oauth_state')
+  assert.equal(stateCookie.httpOnly, true)
+  assert.equal(stateCookie.secure, true)
+  assert.equal(stateCookie.sameSite, 'Lax')
+
+  const state = stateCookie.value
+  const callback = await app.inject({ method: 'GET', url: `/api/v1/auth/google/callback?state=${state}&code=mock-success`, cookies: { subtle_oauth_state: state } })
+  const sessionCookie = callback.cookies.find(({ name }) => name === 'subtle_session')
+  assert.equal(sessionCookie.httpOnly, true)
+  assert.equal(sessionCookie.secure, true)
+  assert.equal(sessionCookie.sameSite, 'Lax')
+})
+
+test('GMAIL_PROVIDER=google activates cookie/origin hardening even when NODE_ENV is not production', async () => {
+  // The controlled Codespaces validation environment is served over HTTPS but may
+  // not set NODE_ENV=production, so this protection must not depend solely on it.
+  const app = buildApp({ gmailProvider: 'google', production: false, publicOrigin: 'https://codespace.example' })
+  const start = await app.inject({ method: 'GET', url: '/api/v1/auth/google/start' })
+  const stateCookie = start.cookies.find(({ name }) => name === 'subtle_oauth_state')
+  assert.equal(stateCookie.secure, true)
+
+  const response = await app.inject({ method: 'POST', url: '/api/v1/auth/logout' })
+  assert.equal(response.statusCode, 403)
+  assert.equal(response.json().error.code, 'invalid_origin')
+})
+
+test('same-origin enforcement covers every state-changing endpoint: valid origin accepted, missing and foreign origin rejected', async () => {
+  const app = buildApp({ production: true, publicOrigin: 'https://subtle.example' })
+  const mutations = [
+    '/api/v1/auth/logout',
+    '/api/v1/sources/gmail/authorize',
+    '/api/v1/sources/gmail/scan',
+    '/api/v1/sources/gmail/disconnect',
+  ]
+  for (const url of mutations) {
+    const missing = await app.inject({ method: 'POST', url })
+    assert.equal(missing.statusCode, 403, `${url} must reject a missing Origin`)
+    assert.equal(missing.json().error.code, 'invalid_origin')
+
+    const foreign = await app.inject({ method: 'POST', url, headers: { origin: 'https://attacker.example' } })
+    assert.equal(foreign.statusCode, 403, `${url} must reject a foreign Origin`)
+    assert.equal(foreign.json().error.code, 'invalid_origin')
+
+    const sameOrigin = await app.inject({ method: 'POST', url, headers: { origin: 'https://subtle.example' } })
+    assert.notEqual(sameOrigin.statusCode, 403, `${url} must accept a matching Origin`)
+  }
 })
 
 test('source responses never expose token custody fields', async () => {

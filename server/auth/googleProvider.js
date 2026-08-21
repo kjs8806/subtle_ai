@@ -62,8 +62,21 @@ export const createGoogleProvider = ({ clientId, clientSecret, oidcRedirectUri, 
     },
     revokeConnection: async ({ token }) => {
       if (!token) return { status: 'disconnected' }
-      await fetchImpl(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(token)}`, { method: 'POST' })
-      return { status: 'disconnected' }
+      // Google's revocation result must be verified, not assumed: a non-2xx
+      // response or a network failure both mean the token was NOT revoked, and the
+      // token must be sent in the POST body rather than a query string to avoid it
+      // landing in access/proxy logs.
+      try {
+        const response = await fetchImpl('https://oauth2.googleapis.com/revoke', {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ token }),
+        })
+        if (!response.ok) return { status: 'revocation_failed' }
+        return { status: 'disconnected' }
+      } catch {
+        return { status: 'revocation_failed' }
+      }
     },
   }
 }
