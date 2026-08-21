@@ -1,7 +1,7 @@
 # Chat-Independent Onboarding Simulation
 
 > **Owner:** QA/Test Engineer
-> **Coordinator:** Project Manager
+> **Project management owner:** Project Manager
 > **Status:** Required onboarding verification; currently Blocked
 > **Tracking issue:** [GitHub Issue #8](https://github.com/kjs8806/subscription_app/issues/8)
 > **Last reviewed:** 2026-08-20
@@ -28,7 +28,7 @@ Before testing, QA records:
 
 ## Required external links
 
-The Coordinator supplies real records. Placeholders are intentionally incomplete and block approval until resolved.
+The Project Manager supplies real records. Placeholders are intentionally incomplete and block approval until resolved.
 
 - [ ] Actual small issue whose live status satisfies Definition of Ready: `TBD`
 - [ ] Completed or supervised example issue: `TBD`
