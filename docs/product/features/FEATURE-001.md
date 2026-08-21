@@ -8,6 +8,7 @@
 - Priority: **P0 — Active milestone**
 - Next owner: **Codex / implementation under the approved Tech Lead plan**
 - Founder decision required now: **None**
+- Product validation envelope: **APPROVED — controlled cohort only**
 
 ## Objective
 
@@ -40,6 +41,62 @@ As a user, I want to securely connect Gmail and have Subtle AI discover a subscr
 - User-controlled Gmail disconnect.
 - Limited internal/test-cohort validation.
 - Existing seeded and manual prototype behavior remains usable.
+
+## Controlled real-Gmail validation envelope
+
+This envelope governs FEATURE-001 validation only. It is not a public-launch policy.
+
+### Cohort
+
+- Founder and project team/test accounts.
+- Testers explicitly invited by the Founder.
+- Only account owners who knowingly consent to Gmail receipt scanning for development and testing.
+- No general public users, production marketing, or public onboarding into this flow.
+- Testers are informed that the environment is pre-release and results may be incomplete or incorrect.
+
+### Supported inputs
+
+- Merchants: **Netflix, Spotify, Dropbox, Canva, Youtube, Disney+, Hulu, Amazon Prime, and NordVPN**.
+- A merchant receipt or renewal format is supported only after that exact format has been validated against the parser.
+- Language: **English**.
+- Currencies: **CAD and USD**.
+- Regions: **Canada and the United States**.
+- Unknown merchants may be identified as candidates but must not automatically create confirmed subscriptions.
+- Messages outside the approved format, language, currency, or region envelope must not be silently treated as supported.
+
+### Minimum evidence for automatic creation
+
+A discovered subscription may be created automatically only when its source evidence establishes:
+
+- a recognizable supported merchant or service identity;
+- an actual subscription billing or renewal relationship rather than marketing;
+- the billed amount;
+- the currency; and
+- billing evidence tied to the source message.
+
+Billing cadence, plan, next renewal date, and other optional fields may remain unknown. Missing information is acceptable; fabricated certainty is not. Every automatically created record must retain enough provenance for the user to understand how Subtle knows it exists and inspect the matching evidence.
+
+### Product confidence states
+
+- **Confirmed:** sufficient supported evidence exists to create the subscription automatically.
+- **Ambiguous:** evidence suggests a subscription may exist, but one or more required facts cannot be established reliably.
+- **Unsupported:** the merchant or format is outside the validated envelope.
+
+Ambiguous candidates must not be silently merged into an existing subscription and must not affect confirmed recurring-spend totals. Engineering may retain internal numeric scoring, but FEATURE-001 has no Product-invented numeric confidence threshold. The boundaries between product states must be validated empirically against real receipts.
+
+### Consent and controlled test-data handling
+
+Before Gmail authorization, testers must be told that Subtle uses Gmail access to find subscription receipts, what access is actually requested, that discovered information is used in the pre-release environment, that results may be incomplete or incorrect, and that Gmail can be disconnected.
+
+- Access is explicitly initiated by the tester.
+- OAuth credentials and tokens are never exposed to browser code or logs.
+- Refresh tokens are encrypted server-side.
+- Raw email content is not retained unnecessarily when structured evidence and provenance are sufficient.
+- Test data is not reused for unrelated purposes.
+- Disconnect prevents future Gmail discovery.
+- Development and debug logging does not expose email bodies, OAuth tokens, or sensitive authorization material.
+
+The comprehensive public retention, deletion, and export policy remains a public-release gate rather than a blocker for this controlled validation.
 
 ## Out of scope
 
@@ -160,13 +217,16 @@ Document reusable source states, external-authorization disclosure, non-blocking
 16. Existing seeded/manual subscriptions and Overview, Subscriptions, Savings, Savings Feed, and detail interactions remain intact.
 17. The flow supports keyboard and assistive technology and has no mobile horizontal scrolling.
 18. New branding resolves through APP_CONFIG.name.
-19. The complete meaningful test passes: **Connect Gmail → discover receipt → create evidence-backed subscription → open it → inspect matching evidence.**
+19. At least one controlled-cohort real-provider test passes within the approved validation envelope: **real Gmail authorization → real supported receipt → automatic subscription creation → correct extracted facts → evidence/provenance association → subscription visible in the list → matching detail/evidence inspection.**
+20. Controlled validation also demonstrates at least one safe negative outcome in which an ambiguous or unsupported message does not create false confirmed spending.
 
 ## Technical status and implementation boundary
 
 The canonical approved technical-plan and target-architecture artifact for FEATURE-001 is `docs/engineering/ARCHITECTURE.md`, and the canonical approved technical decision artifact is `docs/engineering/TECH_DECISIONS.md`. These remain authoritative unless a more specific approved technical-plan document is added and linked here. The current partial implementation includes the mock Fastify `/api/v1` boundary, mock Gmail authorization and scanning, in-memory account-scoped persistence and idempotency, provenance fields, a PostgreSQL migration schema, frontend source/scanning/discovery states, service-worker API cache exclusion, and automated domain/API coverage.
 
 This remains a mock vertical slice, not a production Gmail integration. Real Google OIDC and Gmail OAuth, secure server-side token encryption and rotation, the PostgreSQL runtime adapter and deployment, production secret management, and real-provider integration/end-to-end validation remain incomplete. Public data-lifecycle behavior also remains release-gated.
+
+Before AC19 and AC20 can pass, Engineering and QA must complete and validate the applicable authentication, secure OAuth/token handling, persistent runtime, consent implementation, sensitive-data logging controls, browser/end-to-end coverage, accessibility, and controlled real-provider test path. This product specification does not select or revise the architecture for that work.
 
 Never place refresh tokens, provider credentials, AI keys, or long-lived secrets in browser code. Preserve the Vite PWA and deterministic receipt pipeline. Implementation must remain within the approved FEATURE-001 scope.
 
@@ -175,10 +235,8 @@ Never place refresh tokens, provider credentials, AI keys, or long-lived secrets
 - Evidence-retention duration.
 - Whether disconnect retains imported records by default.
 - Deletion and export policy.
-- Initial supported merchants, formats, regions, languages, and currencies.
-- Confidence threshold and ambiguous-detection review workflow.
 - Broader-rollout success metrics.
-- Final consent copy after OAuth scope approval.
+- Final public consent copy and policy beyond the controlled validation disclosure.
 
 ## Implementation handoff
 
