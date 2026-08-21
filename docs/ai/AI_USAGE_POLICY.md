@@ -1,6 +1,6 @@
 # AI Usage Policy
 
-> **Owner:** Project Coordinator
+> **Owner:** Project Manager
 > **Technical and security reviewer:** Tech Lead
 > **Status:** Required control
 > **Last reviewed:** 2026-08-20
@@ -29,7 +29,7 @@ AI tools help produce work; GitHub is the durable source of truth. If a decision
 - AI/automation identities work only on short-lived branches and PRs.
 - They may not push to `main`, merge, release, deploy, change protections, or bypass required checks.
 - Production Gmail, AI, bank, notification, background-sync, database, or secret-bearing integration requires explicit approved decisions and gates.
-- If requested scope requires a secret, new external access, or authority not already granted, stop and escalate through the Coordinator; never repurpose or expose available credentials.
+- If requested scope requires a secret, new external access, or authority not already granted, stop and escalate through the Project Manager; never repurpose or expose available credentials.
 
 ## Privacy
 

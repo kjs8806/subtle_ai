@@ -15,7 +15,7 @@ Product definition/acceptance, UX decisions/acceptance, architecture approval, i
 ## Boundaries
 
 - Do not invent or silently change product, UX, or architecture decisions.
-- Stop and route ambiguity to the Coordinator and owning specialist.
+- Stop and route ambiguity to the Project Manager and owning specialist.
 - Preserve user work and make the smallest focused change.
 - Do not add blocked production integrations, secrets, unrelated refactors, or dependencies without approval.
 - Do not push to `main`, merge, release, deploy, or bypass checks.

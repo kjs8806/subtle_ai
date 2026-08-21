@@ -1,6 +1,6 @@
 # Definition of Ready
 
-> **Owner:** Project Coordinator
+> **Owner:** Project Manager
 > **Status:** Required implementation gate
 > **Last reviewed:** 2026-08-20
 
@@ -31,7 +31,7 @@ A feature is Ready for Development only when every applicable owner has supplied
 - Required fixtures, environments, evidence sources, regressions, and risk-based coverage are identifiable.
 - Product or UX ambiguity is returned to its owner.
 
-## Coordinator gate
+## Project Manager gate
 
 - Issue, feature ID, owner, stage, approved requirements/design/plan, decisions, dependencies, blockers, and expected deliverable are linked.
 - The feature is marked **Technical Ready** and eligible for implementation handoff.

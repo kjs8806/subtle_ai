@@ -1,6 +1,6 @@
 # Project Glossary
 
-> **Owner:** Project Coordinator
+> **Owner:** Project Manager
 > **Status:** Maintained reference
 > **Last reviewed:** 2026-08-20
 
@@ -21,8 +21,8 @@
 | Definition of Ready | Evidence required before implementation handoff. |
 | Definition of Done | Evidence required before a feature can be considered complete. |
 | ADR | Architecture Decision Record stored in `docs/engineering/adr/`. |
-| Coordinator | Workflow and traceability owner; not a product, design, or architecture authority. |
-| Tech Lead sub-agent | Dedicated architecture, plan, implementation-instruction, and technical-review role invoked by the Coordinator. |
+| Project Manager | Workflow and traceability owner; not a product, design, or architecture authority. |
+| Tech Lead sub-agent | Dedicated architecture, plan, implementation-instruction, and technical-review role invoked by the Project Manager. |
 | Codex | Implementer of an approved plan; cannot silently redefine scope or architecture. |
 | QA | Independent validation role for criteria, regressions, evidence, and release quality. |
 | Vite PWA | The current JavaScript web frontend and installable Progressive Web App built with Vite. |

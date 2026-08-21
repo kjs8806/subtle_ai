@@ -1,6 +1,6 @@
 # Delivery Process
 
-> **Owner:** Project Coordinator
+> **Owner:** Project Manager
 > **Status:** Canonical workflow
 > **Last reviewed:** 2026-08-20
 
@@ -15,12 +15,12 @@ Release is distinct from code complete. A feature can move backward when new evi
 - Founder: major product, business, security-risk, cost, access, merge, and release decisions during the supervised phase.
 - Product Owner: what, why, value, scope, priority, and product acceptance.
 - Senior Product Designer: flow, layout, interaction, states, responsive behavior, accessibility, and design consistency.
-- Project Coordinator: stage, assignments, handoffs, blockers, conflict routing, traceability, and approval tracking.
+- Project Manager: stage, assignments, handoffs, blockers, conflict routing, traceability, and approval tracking.
 - Tech Lead sub-agent: architecture, plan, implementation instructions, security/testing strategy, and technical review.
 - Codex: implementation of the approved plan, tests, documentation, and implementation self-check.
 - QA: independent acceptance, regression, risk, and release validation.
 
-The Coordinator is not another decision authority. Each specialist records durable output in GitHub.
+The Project Manager is not another decision authority. Each specialist records durable output in GitHub.
 
 ## Stage gates
 

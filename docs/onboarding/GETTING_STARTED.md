@@ -1,6 +1,6 @@
 # Getting Started
 
-> **Owner:** Project Coordinator
+> **Owner:** Project Manager
 > **Technical reviewer:** Tech Lead
 > **Status:** Onboarding baseline
 > **Last reviewed:** 2026-08-20
@@ -58,18 +58,18 @@ npm run test:server
 5. [Delivery process](../process/DELIVERY_PROCESS.md), [Ready](../process/DEFINITION_OF_READY.md), and [Done](../process/DEFINITION_OF_DONE.md)
 6. [Test strategy](../quality/TEST_STRATEGY.md) and [contribution guide](../../CONTRIBUTING.md)
 7. [Development](../engineering/DEVELOPMENT.md), [engineering tests](../engineering/TESTING.md), [security](../engineering/SECURITY.md), [deployment](../engineering/DEPLOYMENT.md), and [migrations](../engineering/MIGRATIONS.md)
-8. [AI usage policy](../ai/AI_USAGE_POLICY.md) and the role contract assigned by the Coordinator in [roles](../ai/roles/)
+8. [AI usage policy](../ai/AI_USAGE_POLICY.md) and the role contract assigned by the Project Manager in [roles](../ai/roles/)
 9. [Onboarding simulation](../quality/ONBOARDING_SIMULATION.md)
 
 The tracked onboarding simulation is [GitHub Issue #8](https://github.com/kjs8806/subscription_app/issues/8). It is currently **Blocked**, not Ready or eligible for implementation, until its issue record supplies the required draft PR exact commit, CI evidence, and canonical links. Always inspect the live issue status before acting.
 
 ## First contribution
 
-1. Ask the Coordinator to designate and link an actual small issue whose live lifecycle status satisfies Ready. [Issue #8](https://github.com/kjs8806/subscription_app/issues/8) tracks the simulation itself and is currently Blocked; it is not an eligible onboarding implementation task.
-2. Inspect a Coordinator-linked completed or supervised issue → specification → PR → CI → QA chain. Onboarding verification remains blocked until a real example is supplied.
+1. Ask the Project Manager to designate and link an actual small issue whose live lifecycle status satisfies Ready. [Issue #8](https://github.com/kjs8806/subscription_app/issues/8) tracks the simulation itself and is currently Blocked; it is not an eligible onboarding implementation task.
+2. Inspect a Project Manager-linked completed or supervised issue → specification → PR → CI → QA chain. Onboarding verification remains blocked until a real example is supplied.
 3. Create a short-lived branch and follow the linked approved plan.
 4. Open a PR using the repository template; do not push directly to `main`.
 5. Ask the relevant role owner to review the first contribution.
-6. Report missing or stale onboarding information to the Coordinator.
+6. Report missing or stale onboarding information to the Project Manager.
 
 See [PROJECT_GLOSSARY.md](PROJECT_GLOSSARY.md) for shared terminology.

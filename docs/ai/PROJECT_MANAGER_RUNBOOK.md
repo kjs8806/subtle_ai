@@ -1,6 +1,6 @@
-# Coordinator Runbook
+# Project Manager Runbook
 
-> **Owner:** Project Coordinator
+> **Owner:** Project Manager
 > **Status:** Canonical agent-coordination procedure
 > **Last reviewed:** 2026-08-20
 

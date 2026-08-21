@@ -1,6 +1,6 @@
 # Workflow
 
-> **Owner:** Project Coordinator
+> **Owner:** Project Manager
 > **Status:** Navigation summary
 > **Canonical process:** [DELIVERY_PROCESS.md](process/DELIVERY_PROCESS.md)
 > **Last reviewed:** 2026-08-20
@@ -16,7 +16,7 @@ Use these authoritative records:
 - [Delivery process and routing](process/DELIVERY_PROCESS.md)
 - [Definition of Ready](process/DEFINITION_OF_READY.md)
 - [Definition of Done](process/DEFINITION_OF_DONE.md)
-- [Coordinator runbook](ai/COORDINATOR_RUNBOOK.md)
+- [Project Manager runbook](ai/PROJECT_MANAGER_RUNBOOK.md)
 - [AI usage policy and roles](ai/AI_USAGE_POLICY.md)
 - [Test strategy](quality/TEST_STRATEGY.md)
 - [FEATURE-001](product/features/FEATURE-001.md)
