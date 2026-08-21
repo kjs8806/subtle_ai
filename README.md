@@ -41,10 +41,11 @@ git diff --check
 - Vite JavaScript ES-module frontend and installable PWA.
 - Deterministic receipt/subscription pipeline with evidence, provenance, confidence, billing, pricing, merging, and recommendations.
 - Local Fastify `/api/v1` mock boundary, fake Gmail provider, and in-memory account-scoped persistence.
-- Planned PostgreSQL schema in `migrations/001_feature_001.sql`; it is not executed by the app.
+- PostgreSQL schema and ordered migration runner, with an account-scoped runtime adapter available when configured.
+- Server-side AES-256-GCM token custody, explicit provider selection, and Google OIDC/Gmail provider primitives.
 - FEATURE-001 mock connection, scanning, discovery, and detail-evidence flow.
 
-There is no real Gmail integration, production PostgreSQL runtime, public deployment, AI provider, bank integration, continuous sync, or background job. Do not treat mock behavior as production readiness.
+Real Gmail acceptance, production secret management/deployment, public data lifecycle, AI provider, bank integration, continuous sync, and background jobs remain release-gated. Do not treat mock behavior or local PostgreSQL as production readiness.
 
 ## Documentation map
 

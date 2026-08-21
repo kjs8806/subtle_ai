@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto'
 
 const clone = (value) => structuredClone(value)
+const publicConnection = (connection) => {
+  if (!connection) return null
+  const { encryptedRefreshToken, ...safeConnection } = connection
+  return clone(safeConnection)
+}
 
 export const createMemoryRepository = () => {
   const users = new Map([['mock-user', { id: 'mock-user', email: 'demo@example.com', name: 'Demo User' }]])
@@ -17,17 +22,22 @@ export const createMemoryRepository = () => {
       return clone(user)
     },
     getUser: (id) => clone(users.get(id) || null),
-    getConnection: (userId) => clone(connections.get(userId) || { status: 'not_connected', scanStatus: 'idle' }),
-    authorizeConnection: (userId) => {
-      const connection = { id: connections.get(userId)?.id || randomUUID(), userId, provider: 'gmail', status: 'connected', scanStatus: 'idle', lastScanAt: null }
+    getConnection: (userId) => publicConnection(connections.get(userId) || { status: 'not_connected', scanStatus: 'idle' }),
+    authorizeConnection: (userId, encryptedRefreshToken = null) => {
+      const connection = { id: connections.get(userId)?.id || randomUUID(), userId, provider: 'gmail', status: 'connected', scanStatus: 'idle', lastScanAt: null, encryptedRefreshToken }
       connections.set(userId, connection)
-      return clone(connection)
+      return publicConnection(connection)
     },
+    getEncryptedRefreshToken: (userId) => connections.get(userId)?.encryptedRefreshToken || null,
     disconnectConnection: (userId) => {
       const connection = connections.get(userId)
       if (!connection) return clone({ status: 'not_connected', scanStatus: 'idle' })
+      for (const [id, item] of evidence) if (item.userId === userId) evidence.delete(id)
+      for (const [id, item] of subscriptions) if (item.userId === userId) subscriptions.delete(id)
+      for (const id of scans.keys()) if (scans.get(id).userId === userId) scans.delete(id)
       connection.status = 'not_connected'
       connection.scanStatus = 'idle'
+      connection.encryptedRefreshToken = null
       connections.set(userId, connection)
       return clone(connection)
     },

@@ -4,7 +4,7 @@
 > **Status:** Approved policy; runtime tooling not implemented
 > **Last reviewed:** 2026-08-20
 
-`migrations/001_feature_001.sql` is a planned PostgreSQL schema. The current app does not connect to or execute migrations against PostgreSQL.
+`migrations/001_feature_001.sql` and `002_feature_001_runtime.sql` define the current PostgreSQL schema. `server/persistence/migrations.js` executes unapplied ordered migrations transactionally; activation against shared or production data remains gated.
 
 ## Rules
 

@@ -13,7 +13,8 @@ The repository also contains a **local mock backend**:
 - `server/app.js`: Fastify `/api/v1` boundary and mock FEATURE-001 routes.
 - `server/gmail/fakeProvider.js`: deterministic authorization/scan scenarios; no Google API call.
 - `server/persistence/memoryRepository.js`: account-scoped in-memory state that resets on restart.
-- `migrations/001_feature_001.sql`: planned PostgreSQL schema, not executed by the local app.
+- `migrations/001_feature_001.sql` and `002_feature_001_runtime.sql`: ordered PostgreSQL schema migrations.
+- `server/persistence/postgresRepository.js` and `server/persistence/migrations.js`: optional account-scoped PostgreSQL runtime and migration runner.
 
 The presence of server code does not mean a production backend, identity system, Gmail integration, token store, or database runtime exists.
 
@@ -59,7 +60,7 @@ Within the approved FEATURE-001 scope:
 - Keep scans explicitly user-triggered; background/continuous sync is deferred.
 - Populate the existing ID-backed UI and retain seeded/manual behavior.
 
-The current mock API shape is implemented. Real Google OIDC/Gmail OAuth, secure token rotation/storage, PostgreSQL runtime/deployment, production secrets, public data lifecycle, staging, monitoring, and real-provider end-to-end validation remain incomplete and release-gated.
+The mock API remains the default. Google OIDC/Gmail OAuth, encrypted server-side token custody, provider selection, and PostgreSQL runtime primitives are implemented behind configuration. Production secret management/deployment, public data lifecycle, staging, monitoring, and real-provider end-to-end validation remain incomplete and release-gated.
 
 ## Testing and operations
 

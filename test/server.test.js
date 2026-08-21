@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { buildApp } from '../server/app.js'
+import { createFakeGmailProvider } from '../server/gmail/fakeProvider.js'
+import { createMemoryRepository } from '../server/persistence/memoryRepository.js'
 
 const authorize = async (app) => {
   const start = await app.inject({ method: 'GET', url: '/api/v1/auth/google/start' })
@@ -82,6 +84,31 @@ test('disconnect prevents future scans', async () => {
   const response = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
   assert.equal(response.statusCode, 409)
   assert.equal(response.json().error.code, 'source_not_connected')
+})
+
+test('gmail identity mismatch does not connect the source', async () => {
+  const provider = {
+    ...createFakeGmailProvider(),
+    exchangeGmailAuthorizationCode: async () => ({ status: 'authorized', subject: 'different-google-subject', refreshToken: 'never-store' }),
+  }
+  const app = buildApp({ provider, gmailProvider: 'google' })
+  const session = await authorize(app)
+  const start = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/authorize', headers: { cookie: `subtle_session=${session}` } })
+  const state = start.cookies.find(({ name }) => name === 'subtle_gmail_oauth_state').value
+  const response = await app.inject({ method: 'GET', url: `/api/v1/sources/gmail/callback?state=${state}&code=mock-success`, headers: { cookie: `subtle_session=${session}; subtle_gmail_oauth_state=${state}` } })
+  assert.equal(response.statusCode, 409)
+  assert.equal(response.json().error.code, 'identity_mismatch')
+  const source = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers: { cookie: `subtle_session=${session}` } })
+  assert.equal(source.json().status, 'not_connected')
+})
+
+test('source responses never expose token custody fields', async () => {
+  const repository = createMemoryRepository()
+  const app = buildApp({ repository, tokenVault: { encrypt: () => 'encrypted-refresh-token' } })
+  const session = await authorize(app)
+  const response = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers: { cookie: `subtle_session=${session}` } })
+  assert.equal(response.statusCode, 200)
+  assert.equal('encryptedRefreshToken' in response.json(), false)
 })
 
 test('invalid oauth state is rejected', async () => {
