@@ -29,8 +29,8 @@ If a required input is absent, contradictory, inaccessible, or points to a diffe
 - Missing flow, state, responsive, accessibility, or interaction behavior → Product Designer.
 - Architecture, data, API, security, migration, environment, or testability problem → Tech Lead.
 - Reproducible implementation defect against an approved specification → Tech Lead, then Implementer.
-- Missing traceability, assignment, evidence link, or lifecycle status → Project Coordinator.
-- Major product, security-risk, permission, release, or delivery tradeoff → Founder through the Coordinator.
+- Missing traceability, assignment, evidence link, or lifecycle status → Project Manager.
+- Major product, security-risk, permission, release, or delivery tradeoff → Founder through the Project Manager.
 
 ## Required outputs
 
