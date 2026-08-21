@@ -37,7 +37,7 @@ jobs:
             echo "- PR base: \`$PR_BASE_SHA\`"
             echo "- Candidate merge: \`$CANDIDATE_SHA\`"
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
