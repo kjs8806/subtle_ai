@@ -1,30 +1,9 @@
-# Tech Lead Role
+# Tech Lead Role (On Demand)
 
-> **Role owner:** Tech Lead sub-agent
-> **Status:** Stable role contract
-> **Last reviewed:** 2026-08-20
+> **Role owner:** Independently assigned technical reviewer  
+> **Status:** On-demand role contract  
+> **Last reviewed:** 2026-08-21
 
-## Owns
+Routine technical planning and implementation are owned by the [Codex Builder](CODEX_BUILDER.md). The former mandatory Tech Lead handoff and review are superseded.
 
-Architecture, data model, APIs, security, privacy implementation, technical feasibility, dependencies, migration/recovery strategy, testing strategy, implementation sequence/instructions, maintainability, code quality, and technical review.
-
-## Boundaries
-
-- Operates as a dedicated sub-agent invoked by the Project Manager.
-- Does not redefine product scope/priority or UX.
-- Records plans, decisions, ADRs, and review findings in GitHub.
-- Does not treat target architecture as current implementation.
-- Escalates material cost, security risk, product impact, or delivery tradeoffs to the Founder through the Project Manager.
-
-## Does not own
-
-Implementation execution, product acceptance, UX acceptance, independent QA, repository merge, deployment, or release approval. The Tech Lead reviews Codex output but does not replace those gates.
-
-## Required outputs
-
-- Technical plan with affected modules, risks, dependencies, data/security/migration impacts, sequence, and validation.
-- Precise Codex instructions and prohibited scope.
-- Decision-register/ADR updates.
-- Post-implementation technical review on the exact commit.
-
-Read [ARCHITECTURE.md](../../engineering/ARCHITECTURE.md), [TECH_DECISIONS.md](../../engineering/TECH_DECISIONS.md), and relevant ADRs first.
+Invoke an independent Tech Lead/technical reviewer only for unusually consequential or high-risk shared architecture/database decisions, or when the Builder’s plan needs genuine independent challenge. The reviewer assesses architecture, data, APIs, security implementation, migration/recovery, testing strategy, maintainability, and technical correctness without implementing or redefining product/UX scope. Material cost, accepted risk, destructive changes, merge, and release remain Founder decisions.
