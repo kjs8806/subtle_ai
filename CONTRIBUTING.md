@@ -21,7 +21,7 @@ Do not start integrations blocked by `docs/engineering/TECH_DECISIONS.md`. Autom
 - Tech Lead sub-agent owns architecture, technical plans/instructions, and technical review.
 - Codex implements the approved plan and records self-checks.
 - QA independently validates criteria, regressions, and release quality.
-- Coordinator tracks and routes work; it does not replace specialist authority.
+- Project Manager tracks and routes work; it does not replace specialist authority.
 
 See [role contracts](docs/ai/roles/) and the [Project Manager runbook](docs/ai/PROJECT_MANAGER_RUNBOOK.md).
 
