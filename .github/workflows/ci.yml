@@ -64,6 +64,10 @@ jobs:
         run: npm run test:postgres
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/subtle_ai_test
+      - name: Run application-runtime PostgreSQL persistence tests
+        run: npm run test:runtime
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/subtle_ai_test
       - name: Build application
         run: npm run build
       - name: Check whitespace errors

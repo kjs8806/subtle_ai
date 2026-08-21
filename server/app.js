@@ -11,6 +11,7 @@ import { SESSION_COOKIE, createSessionManager } from './security/session.js'
 import { createTokenVault } from './security/tokenVault.js'
 import { createRateLimiter, enforceSameOrigin, securityHeaders } from './security/http.js'
 import { parseReceipt } from '../src/services/receiptPipeline.js'
+import { createRuntime } from './bootstrap.js'
 
 const userId = 'mock-user'
 
@@ -88,6 +89,7 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
   app.post('/api/v1/sources/gmail/scan', { preHandler: requireUser }, async (request, reply) => {
     const scan = await repository.beginScan(request.user.id)
     if (!scan) return reply.code(409).send({ error: { code: 'source_not_connected', message: 'Connect Gmail before scanning' } })
+    if (scan.conflict) return reply.code(409).send({ error: { code: 'scan_already_running', message: 'A scan is already running for this connection' } })
     try {
       const encryptedToken = repository.getEncryptedRefreshToken ? await repository.getEncryptedRefreshToken(request.user.id) : null
       const refreshToken = encryptedToken && tokenVault ? tokenVault.decrypt(encryptedToken) : null
@@ -125,6 +127,20 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
 }
 
 if (process.argv[1] && process.argv[1].endsWith('/server/app.js')) {
-  const app = buildApp()
-  app.listen({ port: config.port, host: config.host }).then(() => console.log(`Subtle API listening on http://${config.host}:${config.port}`))
+  let runtime
+  try {
+    runtime = await createRuntime(buildApp)
+  } catch (error) {
+    console.error(`Subtle API failed to start: ${error.message}`)
+    process.exit(1)
+  }
+  const { app, close } = runtime
+  await app.listen({ port: config.port, host: config.host })
+  console.log(`Subtle API listening on http://${config.host}:${config.port}`)
+  const shutdown = async () => {
+    await close()
+    process.exit(0)
+  }
+  process.on('SIGTERM', shutdown)
+  process.on('SIGINT', shutdown)
 }

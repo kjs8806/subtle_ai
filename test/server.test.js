@@ -76,6 +76,25 @@ test('mock authorization and scan create one evidence-backed subscription idempo
   assert.equal(detail.json().fieldObservations.find(({ field }) => field === 'amount').provenance, 'confirmed')
 })
 
+test('concurrent scans for the same connection are rejected with a conflict', async () => {
+  const app = buildApp()
+  const session = await authorize(app)
+  const headers = { cookie: `subtle_session=${session}` }
+  await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
+
+  const [first, second] = await Promise.all([
+    app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers }),
+    app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers }),
+  ])
+  const statuses = [first.statusCode, second.statusCode].sort()
+  assert.deepEqual(statuses, [200, 409])
+  const conflict = first.statusCode === 409 ? first : second
+  assert.equal(conflict.json().error.code, 'scan_already_running')
+
+  const subscriptions = await app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })
+  assert.equal(subscriptions.json().subscriptions.length, 1)
+})
+
 test('disconnect prevents future scans', async () => {
   const app = buildApp()
   const session = await authorize(app)

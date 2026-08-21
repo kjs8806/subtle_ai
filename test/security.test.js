@@ -15,8 +15,8 @@ test('token vault encrypts and authenticates refresh tokens', () => {
 })
 
 test('google configuration fails closed without credentials', () => {
-  assert.throws(() => validateConfig({ gmailProvider: 'google', production: false, googleClientId: '', googleClientSecret: '', googleOidcRedirectUri: '', googleGmailRedirectUri: '', tokenEncryptionKey: '' }), /GOOGLE_CLIENT_ID/)
-  assert.throws(() => validateConfig({ gmailProvider: 'mock', production: true, sessionSecret: 'local-development-only' }), /SESSION_SECRET/)
+  assert.throws(() => validateConfig({ gmailProvider: 'google', persistenceProvider: 'postgres', databaseUrl: 'postgresql://localhost/test', production: false, googleClientId: '', googleClientSecret: '', googleOidcRedirectUri: '', googleGmailRedirectUri: '', tokenEncryptionKey: '' }), /GOOGLE_CLIENT_ID/)
+  assert.throws(() => validateConfig({ gmailProvider: 'mock', persistenceProvider: 'memory', production: true, sessionSecret: 'local-development-only' }), /SESSION_SECRET/)
 })
 
 test('real provider requests only the approved OIDC and Gmail scopes', () => {

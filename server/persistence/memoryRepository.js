@@ -44,6 +44,7 @@ export const createMemoryRepository = () => {
     beginScan: (userId) => {
       const connection = connections.get(userId)
       if (!connection || connection.status !== 'connected') return null
+      if (connection.scanStatus === 'scanning') return { conflict: true }
       const scan = { id: randomUUID(), userId, status: 'scanning', startedAt: new Date().toISOString(), completedAt: null, found: 0 }
       scans.set(scan.id, scan)
       connection.scanStatus = 'scanning'
