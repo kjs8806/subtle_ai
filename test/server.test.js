@@ -138,6 +138,17 @@ test('secure mode issues session and oauth-state cookies with HttpOnly, Secure, 
   assert.equal(sessionCookie.sameSite, 'Lax')
 })
 
+test('secure mode issues the Gmail OAuth-state cookie with HttpOnly, Secure, and SameSite=Lax', async () => {
+  const app = buildApp({ production: true, publicOrigin: 'https://subtle.example' })
+  const session = await authorize(app)
+  const start = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/authorize', headers: { cookie: `subtle_session=${session}`, origin: 'https://subtle.example' } })
+  const gmailStateCookie = start.cookies.find(({ name }) => name === 'subtle_gmail_oauth_state')
+  assert.ok(gmailStateCookie, 'expected a subtle_gmail_oauth_state cookie')
+  assert.equal(gmailStateCookie.httpOnly, true)
+  assert.equal(gmailStateCookie.secure, true)
+  assert.equal(gmailStateCookie.sameSite, 'Lax')
+})
+
 test('GMAIL_PROVIDER=google activates cookie/origin hardening even when NODE_ENV is not production', async () => {
   // The controlled Codespaces validation environment is served over HTTPS but may
   // not set NODE_ENV=production, so this protection must not depend solely on it.

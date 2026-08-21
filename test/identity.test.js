@@ -192,8 +192,8 @@ test('SEC-001: the mock-provider deterministic identity never activates for GMAI
   assert.equal(callback.cookies.find(({ name }) => name === 'subtle_session'), undefined)
 })
 
-test('SEC-002: Gmail OAuth with a missing, null, or empty subject cannot connect and persists no refresh token', async () => {
-  for (const subject of [undefined, null, '']) {
+test('SEC-002: Gmail OAuth with a missing, null, empty, or whitespace-only subject cannot connect, persists no refresh token, and leaves scanning unavailable', async () => {
+  for (const subject of [undefined, null, '', '   ']) {
     const { repository, counts } = withCallCounts(createMemoryRepository())
     const provider = createTestProvider({ exchangeGmailAuthorizationCode: async () => ({ status: 'authorized', subject, refreshToken: 'never-store' }) })
     const app = buildApp({ repository, provider, gmailProvider: 'google' })
@@ -207,7 +207,26 @@ test('SEC-002: Gmail OAuth with a missing, null, or empty subject cannot connect
     const connection = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
     assert.equal(connection.json().status, 'not_connected')
     assert.equal(await repository.getEncryptedRefreshToken(user.id), null)
+
+    const scan = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers: { ...headers, ...sameOrigin } })
+    assert.equal(scan.statusCode, 409, 'scanning must remain unavailable after a rejected Gmail identity')
+    assert.equal(scan.json().error.code, 'source_not_connected')
   }
+})
+
+test('SEC-002: a different (non-matching) Gmail subject is rejected without invoking authorizeConnection', async () => {
+  const { repository, counts } = withCallCounts(createMemoryRepository())
+  const app = buildApp({ repository, provider: createTestProvider(), gmailProvider: 'google' })
+  const { headers } = await authenticate(app, GOOGLE_SUBJECT_A)
+
+  const response = await connectGmail(app, headers, GOOGLE_SUBJECT_B)
+  assert.equal(response.statusCode, 409)
+  assert.equal(response.json().error.code, 'identity_mismatch')
+  assert.equal(counts.authorizeConnection, 0)
+
+  const scan = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers: { ...headers, ...sameOrigin } })
+  assert.equal(scan.statusCode, 409)
+  assert.equal(scan.json().error.code, 'source_not_connected')
 })
 
 test('SEC-004: successful Gmail token revocation purges the local connection', async () => {
