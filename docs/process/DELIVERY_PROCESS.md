@@ -20,7 +20,7 @@ Release is distinct from code complete. A feature can move backward when new evi
 - Codex: implementation of the approved plan, tests, documentation, and implementation self-check.
 - QA: independent acceptance, regression, risk, and release validation.
 
-The Coordinator is not another decision authority. Each specialist records durable output in GitHub.
+The Project Manager is not another decision authority. Each specialist records durable output in GitHub.
 
 ## Stage gates
 
