@@ -6,7 +6,7 @@ const scenarios = {
 }
 
 export const createFakeGmailProvider = () => ({
-  createAuthorizationRequest: ({ state }) => ({ url: `/api/v1/sources/gmail/callback?state=${encodeURIComponent(state)}&code=mock-success` }),
+  createAuthorizationRequest: ({ state }) => ({ url: `/api/v1/auth/google/callback?state=${encodeURIComponent(state)}&code=mock-success` }),
   createGmailAuthorizationRequest: ({ state }) => ({ url: `/api/v1/sources/gmail/callback?state=${encodeURIComponent(state)}&code=mock-success` }),
   exchangeAuthorizationCode: async ({ code }) => {
     if (code === 'mock-cancel') return { status: 'cancelled' }

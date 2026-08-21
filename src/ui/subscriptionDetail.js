@@ -25,7 +25,16 @@ export const renderDetail = (root, item, controller) => {
   root.querySelector('[data-cadence-source]').textContent = fieldProvenance(item, 'cadence')
   root.querySelector('[data-renewal-source]').textContent = fieldProvenance(item, 'nextRenewal')
   root.querySelector('[data-confirmed]').textContent = item.confirmed || 'Not provided'; root.querySelector('[data-confidence]').textContent = item.confidence || 'Not provided'
-  root.querySelector('[data-price-history]').innerHTML = item.history.map(([date, value]) => `<p><span>${date}</span><strong>${value}</strong></p>`).join('')
-  root.querySelector('[data-billing-history]').innerHTML = item.bills.map(([date, value]) => `<p><span>${date}</span><strong>${value}</strong></p>`).join('')
+  const renderHistory = (container, rows) => {
+    container.replaceChildren(...rows.map(([date, value]) => {
+      const row = document.createElement('p')
+      const dateEl = document.createElement('span'); dateEl.textContent = date
+      const valueEl = document.createElement('strong'); valueEl.textContent = value
+      row.append(dateEl, valueEl)
+      return row
+    }))
+  }
+  renderHistory(root.querySelector('[data-price-history]'), item.history)
+  renderHistory(root.querySelector('[data-billing-history]'), item.bills)
   controller.open(document.activeElement)
 }
