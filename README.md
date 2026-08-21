@@ -45,6 +45,10 @@ git diff --check
 - Server-side AES-256-GCM token custody, explicit provider selection, and Google OIDC/Gmail provider primitives.
 - FEATURE-001 mock connection, scanning, discovery, and detail-evidence flow.
 
+When `GMAIL_PROVIDER=google`, configure `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+`GOOGLE_OIDC_REDIRECT_URI`, `GOOGLE_GMAIL_REDIRECT_URI`, and
+`TOKEN_ENCRYPTION_KEY` through the Codespaces environment. Never commit their values.
+
 Real Gmail acceptance, production secret management/deployment, public data lifecycle, AI provider, bank integration, continuous sync, and background jobs remain release-gated. Do not treat mock behavior or local PostgreSQL as production readiness.
 
 ## Documentation map

@@ -81,11 +81,12 @@ export const createMemoryRepository = () => {
         && item.rawMerchant === parsed.rawMerchant)
       if (candidates.length > 1) return { created: false, ambiguous: true }
       const subscriptionId = candidates[0]?.id || randomUUID()
-      const record = { ...parsed, id: evidenceId, userId, subscriptionId, provenance: { canonicalService: 'confirmed', amount: parsed.amount === null ? 'inferred' : 'confirmed', cadence: parsed.cadence ? 'confirmed' : 'inferred' } }
+      const provenance = Object.fromEntries(Object.entries(parsed.fieldObservations || {}).map(([field, observation]) => [field, observation.provenance]))
+      const record = { ...parsed, id: evidenceId, userId, subscriptionId, provenance }
       const previous = candidates[0]
       const observation = { amount: parsed.amount, observedAt: parsed.receivedAt }
       const billing = { amount: parsed.amount, billedAt: parsed.receivedAt, evidenceId }
-      const fields = Object.entries(record.provenance).map(([field, provenance]) => ({ field, value: record[field] ?? null, provenance, confidence: parsed.confidence.score, evidenceId }))
+      const fields = Object.entries(parsed.fieldObservations || {}).map(([field, observation]) => ({ field, value: observation.value ?? null, provenance: observation.provenance, confidence: parsed.confidence.score, evidenceId }))
       const subscription = previous
         ? { ...previous, currentPrice: parsed.amount ?? previous.currentPrice, billingCycle: parsed.cadence || previous.billingCycle, nextRenewal: parsed.nextRenewal || previous.nextRenewal, evidence: [...previous.evidence, record], priceHistory: [...previous.priceHistory, observation], billingHistory: [...previous.billingHistory, billing], fieldObservations: [...previous.fieldObservations, ...fields] }
         : { id: subscriptionId, userId, canonicalService: parsed.canonicalService, rawMerchant: parsed.rawMerchant, plan: null, currentPrice: parsed.amount, billingCycle: parsed.cadence, nextRenewal: parsed.nextRenewal, status: 'active', source: 'Gmail receipt', evidence: [record], priceHistory: [observation], billingHistory: [billing], fieldObservations: fields }

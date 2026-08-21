@@ -11,10 +11,11 @@ export const createTokenVault = ({ secret }) => {
       const iv = randomBytes(12)
       const cipher = createCipheriv('aes-256-gcm', key, iv)
       const ciphertext = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()])
-      return `${VERSION}.${iv.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}.${ciphertext.toString('base64url')}`
+      return { ciphertext: `${VERSION}.${iv.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}.${ciphertext.toString('base64url')}`, keyVersion: VERSION }
     },
     decrypt: (payload) => {
-      const [version, ivText, tagText, ciphertextText] = String(payload || '').split('.')
+      const value = typeof payload === 'string' ? payload : payload?.ciphertext
+      const [version, ivText, tagText, ciphertextText] = String(value || '').split('.')
       if (version !== VERSION || !ivText || !tagText || !ciphertextText) throw new Error('Invalid encrypted token')
       const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivText, 'base64url'))
       decipher.setAuthTag(Buffer.from(tagText, 'base64url'))

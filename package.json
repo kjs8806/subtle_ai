@@ -10,7 +10,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "node --test",
-    "test:server": "node --test test/server.test.js"
+    "test:server": "node --test test/server.test.js",
+    "test:postgres": "node --test test/postgres.integration.test.js"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",

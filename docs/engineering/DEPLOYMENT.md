@@ -10,6 +10,8 @@ The repository has local development and CI validation only. There is no approve
 
 The current server configuration can fall back to a default session secret. That fallback is incomplete and is a production blocker. A production startup must reject a missing, empty, known-default, or otherwise invalid `SESSION_SECRET`; the value must come from an approved secret store and support controlled rotation.
 
+The controlled Codespaces Google configuration uses `GOOGLE_OIDC_REDIRECT_URI` for sign-in and `GOOGLE_GMAIL_REDIRECT_URI` for Gmail authorization. `TOKEN_ENCRYPTION_KEY` is required for encrypted refresh-token custody; secret values must remain outside Git.
+
 ## Release gates
 
 Before the first external environment is created, the Tech Lead must document and approve:

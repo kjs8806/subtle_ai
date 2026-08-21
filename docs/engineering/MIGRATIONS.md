@@ -4,7 +4,9 @@
 > **Status:** Approved policy; runtime tooling not implemented
 > **Last reviewed:** 2026-08-20
 
-`migrations/001_feature_001.sql` and `002_feature_001_runtime.sql` define the current PostgreSQL schema. `server/persistence/migrations.js` executes unapplied ordered migrations transactionally; activation against shared or production data remains gated.
+`migrations/001_feature_001.sql` through `005_feature_001_token_contract.sql` define the current PostgreSQL schema. `server/persistence/migrations.js` executes unapplied ordered migrations transactionally; activation against shared or production data remains gated.
+
+Migration `004` removes the provisional service/merchant uniqueness index. Migration `005` changes encrypted token storage to text ciphertext plus explicit key-version metadata.
 
 ## Rules
 
