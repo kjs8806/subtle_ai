@@ -23,7 +23,7 @@ Do not start integrations blocked by `docs/engineering/TECH_DECISIONS.md`. Autom
 - QA independently validates criteria, regressions, and release quality.
 - Coordinator tracks and routes work; it does not replace specialist authority.
 
-See [role contracts](docs/ai/roles/) and the [Coordinator runbook](docs/ai/COORDINATOR_RUNBOOK.md).
+See [role contracts](docs/ai/roles/) and the [Project Manager runbook](docs/ai/PROJECT_MANAGER_RUNBOOK.md).
 
 ## Implementation
 
