@@ -1,64 +1,61 @@
 # Delivery Process
 
-> **Owner:** Project Manager
-> **Status:** Canonical workflow
-> **Last reviewed:** 2026-08-20
+> **Owner:** Project Manager  
+> **Status:** Canonical lean workflow; supersedes the former mandatory multi-role chain  
+> **Last reviewed:** 2026-08-21
 
-## Lifecycle
+## Operating model
 
-**Proposed → Product Defined → Design Ready → Technical Ready → Implementing → Review → Changes Required / Approved → QA Approved → Done → Released → Measured**
+Always active: Founder, Project Manager, Codex Builder, QA Agent, and CI.
 
-Release is distinct from code complete. A feature can move backward when new evidence invalidates an earlier gate.
+On demand:
 
-## Ownership
+- Product Owner: new behavior, unclear requirements, prioritization, or scope conflict.
+- Product Designer: meaningful flow, information-architecture, or UI decision.
+- Security Reviewer: authentication, OAuth, Gmail, tokens, personal data, authorization, secrets, deletion, or deployment security.
+- External Consultant: periodic process review, serious delivery problems, or Founder-requested assessment.
 
-- Founder: major product, business, security-risk, cost, access, merge, and release decisions during the supervised phase.
-- Product Owner: what, why, value, scope, priority, and product acceptance.
-- Senior Product Designer: flow, layout, interaction, states, responsive behavior, accessibility, and design consistency.
-- Project Manager: stage, assignments, handoffs, blockers, conflict routing, traceability, and approval tracking.
-- Tech Lead sub-agent: architecture, plan, implementation instructions, security/testing strategy, and technical review.
-- Codex: implementation of the approved plan, tests, documentation, and implementation self-check.
-- QA: independent acceptance, regression, risk, and release validation.
+The previous requirement to invoke every specialist for every feature is superseded. Existing approved product, design, and technical decisions remain valid.
 
-The Project Manager is not another decision authority. Each specialist records durable output in GitHub.
+## Normal workflow
 
-## Stage gates
+1. Select one approved GitHub issue and confirm its acceptance criteria are understandable.
+2. Codex Builder writes a concise technical plan, identifies assumptions and material risks, then implements unless a genuine decision or material risk requires escalation.
+3. Codex Builder adds tests, updates affected documentation, self-reviews, and runs required validation.
+4. Open one focused pull request and run CI.
+5. QA Agent independently validates the completed implementation.
+6. Verified defects return directly to Codex Builder; affected validation reruns after changes.
+7. When CI and QA pass, Project Manager tells the Founder the PR is ready for review and merge.
 
-1. **Proposed:** problem and expected value are recorded.
-2. **Product Defined:** scope, priority, exclusions, and observable acceptance criteria are approved.
-3. **Design Ready:** flow, hierarchy, interactions, states, responsive behavior, accessibility, and UX criteria are approved.
-4. **Technical Ready:** architecture, data/API/security/migration/testing approach, sequencing, and implementer instructions are approved.
-5. **Implementing:** Codex works on a short-lived branch without reinterpreting approved decisions.
-6. **Review:** CI and Codex self-checks run; Tech Lead performs technical review; Designer and Product Owner review affected areas.
-7. **Changes Required / Approved:** findings are assigned to the actual owner and resolved or explicitly dispositioned.
-8. **QA Approved:** independent QA maps criteria and regressions to evidence on the exact commit.
-9. **Done:** all applicable implementation, review, documentation, CI, traceability, and approval gates in the Definition of Done are complete. Done means code-complete and approved; it does not mean deployed.
-10. **Released:** an authorized owner deploys the approved commit or artifact, records the environment and recovery checkpoint, and completes release smoke checks.
-11. **Measured:** outcome is reviewed when metrics exist.
+No agent or automation may merge, release, deploy, push to `main`, or bypass controls.
 
-See [Definition of Ready](DEFINITION_OF_READY.md) and [Definition of Done](DEFINITION_OF_DONE.md).
+## Change-based review
 
-## Source precedence
+| Change | Minimum controls |
+| --- | --- |
+| Copy, documentation, or small styling | Codex Builder and CI |
+| Routine bug fix | Codex Builder, CI, and targeted QA |
+| Normal feature | Codex Builder, CI, and QA |
+| Material UX change | Product Designer before implementation |
+| New or materially changed product behavior | Product Owner before implementation |
+| High-risk shared architecture or database change | Additional independent technical review |
+| Gmail, OAuth, authentication, tokens, secrets, or personal data | Independent Security Reviewer |
+| Production merge or release | Founder approval |
 
-1. Explicit Founder decision.
-2. Latest approved decision by the role owning that domain.
-3. Approved repository documentation, issues, and PR records.
-4. Current implementation and test evidence.
-5. Historical conversation.
+Do not create review rounds beyond the applicable row.
 
-When sources conflict, stop and route the conflict. Do not silently choose.
+## Decision escalation
 
-## Feedback routing
+Agents resolve normal decisions within their authority. Escalate to the Founder only for product vision, business model or pricing, target customer, material cost, public release, accepted sensitive-data/security/privacy risk, or destructive/difficult-to-reverse changes.
 
-- Product ambiguity or value/scope conflict → Product Owner.
-- Flow, state, accessibility, responsive, or visual ambiguity → Designer.
-- Architecture, API, data, security, migration, dependency, or test-strategy question → Tech Lead.
-- Clear defect against an approved plan → Codex, then technical review.
-- Critical/High validation failure → Changes Required and release blocked.
-- Material vision, cost, security risk, access, or delivery tradeoff → Founder.
+When a Founder decision is needed, the Project Manager immediately reports: decision required; why; whether work is blocked; recommended default and reason; viable alternatives; cost, risk, and delivery effect; deadline if any; and safe work that can continue.
 
-## Traceability
+## FEATURE-001 work-in-progress limit
 
-GitHub issue → feature specification/design → approved technical plan/ADR → branch → PR → automated tests/CI → reviews → QA matrix/report → release record.
+Until FEATURE-001 is complete, maintain one active implementation workstream and one implementation PR. Do not run multiple Codex implementation workers or start unrelated feature implementation. Unrelated documentation or analysis is allowed only when it does not delay FEATURE-001.
 
-No automation identity may push to `main`, merge, release, or bypass protection. Required outputs that matter after a conversation must be recorded in the project system.
+## Durable records
+
+Keep GitHub issues for scope and criteria, README for setup and commands, architecture documentation for the current system, ADRs only for consequential decisions, PR descriptions for implementation/validation evidence, and one concise current-status record. Do not store raw chat transcripts or lengthy handoff reports when a short GitHub update is sufficient.
+
+Lifecycle vocabulary remains: **Proposed → Product Defined → Design Ready → Technical Ready → Implementing → Review → Changes Required / Approved → QA Approved → Done → Released → Measured**. A stage may be skipped when its trigger does not apply; it may move backward when new evidence invalidates a gate.

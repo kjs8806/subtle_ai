@@ -1,52 +1,53 @@
 # Project Manager Runbook
 
-> **Owner:** Project Manager
-> **Status:** Canonical agent-coordination procedure
-> **Last reviewed:** 2026-08-20
+> **Owner:** Project Manager  
+> **Status:** Canonical lean coordination procedure  
+> **Last reviewed:** 2026-08-21
 
 ## Purpose
 
-Coordinate work without becoming a product, design, architecture, implementation, or QA authority. Maintain lifecycle status, handoffs, blockers, conflicts, traceability, and approvals in GitHub.
+Own workflow, priorities, status, blockers, and handoffs without becoming the product, UX, architecture, implementation, security-review, or QA authority. GitHub is the durable source of truth.
 
-## Per-feature procedure
+## Procedure
 
-1. Identify the feature ID, current stage, owner, priority, blockers, and open decisions.
-2. Invoke only specialists whose domain is affected.
-3. Require each role to write approved output to the issue/specification/decision/PR.
-4. Do not hand implementation to Codex before the [Definition of Ready](../process/DEFINITION_OF_READY.md) passes.
-5. Track implementation, CI, Tech Lead review, design/product review where affected, and independent QA.
-6. Route findings to the owner; repeat review after changes.
-7. Confirm [Definition of Done](../process/DEFINITION_OF_DONE.md), release gates, and required Founder approval.
+1. Select one approved issue and record its current stage, priority, blockers, and open decisions.
+2. Confirm acceptance criteria are understandable; invoke Product Owner or Designer only when their trigger applies.
+3. Assign one Codex Builder to plan and immediately implement normal work.
+4. Track the focused PR and CI; do not create parallel FEATURE-001 implementation work.
+5. Invoke Security Reviewer for security-triggering changes and QA Agent after implementation is complete.
+6. Return verified defects to Codex Builder and rerun affected controls.
+7. When required checks pass, notify the Founder that the exact PR head is ready for review and merge.
 
-## Tech Lead invocation package
+The former mandatory Product Owner → Designer → Tech Lead → Implementer → multi-role review chain is superseded. Preserve prior approved decisions, and invoke specialists only under the trigger table in [Delivery Process](../process/DELIVERY_PROCESS.md).
 
-Every invocation includes:
+## Founder decision notice
 
-- GitHub issue, feature ID, priority, and numbered acceptance criteria.
-- Approved product and design specifications.
-- Current architecture, decisions/ADRs, and production gates.
-- Relevant code paths, migrations, dependencies, tests, CI, and review evidence.
-- Exact requested deliverable: plan, instructions, risk assessment, or technical review.
+Never silently pause for a decision. Immediately provide:
 
-The Tech Lead returns repository-ready decisions or review findings. Codex receives only an approved plan and boundaries.
+- Decision required and why.
+- Whether work is blocked.
+- Recommended default and reason.
+- Viable alternatives.
+- Cost, risk, and delivery effect of each.
+- Deadline, if one exists.
+- Safe work that can continue.
 
-## Feedback routing
+Escalate only product vision, business/pricing, target customer, material cost, public release, accepted security/privacy risk, and destructive or difficult-to-reverse decisions. Route normal domain decisions to their owner and continue safe work.
 
-- Missing product behavior → Product Owner.
-- Unclear UX behavior or state → Designer.
-- Architecture, security, data, migration, API, dependency, or test strategy → Tech Lead.
-- Defect against a clear approved plan → Codex; Tech Lead reviews the fix.
-- Acceptance/regression evidence → QA.
-- Material vision, cost, risk, access, merge, release, or delivery change → Founder.
+## Status format
 
-## Status report
-
-Record: Feature, current stage, completed outputs, next owner/action, blockers, open decisions, changes requested, approvals, validation status, and required Founder decisions.
+- Current feature
+- Current stage
+- Work completed
+- Validation result
+- Active blocker
+- Founder decision or action required
+- Recommended next action
+- Relevant issue or PR link
 
 ## Safeguards
 
-- Do not silently change another role’s decision.
-- Do not rely on private conversation memory.
-- Do not duplicate canonical documents with competing content.
-- Do not permit automation to push to `main`, merge, release, deploy, or bypass controls.
-- Escalate stale/missing documentation as an onboarding defect.
+- Do not silently change another owner’s decision.
+- Do not rely on conversation memory or duplicate canonical documents.
+- Do not permit agents or automation to push to `main`, merge, release, deploy, expand a test cohort, or bypass controls.
+- Require exact-commit evidence for CI, security review when triggered, and QA.
