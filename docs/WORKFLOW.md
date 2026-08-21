@@ -1,26 +1,24 @@
 # Workflow
 
-> **Owner:** Project Manager
-> **Status:** Navigation summary
-> **Canonical process:** [DELIVERY_PROCESS.md](process/DELIVERY_PROCESS.md)
-> **Last reviewed:** 2026-08-20
+> **Owner:** Project Manager  
+> **Status:** Navigation summary  
+> **Canonical process:** [DELIVERY_PROCESS.md](process/DELIVERY_PROCESS.md)  
+> **Last reviewed:** 2026-08-21
 
-This file is retained for compatibility with existing links. It does not define a competing workflow.
+This file is retained for compatibility. The former mandatory multi-role chain is superseded by the trigger-based workflow in the canonical delivery process.
 
-The canonical lifecycle is:
+Always active: Founder, Project Manager, Codex Builder, QA Agent, and CI. Product Owner, Product Designer, Security Reviewer, independent technical reviewer, and External Consultant are invoked only when their documented trigger applies.
 
-**Proposed → Product Defined → Design Ready → Technical Ready → Implementing → Review → Changes Required / Approved → QA Approved → Done → Released → Measured**
+For normal work: approved issue → Codex Builder plan and implementation → focused PR → CI → independent QA → Founder review and merge.
 
-Use these authoritative records:
+Use:
 
-- [Delivery process and routing](process/DELIVERY_PROCESS.md)
+- [Delivery process](process/DELIVERY_PROCESS.md)
 - [Definition of Ready](process/DEFINITION_OF_READY.md)
 - [Definition of Done](process/DEFINITION_OF_DONE.md)
 - [Project Manager runbook](ai/PROJECT_MANAGER_RUNBOOK.md)
-- [AI usage policy and roles](ai/AI_USAGE_POLICY.md)
+- [Codex Builder role](ai/roles/CODEX_BUILDER.md)
+- [AI usage policy](ai/AI_USAGE_POLICY.md)
 - [Test strategy](quality/TEST_STRATEGY.md)
-- [FEATURE-001](product/features/FEATURE-001.md)
 
-GitHub issue → specification/design → technical plan/ADR → branch → PR → CI/reviews → QA evidence → release record.
-
-GitHub is the durable source of truth. Route product questions to the Product Owner, UX questions to the Designer, technical questions to the Tech Lead, clear implementation defects to Codex, validation to QA, and major product/security/cost/access/release decisions to the Founder.
+GitHub is the durable source of truth. No agent or automation may merge or release.
