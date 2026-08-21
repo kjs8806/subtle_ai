@@ -9,6 +9,7 @@ const publicConnection = (connection) => {
 
 export const createMemoryRepository = () => {
   const users = new Map([['mock-user', { id: 'mock-user', email: 'demo@example.com', name: 'Demo User' }]])
+  const identities = new Map()
   const connections = new Map()
   const subscriptions = new Map()
   const evidence = new Map()
@@ -22,6 +23,20 @@ export const createMemoryRepository = () => {
       return clone(user)
     },
     getUser: (id) => clone(users.get(id) || null),
+    getIdentityForUser: ({ userId, provider }) => {
+      for (const identity of identities.values()) if (identity.userId === userId && identity.provider === provider) return clone({ subject: identity.subject, email: identity.email })
+      return null
+    },
+    resolveOrCreateIdentity: ({ provider, subject, email, name }) => {
+      const key = `${provider}:${subject}`
+      const existing = identities.get(key)
+      if (existing) return clone(users.get(existing.userId))
+      const id = randomUUID()
+      const user = { id, email, name }
+      users.set(id, user)
+      identities.set(key, { userId: id, provider, subject, email })
+      return clone(user)
+    },
     getConnection: (userId) => publicConnection(connections.get(userId) || { status: 'not_connected', scanStatus: 'idle' }),
     authorizeConnection: (userId, encryptedRefreshToken = null) => {
       const connection = { id: connections.get(userId)?.id || randomUUID(), userId, provider: 'gmail', status: 'connected', scanStatus: 'idle', lastScanAt: null, encryptedRefreshToken }

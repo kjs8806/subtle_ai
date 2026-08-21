@@ -76,3 +76,43 @@ integration('PostgreSQL migrations, ownership, idempotency, provenance, and purg
     await pool.end()
   }
 })
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+integration('resolveOrCreateIdentity maps a Google subject to an internal UUID user and de-duplicates concurrent first login', async () => {
+  const pool = await connectPool()
+  try {
+    await pool.query('DROP SCHEMA public CASCADE')
+    await pool.query('CREATE SCHEMA public')
+    await runMigrations({ pool })
+    const repository = createPostgresRepository({ pool })
+
+    // Real Google `sub` claims are opaque numeric strings, not UUIDs.
+    const subject = '104857612345678901234'
+    const first = await repository.resolveOrCreateIdentity({ provider: 'google', subject, email: 'person@example.com', name: 'Person' })
+    assert.match(first.id, UUID_RE)
+    const stored = await pool.query('SELECT provider_subject FROM auth_identities WHERE user_id = $1 AND provider = $2', [first.id, 'google'])
+    assert.equal(stored.rows[0].provider_subject, subject)
+
+    const second = await repository.resolveOrCreateIdentity({ provider: 'google', subject, email: 'person@example.com', name: 'Person' })
+    assert.equal(second.id, first.id)
+    assert.equal((await pool.query('SELECT count(*) FROM users')).rows[0].count, '1')
+
+    const otherSubject = '211348800987654321000'
+    const other = await repository.resolveOrCreateIdentity({ provider: 'google', subject: otherSubject, email: 'other@example.com', name: 'Other' })
+    assert.notEqual(other.id, first.id)
+
+    const concurrentSubject = '337722991100223344556'
+    const [race1, race2, race3] = await Promise.all([
+      repository.resolveOrCreateIdentity({ provider: 'google', subject: concurrentSubject, email: 'race@example.com', name: 'Race' }),
+      repository.resolveOrCreateIdentity({ provider: 'google', subject: concurrentSubject, email: 'race@example.com', name: 'Race' }),
+      repository.resolveOrCreateIdentity({ provider: 'google', subject: concurrentSubject, email: 'race@example.com', name: 'Race' }),
+    ])
+    assert.equal(race1.id, race2.id)
+    assert.equal(race2.id, race3.id)
+    assert.equal((await pool.query('SELECT count(*) FROM auth_identities WHERE provider = $1 AND provider_subject = $2', ['google', concurrentSubject])).rows[0].count, '1')
+    assert.equal((await pool.query('SELECT count(*) FROM users WHERE id = $1', [race1.id])).rows[0].count, '1')
+  } finally {
+    await pool.end()
+  }
+})

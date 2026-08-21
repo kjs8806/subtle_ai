@@ -50,11 +50,10 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
     if (!request.query.state || request.query.state !== request.cookies.subtle_oauth_state || !expiresAt || expiresAt <= now()) return reply.code(400).send({ error: { code: 'invalid_oauth_state', message: 'Invalid authorization state' } })
     const result = await provider.exchangeAuthorizationCode({ code: request.query.code })
     if (result.status !== 'authorized') return reply.code(400).send({ error: { code: result.status, message: 'Authorization was not completed' } })
-    const authenticatedUserId = result.subject || userId
-    if (result.subject && repository.createUser) {
-      const existing = await repository.getUser(result.subject)
-      if (!existing) await repository.createUser({ id: result.subject, email: result.email, name: result.name })
-      if (repository.upsertIdentity) await repository.upsertIdentity({ userId: result.subject, subject: result.subject, email: result.email })
+    let authenticatedUserId = userId
+    if (result.subject && repository.resolveOrCreateIdentity) {
+      const user = await repository.resolveOrCreateIdentity({ provider: 'google', subject: result.subject, email: result.email, name: result.name })
+      authenticatedUserId = user.id
     }
     const token = sessions.issue(authenticatedUserId)
     reply.setCookie(SESSION_COOKIE, token, { httpOnly: true, secure: production, sameSite: 'lax', path: '/', maxAge: 8 * 60 * 60 })
@@ -83,7 +82,10 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
     if (!state || state.purpose !== 'gmail' || state.userId !== request.user.id || state.expiresAt <= now() || request.query.state !== request.cookies.subtle_gmail_oauth_state) return reply.code(400).send({ error: { code: 'invalid_oauth_state', message: 'Invalid authorization state' } })
     const result = await provider.exchangeGmailAuthorizationCode({ code: request.query.code })
     if (result.status !== 'authorized') return reply.code(400).send({ error: { code: result.status, message: 'Authorization was not completed' } })
-    if (result.subject && result.subject !== request.user.id) return reply.code(409).send({ error: { code: 'identity_mismatch', message: 'The Gmail account does not match the signed-in account' } })
+    if (result.subject) {
+      const identity = repository.getIdentityForUser ? await repository.getIdentityForUser({ userId: request.user.id, provider: 'google' }) : null
+      if (!identity || result.subject !== identity.subject) return reply.code(409).send({ error: { code: 'identity_mismatch', message: 'The Gmail account does not match the signed-in account' } })
+    }
     return { ...(await repository.authorizeConnection(request.user.id, tokenVault?.encrypt(result.refresh_token || result.refreshToken || '') || null)), status: 'connected' }
   })
   app.post('/api/v1/sources/gmail/scan', { preHandler: requireUser }, async (request, reply) => {

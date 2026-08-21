@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,17 +9,14 @@ import { createRuntime } from '../server/bootstrap.js'
 import { runMigrations } from '../server/persistence/migrations.js'
 import { createFakeGmailProvider } from '../server/gmail/fakeProvider.js'
 
-// The Postgres `users.id` column is typed uuid (see migrations/001_feature_001.sql).
-// server/app.js's OAuth callback writes the provider `subject` directly as that id
-// (bypassing the auth_identities provider_subject -> internal id mapping the schema
-// was built for), so subjects used here must be UUID-shaped or user creation 500s.
-// This is a separate, out-of-scope defect from QA Defect 1 (runtime wiring) — see
-// the completion report — so these tests route around it rather than fixing it.
+// Realistic Google `sub` claims: opaque numeric strings, not UUIDs.
+// repository.resolveOrCreateIdentity maps each one to an internally generated
+// UUID users.id via auth_identities, so these do not need to be UUID-shaped.
 const testUsers = {
-  a: randomUUID(),
-  b: randomUUID(),
-  idempotency: randomUUID(),
-  concurrent: randomUUID(),
+  a: '104857612345678901234',
+  b: '211348800987654321000',
+  idempotency: '337722991100223344556',
+  concurrent: '445566778899001122334',
 }
 
 const baseConnectionString = process.env.DATABASE_URL
@@ -80,7 +76,10 @@ const authenticate = async (app, subject) => {
     cookies: { subtle_oauth_state: state },
   })
   assert.equal(callback.statusCode, 200, `authentication failed for ${subject}`)
-  return callback.cookies.find(({ name }) => name === 'subtle_session').value
+  const session = callback.cookies.find(({ name }) => name === 'subtle_session').value
+  const headers = { cookie: `subtle_session=${session}` }
+  const me = await app.inject({ method: 'GET', url: '/api/v1/session', headers })
+  return { session, headers, userId: me.json().user.id }
 }
 
 integration('server runtime persists through restart, isolates accounts, purges Gmail data, stays idempotent, and rejects concurrent scans', async (t) => {
@@ -96,8 +95,7 @@ integration('server runtime persists through restart, isolates accounts, purges 
 
   await t.test('A: bootstrap, authenticate, connect Gmail, scan a mock receipt, and read it back through the API', async () => {
     const runtimeA = await createRuntime(buildApp, settings, { provider: createTestProvider() })
-    const session = await authenticate(runtimeA.app, testUsers.a)
-    const headers = { cookie: `subtle_session=${session}` }
+    const { headers, userId } = await authenticate(runtimeA.app, testUsers.a)
 
     const connect = await runtimeA.app.inject({ method: 'POST', url: '/api/v1/sources/gmail/authorize', headers })
     assert.equal(connect.json().status, 'connected')
@@ -114,17 +112,20 @@ integration('server runtime persists through restart, isolates accounts, purges 
     // Seed a manual (non-Gmail-derived) subscription directly, the way an
     // approved manual entry would be persisted — no manual-entry API exists yet.
     const direct = await waitForPool(runtimeUrl)
-    await direct.query('INSERT INTO subscriptions (user_id, canonical_service, raw_merchant, source) VALUES ($1, $2, $3, $4)', [testUsers.a, 'Manual Gym', 'manual', 'Manual entry'])
+    await direct.query('INSERT INTO subscriptions (user_id, canonical_service, raw_merchant, source) VALUES ($1, $2, $3, $4)', [userId, 'Manual Gym', 'manual', 'Manual entry'])
     await direct.end()
 
     await runtimeA.close()
   })
 
   let subscriptionId
+  let userIdA
   await t.test('B: bootstrap a fresh app instance against the same database and verify data survived the restart, with account isolation intact', async () => {
     const runtimeB = await createRuntime(buildApp, settings, { provider: createTestProvider() })
-    const session = await authenticate(runtimeB.app, testUsers.a)
-    const headers = { cookie: `subtle_session=${session}` }
+    const { headers, userId } = await authenticate(runtimeB.app, testUsers.a)
+    // The Google subject resolves to the same internal user across a restart —
+    // resolveOrCreateIdentity looked it up via auth_identities, not re-created it.
+    userIdA = userId
 
     const subs = await runtimeB.app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })
     assert.equal(subs.json().subscriptions.length, 2)
@@ -134,8 +135,7 @@ integration('server runtime persists through restart, isolates accounts, purges 
     const detail = await runtimeB.app.inject({ method: 'GET', url: `/api/v1/subscriptions/${subscriptionId}`, headers })
     assert.equal(detail.json().evidence.length, 1)
 
-    const otherSession = await authenticate(runtimeB.app, testUsers.b)
-    const otherHeaders = { cookie: `subtle_session=${otherSession}` }
+    const { headers: otherHeaders } = await authenticate(runtimeB.app, testUsers.b)
     const otherSubs = await runtimeB.app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers: otherHeaders })
     assert.equal(otherSubs.json().subscriptions.length, 0)
     const forbidden = await runtimeB.app.inject({ method: 'GET', url: `/api/v1/subscriptions/${subscriptionId}`, headers: otherHeaders })
@@ -147,10 +147,10 @@ integration('server runtime persists through restart, isolates accounts, purges 
     await runtimeB.close()
   })
 
-  await t.test('C: bootstrap again after disconnect and verify Gmail-derived data was purged while the manual subscription remains', async () => {
+  await t.test('C: bootstrap again after disconnect and verify Gmail-derived data was purged while the manual subscription remains, with identity mapping intact', async () => {
     const runtimeC = await createRuntime(buildApp, settings, { provider: createTestProvider() })
-    const session = await authenticate(runtimeC.app, testUsers.a)
-    const headers = { cookie: `subtle_session=${session}` }
+    const { headers, userId } = await authenticate(runtimeC.app, testUsers.a)
+    assert.equal(userId, userIdA)
 
     const subs = await runtimeC.app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })
     const remaining = subs.json().subscriptions
@@ -162,16 +162,14 @@ integration('server runtime persists through restart, isolates accounts, purges 
 
   await t.test('idempotency: processing the same provider message twice across a restart creates no duplicates', async () => {
     const runtimeD = await createRuntime(buildApp, settings, { provider: createTestProvider() })
-    const sessionD = await authenticate(runtimeD.app, testUsers.idempotency)
-    const headersD = { cookie: `subtle_session=${sessionD}` }
+    const { headers: headersD } = await authenticate(runtimeD.app, testUsers.idempotency)
     await runtimeD.app.inject({ method: 'POST', url: '/api/v1/sources/gmail/authorize', headers: headersD })
     const firstScan = await runtimeD.app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers: headersD })
     assert.equal(firstScan.json().found, 1)
     await runtimeD.close()
 
     const runtimeE = await createRuntime(buildApp, settings, { provider: createTestProvider() })
-    const sessionE = await authenticate(runtimeE.app, testUsers.idempotency)
-    const headersE = { cookie: `subtle_session=${sessionE}` }
+    const { headers: headersE } = await authenticate(runtimeE.app, testUsers.idempotency)
     const secondScan = await runtimeE.app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers: headersE })
     assert.equal(secondScan.statusCode, 200)
     assert.equal(secondScan.json().found, 0)
@@ -188,8 +186,7 @@ integration('server runtime persists through restart, isolates accounts, purges 
       listCandidateMessages: async () => { await sleep(250); return [{ id: 'mock-message-netflix-1', subject: 'Netflix renewal receipt', sender: 'billing@netflix.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your monthly payment of $22.99 renews Sep 12, 2026.' }] },
     })
     const runtimeF = await createRuntime(buildApp, settings, { provider: slowProvider })
-    const sessionF = await authenticate(runtimeF.app, testUsers.concurrent)
-    const headersF = { cookie: `subtle_session=${sessionF}` }
+    const { headers: headersF } = await authenticate(runtimeF.app, testUsers.concurrent)
     await runtimeF.app.inject({ method: 'POST', url: '/api/v1/sources/gmail/authorize', headers: headersF })
 
     const [first, second] = await Promise.all([

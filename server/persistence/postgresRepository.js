@@ -18,7 +18,23 @@ export const createPostgresRepository = ({ pool }) => {
   return {
     async getUser(id) { const { rows } = await pool.query('SELECT id, email, name FROM users WHERE id = $1', [id]); return rows[0] || null },
     async createUser({ id = randomUUID(), email, name }) { const { rows } = await pool.query('INSERT INTO users (id, email, name) VALUES ($1, $2, $3) RETURNING id, email, name', [id, email, name]); return rows[0] },
-    async upsertIdentity({ userId, subject, email }) { await pool.query('INSERT INTO auth_identities (user_id, provider, provider_subject, email) VALUES ($1, $2, $3, $4) ON CONFLICT (provider, provider_subject) DO UPDATE SET email = EXCLUDED.email', [userId, 'google', subject, email]) },
+    async getIdentityForUser({ userId, provider }) { const { rows } = await pool.query('SELECT provider_subject AS subject, email FROM auth_identities WHERE user_id = $1 AND provider = $2', [userId, provider]); return rows[0] || null },
+    async resolveOrCreateIdentity({ provider, subject, email, name }) {
+      const existing = await pool.query('SELECT u.id, u.email, u.name FROM auth_identities ai JOIN users u ON u.id = ai.user_id WHERE ai.provider = $1 AND ai.provider_subject = $2', [provider, subject])
+      if (existing.rows[0]) return existing.rows[0]
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        const created = await client.query('INSERT INTO users (email, name) VALUES ($1, $2) RETURNING id, email, name', [email, name])
+        const linked = await client.query('INSERT INTO auth_identities (user_id, provider, provider_subject, email) VALUES ($1, $2, $3, $4) ON CONFLICT (provider, provider_subject) DO NOTHING RETURNING id', [created.rows[0].id, provider, subject, email])
+        if (linked.rowCount) { await client.query('COMMIT'); return created.rows[0] }
+        await client.query('ROLLBACK')
+      } finally {
+        client.release()
+      }
+      const winner = await pool.query('SELECT u.id, u.email, u.name FROM auth_identities ai JOIN users u ON u.id = ai.user_id WHERE ai.provider = $1 AND ai.provider_subject = $2', [provider, subject])
+      return winner.rows[0]
+    },
     async getConnection(userId) { const { rows } = await pool.query('SELECT * FROM source_connections WHERE user_id = $1 AND provider = $2', [userId, 'gmail']); return rowConnection(rows[0]) || { status: 'not_connected', scanStatus: 'idle' } },
     async authorizeConnection(userId, token = null) { const ciphertext = token?.ciphertext || token || null; const keyVersion = token?.keyVersion || null; const { rows } = await pool.query('INSERT INTO source_connections (user_id, provider, authorization_state, encrypted_refresh_token, token_key_version) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, provider) DO UPDATE SET authorization_state = $3, encrypted_refresh_token = COALESCE($4, source_connections.encrypted_refresh_token), token_key_version = COALESCE($5, source_connections.token_key_version), scan_state = $6 RETURNING *', [userId, 'gmail', 'connected', ciphertext, keyVersion, 'idle']); return rowConnection(rows[0]) },
     async getEncryptedRefreshToken(userId) { const { rows } = await pool.query('SELECT encrypted_refresh_token AS ciphertext, token_key_version AS "keyVersion" FROM source_connections WHERE user_id = $1 AND provider = $2 AND authorization_state = $3', [userId, 'gmail', 'connected']); return rows[0]?.ciphertext ? rows[0] : null },
