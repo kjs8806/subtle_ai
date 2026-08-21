@@ -1,7 +1,7 @@
 # Release Checklist
 
 > **Owner:** QA/Test Engineer
-> **Coordinator:** Project Manager
+> **Project management owner:** Project Manager
 > **Status:** Production release gate
 > **Last reviewed:** 2026-08-20
 
@@ -43,5 +43,5 @@ The project currently has no production deployment. This checklist does not auth
 
 ## Approval
 
-- [ ] Coordinator confirms complete traceability and handoffs.
+- [ ] Project Manager confirms complete traceability and handoffs.
 - [ ] Founder approves merge/release while the autonomous workflow remains supervised.
