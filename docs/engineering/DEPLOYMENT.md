@@ -10,7 +10,7 @@ The repository has local development and CI validation only. There is no approve
 
 The current server configuration can fall back to a default session secret. That fallback is incomplete and is a production blocker. A production startup must reject a missing, empty, known-default, or otherwise invalid `SESSION_SECRET`; the value must come from an approved secret store and support controlled rotation.
 
-The controlled Codespaces Google configuration uses `GOOGLE_OIDC_REDIRECT_URI` for sign-in and `GOOGLE_GMAIL_REDIRECT_URI` for Gmail authorization. `TOKEN_ENCRYPTION_KEY` is required for encrypted refresh-token custody; secret values must remain outside Git.
+The controlled Codespaces Google configuration uses `GOOGLE_OIDC_REDIRECT_URI` for sign-in and `GOOGLE_GMAIL_REDIRECT_URI` for Gmail authorization. `TOKEN_ENCRYPTION_KEY` is required for encrypted refresh-token custody; secret values must remain outside Git. See [REAL_GMAIL_VALIDATION.md](REAL_GMAIL_VALIDATION.md) for the concrete Google Cloud Console and Codespaces setup steps, including a Codespaces-tunnel-specific `PUBLIC_ORIGIN` adjustment that differs from the redirect URIs' origin.
 
 Session cookies, OAuth-state cookies, and same-origin enforcement on state-changing endpoints activate whenever `NODE_ENV=production` **or** `GMAIL_PROVIDER=google` — not on `NODE_ENV` alone. Codespaces forwards the validation URL over HTTPS while typically leaving `NODE_ENV` at its non-production default, so tying this hardening solely to `NODE_ENV` would leave it off during real-Gmail validation; `GMAIL_PROVIDER=google` is the explicit, always-on trigger for that environment instead.
 

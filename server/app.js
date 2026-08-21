@@ -107,13 +107,20 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
     if (!state || state.purpose !== 'gmail' || state.userId !== request.user.id || state.expiresAt <= now() || request.query.state !== request.cookies.subtle_gmail_oauth_state) return reply.code(400).send({ error: { code: 'invalid_oauth_state', message: 'Invalid authorization state' } })
     const result = await provider.exchangeGmailAuthorizationCode({ code: request.query.code })
     if (result.status !== 'authorized') return reply.code(400).send({ error: { code: result.status, message: 'Authorization was not completed' } })
-    // Fail closed: the Gmail-authorized Google subject must be present and must
-    // exactly equal the signed-in application identity's Google subject. A missing
-    // subject is a security failure, never an acceptable fallback, and this check
-    // runs before any refresh-token persistence or connection activation below.
-    const gmailSubject = typeof result.subject === 'string' ? result.subject.trim() : ''
+    // Fail closed: the Gmail-authorized account must be present and must exactly
+    // match the signed-in application identity. A gmail.readonly-only access token
+    // carries no OIDC claims, so Google's tokeninfo never returns a `sub` for it -
+    // there is no way to obtain a stable subject without requesting a broader scope,
+    // which would violate the approved exact-scope invariant. Gmail's own profile
+    // endpoint (already covered by gmail.readonly) gives the connected mailbox's
+    // email address instead, which is compared against the signed-in identity's
+    // stored email. A missing match is a security failure, never an acceptable
+    // fallback, and this check runs before any refresh-token persistence or
+    // connection activation below.
+    const gmailEmail = typeof result.email === 'string' ? result.email.trim().toLowerCase() : ''
     const identity = repository.getIdentityForUser ? await repository.getIdentityForUser({ userId: request.user.id, provider: 'google' }) : null
-    if (!gmailSubject || !identity || gmailSubject !== identity.subject) return reply.code(409).send({ error: { code: 'identity_mismatch', message: 'The Gmail account does not match the signed-in account' } })
+    const identityEmail = typeof identity?.email === 'string' ? identity.email.trim().toLowerCase() : ''
+    if (!gmailEmail || !identityEmail || gmailEmail !== identityEmail) return reply.code(409).send({ error: { code: 'identity_mismatch', message: 'The Gmail account does not match the signed-in account' } })
     // Google only guarantees a refresh token on first consent; a reconnect may
     // legitimately omit it. Never encrypt an empty string over an existing valid
     // token - that would silently downgrade a working connection to one that can

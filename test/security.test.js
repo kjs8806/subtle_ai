@@ -81,18 +81,35 @@ test('SEC-006: revokeConnection treats a missing or empty token as unverified, n
   }
 })
 
-test('SEC-005: the real Gmail exchange normalizes a successful token+identity lookup into status "authorized" with the authoritative Google subject and refresh token', async () => {
+test('SEC-005: the real Gmail exchange normalizes a successful token+identity lookup into status "authorized" with the connected mailbox\'s email and refresh token', async () => {
+  // A gmail.readonly-only token carries no OIDC claims, so Google's tokeninfo
+  // never returns a `sub` for it - the real identity lookup is Gmail's own
+  // profile endpoint (already covered by gmail.readonly), keyed by email.
   const fetchImpl = async (url, options) => {
     if (url === 'https://oauth2.googleapis.com/token') return { ok: true, json: async () => ({ access_token: 'gmail-access-token', refresh_token: 'real-refresh-token', token_type: 'Bearer', expires_in: 3600 }) }
-    if (url.startsWith('https://oauth2.googleapis.com/tokeninfo')) return { ok: true, json: async () => ({ sub: '104857612345678901234' }) }
+    if (url === 'https://gmail.googleapis.com/gmail/v1/users/me/profile') return { ok: true, json: async () => ({ emailAddress: 'person@example.com' }) }
     throw new Error(`Unexpected fetch to ${url}`)
   }
   const provider = createGoogleProvider({ clientId: 'client', clientSecret: 'secret', oidcRedirectUri: 'https://app.example/oidc', gmailRedirectUri: 'https://app.example/gmail', fetchImpl })
 
   const result = await provider.exchangeGmailAuthorizationCode({ code: 'real-authorization-code' })
   assert.equal(result.status, 'authorized')
-  assert.equal(result.subject, '104857612345678901234')
+  assert.equal(result.email, 'person@example.com')
   assert.equal(result.refresh_token, 'real-refresh-token')
+})
+
+test('refreshAccessToken normalizes Google\'s raw access_token into the accessToken (camelCase) contract callers read', async () => {
+  // Google's token endpoint returns snake_case (access_token); the scan path
+  // reads access.accessToken (camelCase, matching the fake provider's stub) -
+  // without normalization every real scan would send "Authorization: Bearer
+  // undefined".
+  const provider = createGoogleProvider({
+    clientId: 'client', clientSecret: 'secret', oidcRedirectUri: 'https://app.example/oidc', gmailRedirectUri: 'https://app.example/gmail',
+    fetchImpl: async () => ({ ok: true, json: async () => ({ access_token: 'fresh-access-token', token_type: 'Bearer', expires_in: 3600 }) }),
+  })
+  const result = await provider.refreshAccessToken('some-refresh-token')
+  assert.equal(result.accessToken, 'fresh-access-token')
+  assert.equal(result.access_token, 'fresh-access-token')
 })
 
 test('SEC-005: a failed Gmail token exchange or identity lookup throws and is never normalized to authorized', async () => {

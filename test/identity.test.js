@@ -22,9 +22,12 @@ const createTestProvider = (extra = {}) => ({
     const subject = code.replace('mock-success:', '')
     return { status: 'authorized', subject, email: `${subject}@example.com`, refreshToken: 'mock-refresh-token' }
   },
+  // A gmail.readonly-only token carries no OIDC claims, so the real provider
+  // identifies the connected mailbox by email (via Gmail's own profile
+  // endpoint), not by subject - this mirrors that contract.
   exchangeGmailAuthorizationCode: async ({ code }) => {
     const subject = code.replace('mock-gmail:', '')
-    return { status: 'authorized', subject, refreshToken: 'mock-gmail-refresh-token' }
+    return { status: 'authorized', email: `${subject}@example.com`, refreshToken: 'mock-gmail-refresh-token' }
   },
   ...extra,
 })
@@ -84,7 +87,10 @@ const createRealGoogleProvider = ({ signInSubject = GOOGLE_SUBJECT_A, gmailSubje
       throw new Error(`Unexpected redirect_uri ${redirectUri}`)
     }
     if (url === 'https://openidconnect.googleapis.com/v1/userinfo') return { ok: true, json: async () => ({ sub: signInSubject, email: `${signInSubject}@example.com`, name: 'Test User' }) }
-    if (url.startsWith('https://oauth2.googleapis.com/tokeninfo')) return { ok: true, json: async () => ({ sub: gmailSubject }) }
+    // A gmail.readonly-only token carries no OIDC claims, so the real provider
+    // identifies the connected mailbox via Gmail's own profile endpoint, not
+    // Google's tokeninfo (which returns no sub/user-identifying field for it).
+    if (url === 'https://gmail.googleapis.com/gmail/v1/users/me/profile') return { ok: true, json: async () => ({ emailAddress: `${gmailSubject}@example.com` }) }
     if (url === 'https://oauth2.googleapis.com/revoke') {
       const response = revokeResponses[revokeCallIndex] || { ok: true }
       revokeCallIndex += 1
@@ -251,15 +257,15 @@ test('SEC-001: the mock-provider deterministic identity never activates for GMAI
   assert.equal(callback.cookies.find(({ name }) => name === 'subtle_session'), undefined)
 })
 
-test('SEC-002: Gmail OAuth with a missing, null, empty, or whitespace-only subject cannot connect, persists no refresh token, and leaves scanning unavailable', async () => {
-  for (const subject of [undefined, null, '', '   ']) {
+test('SEC-002: Gmail OAuth with a missing, null, empty, or whitespace-only email cannot connect, persists no refresh token, and leaves scanning unavailable', async () => {
+  for (const email of [undefined, null, '', '   ']) {
     const { repository, counts } = withCallCounts(createMemoryRepository())
-    const provider = createTestProvider({ exchangeGmailAuthorizationCode: async () => ({ status: 'authorized', subject, refreshToken: 'never-store' }) })
+    const provider = createTestProvider({ exchangeGmailAuthorizationCode: async () => ({ status: 'authorized', email, refreshToken: 'never-store' }) })
     const app = buildApp({ repository, provider, gmailProvider: 'google' })
     const { headers, user } = await authenticate(app, GOOGLE_SUBJECT_A)
 
     const response = await connectGmail(app, headers, GOOGLE_SUBJECT_A)
-    assert.equal(response.statusCode, 409, `subject ${JSON.stringify(subject)} must be rejected`)
+    assert.equal(response.statusCode, 409, `email ${JSON.stringify(email)} must be rejected`)
     assert.equal(response.json().error.code, 'identity_mismatch')
     assert.equal(counts.authorizeConnection, 0, 'authorizeConnection() must not run for a rejected Gmail identity')
 
@@ -371,7 +377,7 @@ test('SEC-005: the real Google provider adapter connects Gmail through the appli
   assert.ok(stored, 'a refresh token must be persisted')
   assert.equal(tokenVault.decrypt(stored), 'real-gmail-refresh-token')
   assert.ok(calls.includes('https://oauth2.googleapis.com/token'), 'the real token endpoint must have been called')
-  assert.ok(calls.some((url) => url.startsWith('https://oauth2.googleapis.com/tokeninfo')), 'the real Gmail identity lookup must have been called')
+  assert.ok(calls.includes('https://gmail.googleapis.com/gmail/v1/users/me/profile'), 'the real Gmail identity lookup must have been called')
 })
 
 test('SEC-005: the real Google provider adapter rejects a mismatching Gmail subject through the application callback and persists nothing', async () => {

@@ -59,6 +59,20 @@ const collectText = (payload, depth = 0, counter = { parts: 0 }) => {
   return result
 }
 
+// The Date header is attacker-controlled, free-form email text (e.g. Gmail
+// commonly sends RFC 2822 dates with a trailing "(UTC)" annotation that
+// PostgreSQL's timestamptz parser rejects outright), so it's never persisted
+// as-is. Gmail's own internalDate (server-assigned receipt time, epoch ms) is
+// preferred when present; the Date header is only a fallback, and either way
+// this normalizes to ISO 8601 or gives up cleanly rather than passing raw text
+// through to storage.
+const parseReceivedAt = (message, headers) => {
+  const internalMs = Number(message.internalDate)
+  if (Number.isFinite(internalMs) && internalMs > 0) return new Date(internalMs).toISOString()
+  const parsed = new Date(headers.date || '')
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+}
+
 export const adaptGmailMessage = (message = {}) => {
   const payload = message.payload || {}
   const headers = Object.fromEntries((payload.headers || []).map(({ name, value }) => [String(name || '').toLowerCase(), value || '']))
@@ -68,7 +82,7 @@ export const adaptGmailMessage = (message = {}) => {
     id: message.id || '',
     subject: headers.subject || '',
     sender: headers.from || '',
-    receivedAt: headers.date || null,
+    receivedAt: parseReceivedAt(message, headers),
     body,
   }
 }
