@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { buildApp } from '../server/app.js'
+import { createGoogleProvider } from '../server/auth/googleProvider.js'
 import { createFakeGmailProvider } from '../server/gmail/fakeProvider.js'
 import { createMemoryRepository } from '../server/persistence/memoryRepository.js'
 import { createSessionManager } from '../server/security/session.js'
@@ -54,6 +55,64 @@ const connectGmail = async (app, headers, subject) => {
   return app.inject({
     method: 'GET',
     url: `/api/v1/sources/gmail/callback?state=${state}&code=mock-gmail:${subject}`,
+    headers: { ...headers, cookie: `${headers.cookie}; subtle_gmail_oauth_state=${state}` },
+  })
+}
+
+// SEC-005/SEC-006 require exercising the *real* createGoogleProvider() implementation
+// (not the fake used above) end to end: token exchange -> Google identity lookup ->
+// normalized provider result -> application callback -> subject comparison ->
+// encrypted token persistence. This harness drives that real implementation through a
+// stubbed fetchImpl and records every URL it contacts, so tests can assert both what
+// got persisted and whether Google was ever actually called.
+const REAL_OIDC_REDIRECT = 'https://app.example/oidc'
+const REAL_GMAIL_REDIRECT = 'https://app.example/gmail'
+
+const createRealGoogleProvider = ({ signInSubject = GOOGLE_SUBJECT_A, gmailSubject = signInSubject, gmailRefreshToken = 'real-gmail-refresh-token', gmailTokenOk = true, revokeResponses = [] } = {}) => {
+  const calls = []
+  let revokeCallIndex = 0
+  const fetchImpl = async (url, options = {}) => {
+    calls.push(url)
+    if (url === 'https://oauth2.googleapis.com/token') {
+      const body = new URLSearchParams(options.body)
+      const redirectUri = body.get('redirect_uri')
+      if (redirectUri === REAL_OIDC_REDIRECT) return { ok: true, json: async () => ({ access_token: 'signin-access-token', token_type: 'Bearer', expires_in: 3600 }) }
+      if (redirectUri === REAL_GMAIL_REDIRECT) {
+        if (!gmailTokenOk) return { ok: false, status: 400 }
+        return { ok: true, json: async () => ({ access_token: 'gmail-access-token', ...(gmailRefreshToken ? { refresh_token: gmailRefreshToken } : {}), token_type: 'Bearer', expires_in: 3600 }) }
+      }
+      throw new Error(`Unexpected redirect_uri ${redirectUri}`)
+    }
+    if (url === 'https://openidconnect.googleapis.com/v1/userinfo') return { ok: true, json: async () => ({ sub: signInSubject, email: `${signInSubject}@example.com`, name: 'Test User' }) }
+    if (url.startsWith('https://oauth2.googleapis.com/tokeninfo')) return { ok: true, json: async () => ({ sub: gmailSubject }) }
+    if (url === 'https://oauth2.googleapis.com/revoke') {
+      const response = revokeResponses[revokeCallIndex] || { ok: true }
+      revokeCallIndex += 1
+      return response
+    }
+    throw new Error(`Unexpected fetch to ${url}`)
+  }
+  const provider = createGoogleProvider({ clientId: 'client', clientSecret: 'secret', oidcRedirectUri: REAL_OIDC_REDIRECT, gmailRedirectUri: REAL_GMAIL_REDIRECT, fetchImpl })
+  return { provider, calls }
+}
+
+const authenticateReal = async (app) => {
+  const start = await app.inject({ method: 'GET', url: '/api/v1/auth/google/start' })
+  const state = start.cookies.find(({ name }) => name === 'subtle_oauth_state').value
+  const callback = await app.inject({ method: 'GET', url: `/api/v1/auth/google/callback?state=${state}&code=real-authorization-code`, cookies: { subtle_oauth_state: state } })
+  assert.equal(callback.statusCode, 200)
+  const token = callback.cookies.find(({ name }) => name === 'subtle_session').value
+  const headers = { cookie: `subtle_session=${token}` }
+  const me = await app.inject({ method: 'GET', url: '/api/v1/session', headers })
+  return { token, headers, user: me.json().user }
+}
+
+const connectGmailReal = async (app, headers) => {
+  const start = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/authorize', headers: { ...headers, ...sameOrigin } })
+  const state = start.cookies.find(({ name }) => name === 'subtle_gmail_oauth_state').value
+  return app.inject({
+    method: 'GET',
+    url: `/api/v1/sources/gmail/callback?state=${state}&code=real-gmail-authorization-code`,
     headers: { ...headers, cookie: `${headers.cookie}; subtle_gmail_oauth_state=${state}` },
   })
 }
@@ -295,4 +354,138 @@ test('SEC-004: a retried disconnect after a failed revocation can still succeed'
   assert.equal(second.statusCode, 200)
   const connection = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
   assert.equal(connection.json().status, 'not_connected')
+})
+
+test('SEC-005: the real Google provider adapter connects Gmail through the application callback when the subject matches and persists an encrypted, non-empty refresh token', async () => {
+  const repository = createMemoryRepository()
+  const tokenVault = createTokenVault({ secret: 'a'.repeat(32) })
+  const { provider, calls } = createRealGoogleProvider({ signInSubject: GOOGLE_SUBJECT_A, gmailSubject: GOOGLE_SUBJECT_A, gmailRefreshToken: 'real-gmail-refresh-token' })
+  const app = buildApp({ repository, provider, gmailProvider: 'google', tokenVault })
+
+  const { headers, user } = await authenticateReal(app)
+  const response = await connectGmailReal(app, headers)
+  assert.equal(response.statusCode, 200)
+  assert.equal(response.json().status, 'connected')
+
+  const stored = await repository.getEncryptedRefreshToken(user.id)
+  assert.ok(stored, 'a refresh token must be persisted')
+  assert.equal(tokenVault.decrypt(stored), 'real-gmail-refresh-token')
+  assert.ok(calls.includes('https://oauth2.googleapis.com/token'), 'the real token endpoint must have been called')
+  assert.ok(calls.some((url) => url.startsWith('https://oauth2.googleapis.com/tokeninfo')), 'the real Gmail identity lookup must have been called')
+})
+
+test('SEC-005: the real Google provider adapter rejects a mismatching Gmail subject through the application callback and persists nothing', async () => {
+  const repository = createMemoryRepository()
+  const tokenVault = createTokenVault({ secret: 'a'.repeat(32) })
+  const { provider } = createRealGoogleProvider({ signInSubject: GOOGLE_SUBJECT_A, gmailSubject: GOOGLE_SUBJECT_B })
+  const app = buildApp({ repository, provider, gmailProvider: 'google', tokenVault })
+
+  const { headers, user } = await authenticateReal(app)
+  const response = await connectGmailReal(app, headers)
+  assert.equal(response.statusCode, 409)
+  assert.equal(response.json().error.code, 'identity_mismatch')
+  assert.equal(await repository.getEncryptedRefreshToken(user.id), null)
+  const connection = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
+  assert.equal(connection.json().status, 'not_connected')
+})
+
+test('SEC-005: a failed real Gmail token exchange never normalizes to authorized and connects nothing', async () => {
+  const repository = createMemoryRepository()
+  const tokenVault = createTokenVault({ secret: 'a'.repeat(32) })
+  const { provider } = createRealGoogleProvider({ signInSubject: GOOGLE_SUBJECT_A, gmailTokenOk: false })
+  const app = buildApp({ repository, provider, gmailProvider: 'google', tokenVault })
+
+  const { headers, user } = await authenticateReal(app)
+  const response = await connectGmailReal(app, headers)
+  assert.notEqual(response.statusCode, 200)
+  assert.equal(await repository.getEncryptedRefreshToken(user.id), null)
+  const connection = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
+  assert.equal(connection.json().status, 'not_connected')
+})
+
+test('SEC-006: first-time Gmail authorization without a refresh token does not create a falsely usable connection', async () => {
+  const repository = createMemoryRepository()
+  const tokenVault = createTokenVault({ secret: 'a'.repeat(32) })
+  const { provider } = createRealGoogleProvider({ signInSubject: GOOGLE_SUBJECT_A, gmailRefreshToken: null })
+  const app = buildApp({ repository, provider, gmailProvider: 'google', tokenVault })
+
+  const { headers, user } = await authenticateReal(app)
+  const response = await connectGmailReal(app, headers)
+  assert.equal(response.statusCode, 502)
+  assert.equal(response.json().error.code, 'missing_refresh_token')
+  assert.equal(await repository.getEncryptedRefreshToken(user.id), null)
+  const connection = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
+  assert.equal(connection.json().status, 'not_connected')
+})
+
+test('SEC-006: a reconnect where Google omits a new refresh token preserves the existing valid encrypted token instead of overwriting it', async () => {
+  const repository = createMemoryRepository()
+  const tokenVault = createTokenVault({ secret: 'a'.repeat(32) })
+  const sessions = createSessionManager()
+
+  const { provider: firstProvider } = createRealGoogleProvider({ signInSubject: GOOGLE_SUBJECT_A, gmailRefreshToken: 'first-refresh-token' })
+  const appFirst = buildApp({ repository, provider: firstProvider, gmailProvider: 'google', tokenVault, sessions })
+  const { headers, user } = await authenticateReal(appFirst)
+  const first = await connectGmailReal(appFirst, headers)
+  assert.equal(first.statusCode, 200)
+  assert.equal(tokenVault.decrypt(await repository.getEncryptedRefreshToken(user.id)), 'first-refresh-token')
+
+  // A reconnect (e.g. re-consent) where Google legitimately omits refresh_token
+  // must reuse the existing valid token, not overwrite it with encrypted empty data.
+  const { provider: secondProvider } = createRealGoogleProvider({ signInSubject: GOOGLE_SUBJECT_A, gmailRefreshToken: null })
+  const appSecond = buildApp({ repository, provider: secondProvider, gmailProvider: 'google', tokenVault, sessions })
+  const second = await connectGmailReal(appSecond, headers)
+  assert.equal(second.statusCode, 200)
+  assert.equal(second.json().status, 'connected')
+  assert.equal(tokenVault.decrypt(await repository.getEncryptedRefreshToken(user.id)), 'first-refresh-token')
+})
+
+test('SEC-006: disconnect with no stored refresh token fails closed, never contacts Google, and never reports disconnected', async () => {
+  const repository = createMemoryRepository()
+  const tokenVault = createTokenVault({ secret: 'a'.repeat(32) })
+  const { provider, calls } = createRealGoogleProvider({ signInSubject: GOOGLE_SUBJECT_A })
+  const app = buildApp({ repository, provider, gmailProvider: 'google', tokenVault })
+  const { headers } = await authenticateReal(app)
+
+  // No Gmail connection was ever made, so there is no encrypted token to revoke.
+  const response = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/disconnect', headers: { ...headers, ...sameOrigin } })
+  assert.notEqual(response.statusCode, 200)
+  assert.equal(response.json().error.code, 'revocation_failed')
+  assert.equal(calls.includes('https://oauth2.googleapis.com/revoke'), false, 'Google must not be contacted without a usable token')
+})
+
+test('SEC-006: disconnect with an encrypted empty refresh token fails closed and does not purge the connection', async () => {
+  const repository = createMemoryRepository()
+  const tokenVault = createTokenVault({ secret: 'a'.repeat(32) })
+  const { provider, calls } = createRealGoogleProvider({ signInSubject: GOOGLE_SUBJECT_A })
+  const app = buildApp({ repository, provider, gmailProvider: 'google', tokenVault })
+  const { headers, user } = await authenticateReal(app)
+  // Simulate a corrupted/legacy connection whose stored ciphertext decrypts to ''.
+  await repository.authorizeConnection(user.id, tokenVault.encrypt(''))
+
+  const response = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/disconnect', headers: { ...headers, ...sameOrigin } })
+  assert.notEqual(response.statusCode, 200)
+  assert.equal(response.json().error.code, 'revocation_failed')
+  assert.equal(calls.includes('https://oauth2.googleapis.com/revoke'), false, 'Google must not be contacted with an empty token')
+  const connection = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
+  assert.equal(connection.json().status, 'connected', 'a failed/unverifiable revocation must not purge the connection')
+})
+
+test('SEC-006: a failed disconnect purges neither the subscriptions nor the evidence created from a connected Gmail source', async () => {
+  const repository = createMemoryRepository()
+  const tokenVault = createTokenVault({ secret: 'a'.repeat(32) })
+  const provider = createTestProvider({ revokeConnection: async () => ({ status: 'revocation_failed' }) })
+  const app = buildApp({ repository, provider, gmailProvider: 'google', tokenVault })
+  const { headers } = await authenticate(app, GOOGLE_SUBJECT_A)
+  await connectGmail(app, headers, GOOGLE_SUBJECT_A)
+  const scan = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers: { ...headers, ...sameOrigin } })
+  assert.equal(scan.statusCode, 200)
+  const before = await app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })
+  assert.equal(before.json().subscriptions.length, 1)
+
+  const response = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/disconnect', headers: { ...headers, ...sameOrigin } })
+  assert.notEqual(response.statusCode, 200)
+
+  const after = await app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })
+  assert.equal(after.json().subscriptions.length, 1, 'evidence-backed subscriptions must survive a failed disconnect')
 })

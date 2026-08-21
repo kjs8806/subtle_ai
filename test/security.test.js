@@ -14,6 +14,25 @@ test('token vault encrypts and authenticates refresh tokens', () => {
   assert.throws(() => createTokenVault({ secret: 'short' }), /at least 32/)
 })
 
+test('SEC-006: mutating the IV, auth tag, or ciphertext of an AES-GCM token independently breaks decryption', () => {
+  const vault = createTokenVault({ secret: 'a'.repeat(32) })
+  const { ciphertext, keyVersion } = vault.encrypt('refresh-token')
+  const [version, iv, tag, body] = ciphertext.split('.')
+
+  // Flip the leading bit of the segment's first byte rather than its last base64url
+  // character: base64url's final character of a non-multiple-of-4 segment can carry
+  // unused low bits, so mutating it does not always change the decoded bytes.
+  const flipFirstBit = (segment) => {
+    const buffer = Buffer.from(segment, 'base64url')
+    buffer[0] ^= 0x01
+    return buffer.toString('base64url')
+  }
+
+  assert.throws(() => vault.decrypt({ ciphertext: [version, flipFirstBit(iv), tag, body].join('.'), keyVersion }), 'mutated IV must fail authentication')
+  assert.throws(() => vault.decrypt({ ciphertext: [version, iv, flipFirstBit(tag), body].join('.'), keyVersion }), 'mutated auth tag must fail authentication')
+  assert.throws(() => vault.decrypt({ ciphertext: [version, iv, tag, flipFirstBit(body)].join('.'), keyVersion }), 'mutated ciphertext body must fail authentication')
+})
+
 test('google configuration fails closed without credentials', () => {
   assert.throws(() => validateConfig({ gmailProvider: 'google', persistenceProvider: 'postgres', databaseUrl: 'postgresql://localhost/test', production: false, googleClientId: '', googleClientSecret: '', googleOidcRedirectUri: '', googleGmailRedirectUri: '', tokenEncryptionKey: '' }), /GOOGLE_CLIENT_ID/)
   assert.throws(() => validateConfig({ gmailProvider: 'mock', persistenceProvider: 'memory', production: true, sessionSecret: 'local-development-only' }), /SESSION_SECRET/)
@@ -48,4 +67,44 @@ test('SEC-004: revokeConnection verifies the HTTP result, sends the token in the
   const networkFailure = provider(async () => { throw new Error('network unreachable') })
   const exceptionResult = await networkFailure.revokeConnection({ token: 'refresh-token' })
   assert.equal(exceptionResult.status, 'revocation_failed')
+})
+
+test('SEC-006: revokeConnection treats a missing or empty token as unverified, never as disconnected, and never contacts Google', async () => {
+  let called = false
+  const provider = createGoogleProvider({ clientId: 'client', clientSecret: 'secret', oidcRedirectUri: 'https://app.example/oidc', gmailRedirectUri: 'https://app.example/gmail', fetchImpl: async () => { called = true; return { ok: true } } })
+
+  for (const token of [undefined, null, '']) {
+    called = false
+    const result = await provider.revokeConnection({ token })
+    assert.equal(result.status, 'revocation_failed', `token ${JSON.stringify(token)} must not be reported as disconnected`)
+    assert.equal(called, false, 'Google must never be contacted without a usable token')
+  }
+})
+
+test('SEC-005: the real Gmail exchange normalizes a successful token+identity lookup into status "authorized" with the authoritative Google subject and refresh token', async () => {
+  const fetchImpl = async (url, options) => {
+    if (url === 'https://oauth2.googleapis.com/token') return { ok: true, json: async () => ({ access_token: 'gmail-access-token', refresh_token: 'real-refresh-token', token_type: 'Bearer', expires_in: 3600 }) }
+    if (url.startsWith('https://oauth2.googleapis.com/tokeninfo')) return { ok: true, json: async () => ({ sub: '104857612345678901234' }) }
+    throw new Error(`Unexpected fetch to ${url}`)
+  }
+  const provider = createGoogleProvider({ clientId: 'client', clientSecret: 'secret', oidcRedirectUri: 'https://app.example/oidc', gmailRedirectUri: 'https://app.example/gmail', fetchImpl })
+
+  const result = await provider.exchangeGmailAuthorizationCode({ code: 'real-authorization-code' })
+  assert.equal(result.status, 'authorized')
+  assert.equal(result.subject, '104857612345678901234')
+  assert.equal(result.refresh_token, 'real-refresh-token')
+})
+
+test('SEC-005: a failed Gmail token exchange or identity lookup throws and is never normalized to authorized', async () => {
+  const tokenFailure = createGoogleProvider({ clientId: 'client', clientSecret: 'secret', oidcRedirectUri: 'https://app.example/oidc', gmailRedirectUri: 'https://app.example/gmail', fetchImpl: async () => ({ ok: false, status: 400 }) })
+  await assert.rejects(tokenFailure.exchangeGmailAuthorizationCode({ code: 'irrelevant' }))
+
+  const identityFailure = createGoogleProvider({
+    clientId: 'client', clientSecret: 'secret', oidcRedirectUri: 'https://app.example/oidc', gmailRedirectUri: 'https://app.example/gmail',
+    fetchImpl: async (url) => {
+      if (url === 'https://oauth2.googleapis.com/token') return { ok: true, json: async () => ({ access_token: 'gmail-access-token', refresh_token: 'real-refresh-token' }) }
+      return { ok: false, status: 400 }
+    },
+  })
+  await assert.rejects(identityFailure.exchangeGmailAuthorizationCode({ code: 'irrelevant' }))
 })

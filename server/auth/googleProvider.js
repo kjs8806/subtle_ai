@@ -46,7 +46,7 @@ export const createGoogleProvider = ({ clientId, clientSecret, oidcRedirectUri, 
     exchangeGmailAuthorizationCode: async ({ code }) => {
       const tokens = await exchange(code, gmailRedirectUri)
       const identity = await subjectForGmailToken(tokens.access_token)
-      return { ...tokens, subject: identity.sub }
+      return { status: 'authorized', subject: identity.sub, ...tokens }
     },
     refreshAccessToken: refresh,
     listCandidateMessages: async ({ accessToken }) => {
@@ -61,7 +61,10 @@ export const createGoogleProvider = ({ clientId, clientSecret, oidcRedirectUri, 
       }))
     },
     revokeConnection: async ({ token }) => {
-      if (!token) return { status: 'disconnected' }
+      // A missing/empty token means Google revocation was never attempted, so it
+      // can never be treated as verified - that would let an absent or corrupted
+      // credential silently count as a successful disconnect.
+      if (!token) return { status: 'revocation_failed' }
       // Google's revocation result must be verified, not assumed: a non-2xx
       // response or a network failure both mean the token was NOT revoked, and the
       // token must be sent in the POST body rather than a query string to avoid it

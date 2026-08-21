@@ -37,6 +37,17 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
     reply.code(error.statusCode || 500).send({ error: { code: error.code || 'internal_error', message: error.statusCode ? error.message : 'Internal server error' } })
   })
   const requireUser = async (request, reply) => { if (!request.user) return reply.code(401).send({ error: { code: 'unauthenticated', message: 'Authentication required' } }) }
+  // Absent, malformed, or tampered ciphertext must never surface as a decrypted
+  // value or a thrown crypto error to the caller - both revocation and reconnect
+  // logic need a single fail-closed "is there a usable token" check.
+  const decryptRefreshToken = (encrypted) => {
+    if (!encrypted || !tokenVault) return null
+    try {
+      return tokenVault.decrypt(encrypted) || null
+    } catch {
+      return null
+    }
+  }
 
   app.get('/api/v1/health', async () => ({ status: 'ok', provider: gmailProvider }))
   app.get('/api/v1/session', async (request) => ({ authenticated: Boolean(request.user), user: request.user }))
@@ -103,7 +114,21 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
     const gmailSubject = typeof result.subject === 'string' ? result.subject.trim() : ''
     const identity = repository.getIdentityForUser ? await repository.getIdentityForUser({ userId: request.user.id, provider: 'google' }) : null
     if (!gmailSubject || !identity || gmailSubject !== identity.subject) return reply.code(409).send({ error: { code: 'identity_mismatch', message: 'The Gmail account does not match the signed-in account' } })
-    return { ...(await repository.authorizeConnection(request.user.id, tokenVault?.encrypt(result.refresh_token || result.refreshToken || '') || null)), status: 'connected' }
+    // Google only guarantees a refresh token on first consent; a reconnect may
+    // legitimately omit it. Never encrypt an empty string over an existing valid
+    // token - that would silently downgrade a working connection to one that can
+    // never be refreshed or verifiably revoked. With no new token and no existing
+    // usable one, the connection must not be marked connected at all.
+    const newRefreshToken = result.refresh_token || result.refreshToken || ''
+    let encryptedToken
+    if (newRefreshToken) {
+      encryptedToken = tokenVault ? tokenVault.encrypt(newRefreshToken) : null
+    } else {
+      const existingEncryptedToken = repository.getEncryptedRefreshToken ? await repository.getEncryptedRefreshToken(request.user.id) : null
+      if (!decryptRefreshToken(existingEncryptedToken)) return reply.code(502).send({ error: { code: 'missing_refresh_token', message: 'Gmail did not grant a refresh token. Please try connecting again.' } })
+      encryptedToken = existingEncryptedToken
+    }
+    return { ...(await repository.authorizeConnection(request.user.id, encryptedToken)), status: 'connected' }
   })
   app.post('/api/v1/sources/gmail/scan', { preHandler: requireUser }, async (request, reply) => {
     const scan = await repository.beginScan(request.user.id)
@@ -137,7 +162,7 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
     // revocation must never be reported as disconnected, and must leave the
     // encrypted token in place so a retry can revoke it.
     const encryptedToken = repository.getEncryptedRefreshToken ? await repository.getEncryptedRefreshToken(request.user.id) : null
-    const refreshToken = encryptedToken && tokenVault ? tokenVault.decrypt(encryptedToken) : null
+    const refreshToken = decryptRefreshToken(encryptedToken)
     let revocation
     try {
       revocation = await provider.revokeConnection({ token: refreshToken })
