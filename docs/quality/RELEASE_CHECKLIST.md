@@ -1,7 +1,7 @@
 # Release Checklist
 
 > **Owner:** QA/Test Engineer
-> **Coordinator:** Project Coordinator
+> **Coordinator:** Project Manager
 > **Status:** Production release gate
 > **Last reviewed:** 2026-08-20
 
