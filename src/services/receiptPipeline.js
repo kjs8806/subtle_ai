@@ -116,22 +116,43 @@ export const normalizeMerchant = (rawMerchant = '') => {
 // returns an explicit result rather than overloading `null` for multiple
 // meanings:
 //
-//   { classification: 'not_receipt' | 'one_time' | 'ambiguous', evidence: null, classifierResult }
-//   { classification: 'subscription', evidence: <evidence object>, classifierResult }
+//   { classification: 'not_receipt' | 'one_time', evidence: null, classifierResult, candidate: null }
+//   { classification: 'ambiguous', evidence: null, classifierResult, candidate: <candidate sketch> }
+//   { classification: 'subscription', evidence: <evidence object>, classifierResult, candidate: null }
 //
 // Only 'subscription' carries an `evidence` object; callers must not persist
-// anything for the other three classifications.
+// anything as confirmed evidence for the other classifications. `candidate`
+// (FEATURE-002) is a best-effort, non-authoritative sketch of the same fields
+// for `ambiguous` results only - it exists so a pending review candidate can
+// be persisted and shown to the user, and is never sufficient evidence for
+// automatic subscription creation.
 export const parseReceipt = ({ id, subject = '', sender = '', receivedAt, body = '' }) => {
   const rawText = `${subject}\n${sender}\n${body}`
-  if (!RECEIPT_TERMS.test(rawText)) return { classification: 'not_receipt', evidence: null, classifierResult: null }
+  if (!RECEIPT_TERMS.test(rawText)) return { classification: 'not_receipt', evidence: null, classifierResult: null, candidate: null }
 
   const classifierResult = classifySubscriptionCandidate({ subject, sender, body })
+  const merchant = classifierResult.canonicalService || parseSenderName(sender) || 'Unknown service'
+  const rawMerchant = parseSenderName(sender) || merchant
+  const { amount, currency } = extractAmountAndCurrency(rawText)
+  const cadenceMatch = rawText.match(CADENCE_PATTERN)?.[1]?.toLowerCase()
+  const cadence = cadenceMatch?.includes('year') || cadenceMatch === 'annual' ? 'yearly' : cadenceMatch ? 'monthly' : null
+  const nextRenewal = rawText.match(DATE_PATTERN)?.[1] || null
+  const buildCandidate = () => ({
+    canonicalService: merchant,
+    rawMerchant,
+    amount,
+    currency,
+    cadence,
+    nextRenewal,
+    sourceId: id,
+    receivedAt: receivedAt || null,
+    excerpt: subject,
+  })
+
   if (classifierResult.classification !== 'subscription') {
-    return { classification: classifierResult.classification, evidence: null, classifierResult }
+    return { classification: classifierResult.classification, evidence: null, classifierResult, candidate: classifierResult.classification === 'ambiguous' ? buildCandidate() : null }
   }
 
-  const merchant = classifierResult.canonicalService || parseSenderName(sender) || 'Unknown service'
-  const { amount, currency } = extractAmountAndCurrency(rawText)
   // Currency is part of FEATURE-001's minimum evidence for automatic
   // creation (see docs/engineering/FEATURE_001_CURRENCY.md): an amount with
   // no resolvable CAD/USD currency is not fully confirmed evidence, even
@@ -140,11 +161,8 @@ export const parseReceipt = ({ id, subject = '', sender = '', receivedAt, body =
   // fall back to the same ambiguous/insufficient-evidence path already used
   // for weak recurrence signals, so the scan contract stays a single shape.
   if (amount !== null && currency === null) {
-    return { classification: 'ambiguous', evidence: null, classifierResult }
+    return { classification: 'ambiguous', evidence: null, classifierResult, candidate: buildCandidate() }
   }
-  const cadenceMatch = rawText.match(CADENCE_PATTERN)?.[1]?.toLowerCase()
-  const cadence = cadenceMatch?.includes('year') || cadenceMatch === 'annual' ? 'yearly' : cadenceMatch ? 'monthly' : null
-  const nextRenewal = rawText.match(DATE_PATTERN)?.[1] || null
   const confidence = confidenceFor({ merchant: classifierResult.canonicalService, amount, cadence, nextRenewal })
   const fieldObservations = {
     canonicalService: { value: merchant, provenance: classifierResult.canonicalService ? 'confirmed' : 'inferred' },
@@ -159,7 +177,7 @@ export const parseReceipt = ({ id, subject = '', sender = '', receivedAt, body =
     type: 'gmail_receipt',
     sourceId: id,
     sourceLabel: 'Gmail receipt',
-    rawMerchant: parseSenderName(sender) || merchant,
+    rawMerchant,
     canonicalService: merchant,
     amount,
     currency,
@@ -172,7 +190,7 @@ export const parseReceipt = ({ id, subject = '', sender = '', receivedAt, body =
     classificationScore: classifierResult.score,
   })
 
-  return { classification: 'subscription', evidence, classifierResult }
+  return { classification: 'subscription', evidence, classifierResult, candidate: null }
 }
 
 export const createSubscriptionRecord = (evidence, overrides = {}) => {
