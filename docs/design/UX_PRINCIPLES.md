@@ -2,7 +2,7 @@
 
 > **Owner:** Senior Product Designer
 > **Status:** Approved baseline
-> **Last reviewed:** 2026-08-20
+> **Last reviewed:** 2026-08-22
 
 ## Purpose and authority
 
@@ -20,7 +20,7 @@ These principles guide how approved product requirements are experienced. The De
 10. **Disclose progressively.** Keep primary decisions simple and reveal supporting evidence and technical detail when relevant.
 11. **Design responsively by priority.** Preserve actions, evidence, and state clarity before decorative layout.
 12. **Build accessibly.** Support keyboard, assistive technology, visible focus, semantic structure, contrast, reduced motion, and 44px targets.
-13. **Retain the current visual character.** Extend the established editorial, calm visual language instead of redesigning opportunistically.
+13. **Extend the visual system deliberately, not opportunistically.** The editorial, calm character (warm sage/coral/paper hues, a serif display paired with a geometric sans and mono metadata) is durable; refine its execution (contrast, depth, radius, interaction states) only through a recorded decision (see DES-014), not ad hoc changes made in passing.
 14. **Centralize branding.** Visible app naming and document titles use `APP_CONFIG.name`.
 
 ## Changing the design

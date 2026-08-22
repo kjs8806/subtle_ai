@@ -11,7 +11,8 @@ import { loadingMarkup, sessionErrorMarkup, signedOutMarkup } from './ui/signedO
 
 const APP_CONFIG = { name: 'Subtle AI', tagline: 'your AI subscription optimizer' }
 const money = value => typeof value === 'number' ? `$${value.toFixed(2)}` : 'Price not provided'
-const brand = `<a class="brand" href="#overview" aria-label="${APP_CONFIG.name} home"><span class="brand-mark" aria-hidden="true">s</span><span>${APP_CONFIG.name}</span></a>`
+const brandMark = `<svg class="brand-mark" viewBox="0 0 192 192" width="32" height="32" aria-hidden="true"><rect width="192" height="192" rx="44" fill="var(--coral)"/><text x="96" y="132" text-anchor="middle" fill="var(--paper)" font-family="Georgia, serif" font-size="124" font-style="italic">s</text></svg>`
+const brand = `<a class="brand" href="#overview" aria-label="${APP_CONFIG.name} home">${brandMark}<span>${APP_CONFIG.name}</span></a>`
 const shellHeader = `<header class="global-nav wrap">${brand}</header>`
 const addDialogMarkup = `<div class="dialog-backdrop" data-add-dialog hidden><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="add-title"><button class="dialog-close" data-close-dialog aria-label="Close">×</button><p class="eyebrow">Manual entry</p><h2 id="add-title">Add a subscription</h2><form class="subscription-form"><label>Service name<input name="name" placeholder="e.g. Netflix" required></label><div class="form-row"><label>Cost<input name="cost" type="number" min="0" step="0.01" inputmode="decimal" placeholder="22.99" required></label><label>Billing cadence<select name="cadence"><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></label></div><button class="primary-button form-submit" type="submit">Add to overview</button></form></section></div>`
 
@@ -254,7 +255,7 @@ const renderAuthenticated = async (user, gmailError) => {
   })
 
   const setGmailState = (state, copy, action, { disabled = false } = {}) => {
-    status.textContent = state; message.textContent = copy; gmailButton.dataset.gmailAction = action
+    status.textContent = state; status.dataset.state = state.toLowerCase().replace(/\s+/g, '-'); message.textContent = copy; gmailButton.dataset.gmailAction = action
     gmailButton.textContent = action === 'scan' ? 'Scan receipts' : 'Find subscriptions from receipts'
     gmailButton.disabled = disabled
     disconnectButton.hidden = gmailSource.status !== 'connected'

@@ -3,35 +3,51 @@
 > **Owner:** Senior Product Designer
 > **Status:** Current prototype reference
 > **Canonical feature design:** [FEATURE-001](../product/features/FEATURE-001.md)
-> **Last reviewed:** 2026-08-20
+> **Last reviewed:** 2026-08-22
 
-This document records the current system and approved extensions; it does not authorize a redesign or token refactor. `src/style.css` remains the implemented source.
+This document records the current system and approved extensions; it does not authorize a redesign or token refactor beyond what is recorded in [DESIGN_DECISIONS.md](DESIGN_DECISIONS.md). `src/style.css` remains the implemented source.
 
 ## Foundations
 
-### Type
+### Brand mark (DES-017)
 
-- Display/editorial: Playfair Display
+One SVG mark — a `--radius-md`-style rounded-square badge filled `--coral`, with a lowercase italic Georgia "s" in `--paper` (no accent dot) — is the single source of the logo. It is defined once in `src/main.js`'s `brandMark` and mirrored exactly in `public/icon.svg`, so the favicon, the in-app nav/footer mark, and the installed-app-icon are pixel-identical. The glyph is rendered as SVG `<text>` in the safe system font Georgia rather than the page's loaded webfonts (Playfair Display, Space Grotesk), because `public/icon.svg` is loaded standalone (favicon, OS home-screen icon, link previews) with no access to the page's `@import` — a webfont there would silently fall back and could visually diverge from the in-app copy.
+
+### Type (DES-014, revised DES-016)
+
+- Display/editorial: Playfair Display — kept per Product Owner request; DES-014's swap to Fraunces was tried and reverted (see DES-016)
 - Interface/body: Space Grotesk
 - Metadata/labels: DM Mono
 
-### Root tokens
+### Root tokens (DES-014)
+
+Same sage/coral/paper hue family as before; values refined for contrast and centralized as tokens.
 
 | Token | Value | Use |
 | --- | --- | --- |
-| Ink | `#20282b` | Primary text and dark actions |
-| Muted | `#697276` | Secondary information |
-| Paper | `#f5f4ee` | Page background |
-| Cream | `#eeeadc` | Warm surfaces |
-| Sage | `#c9d1bc` | Calm supporting state |
-| Coral | `#e48667` | Emphasis and action accents |
-| Line | `#d6d8cd` | Dividers and borders |
+| Ink | `#1f2924` | Primary text and dark actions |
+| Ink soft | `#33423c` | Hover/active state for dark actions |
+| Muted | `#5c6b64` | Secondary information |
+| Paper | `#f7f8f3` | Page background |
+| Sage | `#e3ebdd` | Calm supporting surface |
+| Sage deep | `#b9c9ab` | Dividers/accents inside sage surfaces |
+| Coral | `#c15f45` | Emphasis, decorative accents, backgrounds |
+| Coral ink | `#9c4530` | Coral used as small text (AA contrast on white/paper) |
+| Line | `#dde3d6` | Dividers and borders |
 
-### Implemented app semantic palette
+### Radius and elevation (DES-014)
 
-The app layer also uses direct semantic colors currently implemented in CSS: dark action/ink `#293732` and `#24302d`; app surface `#f7f8f4`; coral action `#d7785e`; positive `#78947a`/`#6c9272`; warning amber `#d3a34c`/`#a68136`; urgent coral `#c96d56`; plum `#94777e`; borders near `#dfe4dc`; and muted text near `#7d8781`/`#8b9590`.
+| Token | Value | Use |
+| --- | --- | --- |
+| `--radius-xs` | 6px | Service icons |
+| `--radius-sm` | 10px | Buttons, form inputs |
+| `--radius-md` | 16px | Cards, subscription list, mobile menu, cost grid |
+| `--radius-lg` | 22px | Dialogs |
+| `--shadow-sm` / `--shadow-md` / `--shadow-lg` | — | Resting, hover, and dialog elevation |
 
-These values document current behavior. Do not centralize, rename, or replace tokens without a separately reviewed design/technical change. State never relies on color alone.
+### Not yet centralized
+
+Per-service brand accents (`.service-red/blue/navy/purple/green`) and the Gmail status dot's warning/success colors (`#a68136`, `#6c9272`) remain literal, category-identifying colors rather than semantic tokens — this is intentional (they identify a specific service or state, not the app's own palette) but still open per the Known gaps below. State never relies on color alone.
 
 ## Layout
 
@@ -95,12 +111,22 @@ Confidence complements provenance; it never converts an inference into a fact. P
 - Motion respects reduced-motion preferences.
 - State, provenance, and confidence are understandable without color.
 
+## Interaction and depth (DES-013, DES-014)
+
+- Buttons, subscription rows, action cards, and the mobile menu all carry hover/active states; primary actions lift slightly on hover via `--shadow-sm`/`--shadow-md`/`--shadow-lg`.
+- The global nav is sticky and stays opaque above scrolling content; the active link shows a coral underline.
+- Dialogs fade, settle in, and now use `--radius-lg` for a softer edge (skipped entirely under `prefers-reduced-motion`, consistent with the existing reduced-motion rule).
+- The Gmail source status carries a small state dot (muted/amber-pulsing/green) alongside its text label — never color alone.
+- `.empty-state` (previously unstyled) now matches the card system with a dashed border.
+- Cards, buttons, inputs, the subscription list, and service icons use the `--radius-*` scale instead of 0-radius rectangles; the subscription list and renewals table are now bordered, radius-clipped white cards rather than flush dividers.
+- Monetary figures (`--subscription-price`, spending summary, cost grid, renewals) use `font-variant-numeric: tabular-nums` for column alignment.
+
 ## Known gaps
 
 - Focus trapping/restoration and live announcements require implementation verification.
 - Some current controls appear smaller than the 44 × 44 target.
 - Field-level provenance is not consistently presented across Subscription Detail.
 - Mobile navigation hides links without a documented replacement pattern.
-- Tokens are not fully centralized and direct semantic colors remain in CSS.
+- The core app palette is now centralized as tokens (DES-014); per-service brand accents and the Gmail status colors are still literal (see "Not yet centralized" above).
 - Automated browser accessibility and responsive regression coverage are absent.
 - Component rules are not implemented as a standalone reusable library.
