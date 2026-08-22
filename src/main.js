@@ -28,6 +28,30 @@ const deriveUpcoming = (items) => items
   .slice(0, 3)
   .map(({ item, date }) => ({ name: item.name, date: date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), amount: money(item.cost) }))
 
+// The OAuth callbacks are reached via a real top-level browser navigation (see
+// server/app.js), so they redirect back to '/' with the outcome carried as a
+// query param rather than a JSON body the frontend could read directly. This
+// reads that signal once on boot and strips it so a page refresh doesn't
+// re-show a stale error.
+const AUTH_ERROR_MESSAGES = {
+  invalid_oauth_state: 'That sign-in attempt expired or was invalid. Please try again.',
+  missing_subject: "Google sign-in didn't return the information we needed. Please try again.",
+  cancelled: 'Sign-in was cancelled.',
+}
+const GMAIL_ERROR_MESSAGES = {
+  invalid_oauth_state: 'That connection attempt expired or was invalid. Please try again.',
+  identity_mismatch: 'The Gmail account you selected does not match the Google account you signed in with.',
+  missing_refresh_token: 'Gmail did not grant access. Please try connecting again.',
+  cancelled: 'Gmail connection was cancelled.',
+}
+const consumeRedirectSignal = () => {
+  const params = new URLSearchParams(location.search)
+  const authError = params.get('auth_error')
+  const gmailError = params.get('gmail_error')
+  if (authError || gmailError) history.replaceState(null, '', location.pathname + location.hash)
+  return { authError, gmailError }
+}
+
 const renderSessionError = (message) => {
   app.innerHTML = shellHeader + sessionErrorMarkup(message)
   const retry = document.querySelector('[data-retry-session]')
@@ -38,10 +62,11 @@ const renderSessionError = (message) => {
   retry.focus()
 }
 
-const renderSignedOut = () => {
+const renderSignedOut = (initialError) => {
   app.innerHTML = shellHeader + signedOutMarkup()
   const button = document.querySelector('[data-google-sign-in]')
   const errorEl = document.querySelector('[data-session-error]')
+  if (initialError) { errorEl.hidden = false; errorEl.textContent = initialError }
   button.focus()
   button.addEventListener('click', async () => {
     button.disabled = true
@@ -58,7 +83,7 @@ const renderSignedOut = () => {
   })
 }
 
-const renderAuthenticated = async (user) => {
+const renderAuthenticated = async (user, gmailError) => {
   // Manual entries are frontend-only (no manual-subscription API exists), so
   // they're tracked separately from backend-sourced ones and always re-merged -
   // a Gmail-triggered refresh must never make them disappear.
@@ -150,6 +175,10 @@ const renderAuthenticated = async (user) => {
     setGmailState('Connected', 'Ready to scan receipts', 'scan')
   }
   applyGmailSource()
+  if (gmailError) {
+    message.textContent = GMAIL_ERROR_MESSAGES[gmailError] || "Gmail couldn't be connected. Please try again."
+    live.announce(message.textContent)
+  }
 
   const showDiscovery = items => {
     discovery.hidden = false; discovery.innerHTML = `<strong>${items.length} subscription${items.length === 1 ? '' : 's'} found.</strong><button class="primary-button" type="button">Review subscription${items.length === 1 ? '' : 's'}</button>`
@@ -229,6 +258,7 @@ const renderAuthenticated = async (user) => {
 }
 
 async function boot() {
+  const { authError, gmailError } = consumeRedirectSignal()
   app.innerHTML = shellHeader + loadingMarkup()
   let session
   try {
@@ -237,8 +267,8 @@ async function boot() {
     renderSessionError("Subtle couldn't reach the server. Check your connection and try again.")
     return
   }
-  if (!session.authenticated) { renderSignedOut(); return }
-  await renderAuthenticated(session.user)
+  if (!session.authenticated) { renderSignedOut(authError ? (AUTH_ERROR_MESSAGES[authError] || "Sign-in couldn't be completed. Please try again.") : undefined); return }
+  await renderAuthenticated(session.user, gmailError)
 }
 
 boot()
