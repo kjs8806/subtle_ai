@@ -13,9 +13,9 @@ This document records the current system and approved extensions; it does not au
 
 One SVG mark (a bold rounded "S" stroke with a single coral accent dot, drawn in `src/main.js`'s `brandMark` and mirrored in `public/icon.svg`) is the single source of the logo — same shape at favicon, in-app nav/footer, and installed-app-icon size. Do not reintroduce a font-rendered glyph as the mark.
 
-### Type (DES-014)
+### Type (DES-014, revised DES-016)
 
-- Display/editorial: Fraunces (variable, weights 500/600/900, optical sizing on)
+- Display/editorial: Playfair Display — kept per Product Owner request; DES-014's swap to Fraunces was tried and reverted (see DES-016)
 - Interface/body: Space Grotesk
 - Metadata/labels: DM Mono
 
