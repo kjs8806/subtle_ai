@@ -114,6 +114,74 @@ test('a malformed next_renewal string with no fallback signal degrades to unknow
   assert.equal(RenewalDerivationService.derive({ subscription, now: NOW }).certainty, 'unknown')
 })
 
+// QA defect fix: a confirmed date that has already passed must never surface
+// as `due_today` (or as `confirmed` at all) forever - the Product Owner's
+// table only defines 0 -> due_today, never negative.
+const staleConfirmedSubscription = (daysAgo, extra = {}) => {
+  const isoDate = new Date(NOW.getTime() - daysAgo * 86400000).toISOString().slice(0, 10)
+  return {
+    nextRenewal: isoDate,
+    billingCycle: null,
+    corrections: [],
+    fieldObservations: [{ field: 'nextRenewal', value: isoDate, provenance: 'confirmed', confidence: 0.9, evidenceId: 'ev-1' }],
+    billingHistory: [],
+    ...extra,
+  }
+}
+
+test('a confirmed renewal date 1 day in the past does not return due_today', () => {
+  const derived = RenewalDerivationService.derive({ subscription: staleConfirmedSubscription(1), now: NOW })
+  assert.notEqual(derived.bucket, 'due_today')
+  assert.notEqual(derived.certainty, 'confirmed')
+})
+
+test('a substantially stale confirmed renewal (60 days in the past) also falls through, never surfaces as due_today', () => {
+  const derived = RenewalDerivationService.derive({ subscription: staleConfirmedSubscription(60), now: NOW })
+  assert.notEqual(derived.bucket, 'due_today')
+  assert.notEqual(derived.certainty, 'confirmed')
+})
+
+test('a stale confirmed renewal falls through to inference when cadence + billing history support it, using the freshly-inferred date instead', () => {
+  const subscription = staleConfirmedSubscription(10, { billingCycle: 'monthly', billingHistory: [{ billedAt: '2025-12-01T00:00:00.000Z' }] })
+  const derived = RenewalDerivationService.derive({ subscription, billingHistory: subscription.billingHistory, now: NOW })
+  assert.equal(derived.certainty, 'inferred', 'never reports the stale date as confirmed')
+  assert.equal(derived.renewalDate, '2026-01-01', 'uses the freshly-inferred date, not the stale confirmed one')
+  assert.equal(derived.bucket, 'due_today')
+})
+
+test('a stale confirmed renewal with no valid fallback (no cadence, no billing history) degrades to unknown', () => {
+  const derived = RenewalDerivationService.derive({ subscription: staleConfirmedSubscription(10), now: NOW })
+  assert.equal(derived.certainty, 'unknown')
+  assert.equal(derived.renewalDate, null)
+  assert.equal(derived.bucket, null)
+})
+
+// QA defect fix: Date.UTC silently normalizes an impossible calendar date
+// instead of rejecting it - each of these must be treated as unparseable
+// (never a normalized-but-wrong confirmed date), falling through to unknown
+// since there is no cadence/billing-history fallback in any of these cases.
+test('an invalid date (Feb 30) is rejected as unparseable, never silently normalized to March', () => {
+  const subscription = { nextRenewal: '2026-02-30', billingCycle: null, corrections: [], fieldObservations: [{ field: 'nextRenewal', value: '2026-02-30', provenance: 'confirmed', confidence: 0.9, evidenceId: 'ev-1' }], billingHistory: [] }
+  assert.doesNotThrow(() => RenewalDerivationService.derive({ subscription, now: NOW }))
+  const derived = RenewalDerivationService.derive({ subscription, now: NOW })
+  assert.equal(derived.certainty, 'unknown')
+  assert.notEqual(derived.renewalDate, '2026-03-02', 'never the JS-normalized rollover date')
+})
+
+test('an invalid month (13) is rejected as unparseable, never silently normalized into the next year', () => {
+  const subscription = { nextRenewal: '2026-13-01', billingCycle: null, corrections: [], fieldObservations: [{ field: 'nextRenewal', value: '2026-13-01', provenance: 'confirmed', confidence: 0.9, evidenceId: 'ev-1' }], billingHistory: [] }
+  const derived = RenewalDerivationService.derive({ subscription, now: NOW })
+  assert.equal(derived.certainty, 'unknown')
+  assert.notEqual(derived.renewalDate, '2027-01-01')
+})
+
+test('an invalid day-of-month (April 31) is rejected as unparseable, never silently normalized to May', () => {
+  const subscription = { nextRenewal: '2026-04-31', billingCycle: null, corrections: [], fieldObservations: [{ field: 'nextRenewal', value: '2026-04-31', provenance: 'confirmed', confidence: 0.9, evidenceId: 'ev-1' }], billingHistory: [] }
+  const derived = RenewalDerivationService.derive({ subscription, now: NOW })
+  assert.equal(derived.certainty, 'unknown')
+  assert.notEqual(derived.renewalDate, '2026-05-01')
+})
+
 // Product's fixed look-ahead table, exercised at every stated boundary.
 const bucketCase = (daysOut) => {
   const target = new Date(NOW.getTime() + daysOut * 86400000)

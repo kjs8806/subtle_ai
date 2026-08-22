@@ -117,7 +117,7 @@ export const createPostgresRepository = ({ pool }) => {
         // suppress exactly those fields, and so conflicts can be detected
         // after the new evidence row exists.
         const activeCorrections = candidates.rows[0]
-          ? (await client.query('SELECT id, field, value FROM subscription_corrections WHERE subscription_id = $1 AND superseded_at IS NULL', [subscriptionId])).rows
+          ? (await client.query('SELECT id, field, value, created_at AS "createdAt" FROM subscription_corrections WHERE subscription_id = $1 AND superseded_at IS NULL', [subscriptionId])).rows
           : []
         const correctionByField = Object.fromEntries(activeCorrections.map((row) => [row.field, row]))
         // parseReceipt's currency gate guarantees amount and currency are
@@ -148,23 +148,53 @@ export const createPostgresRepository = ({ pool }) => {
         for (const [field, observation] of Object.entries(parsed.fieldObservations || {})) await client.query('INSERT INTO field_observations (subscription_id, field, value, provenance, confidence, evidence_id) VALUES ($1, $2, $3, $4, $5, $6)', [subscriptionId, field, JSON.stringify(observation.value ?? null), observation.provenance, parsed.confidence.score, evidence.rows[0].id])
 
         // FEATURE-003: detect a price-change event between this brand-new
-        // observation and the subscription's immediately-preceding one (if
-        // any), inside this same transaction. Cadence is read from the
+        // observation and whichever is more recently established of (a) the
+        // subscription's immediately-preceding price_observations row - by
+        // its *evidence's* created_at, not observed_at (the email's claimed
+        // billing date, which can be older than an evidence row inserted
+        // just now for a delayed/backdated receipt) - or (b) an active
+        // current_price correction, keyed by the correction's own created_at.
+        // Anchoring on "whichever is more recent" (rather than always
+        // preferring an active correction) means the correction only
+        // supplies the baseline for the first piece of evidence to arrive
+        // after it - every comparison after that goes back to normal
+        // evidence-to-evidence, so a price that hasn't actually changed since
+        // the last receipt never re-fires a false "increase" on every
+        // subsequent receipt. Cadence and currency are read from the
         // subscriptions row *after* the correction-precedence-aware
-        // update/insert above, so an active billing_cycle correction is
-        // honored automatically - this never re-reads raw evidence for that.
-        const priorObservation = await client.query('SELECT amount, currency, evidence_id AS "evidenceId" FROM price_observations WHERE subscription_id = $1 AND id != $2 ORDER BY observed_at', [subscriptionId, priceObservation.rows[0].id])
-        const previousObservation = priorObservation.rows.at(-1) || null
-        const subscriptionCadence = await client.query('SELECT billing_cycle FROM subscriptions WHERE id = $1', [subscriptionId])
+        // update/insert above, so active corrections on those fields are
+        // honored automatically - this never re-reads raw evidence for them.
+        const priorObservationRows = await client.query(
+          'SELECT pv.amount, pv.currency, pv.evidence_id AS "evidenceId", e.created_at AS "evidenceCreatedAt" FROM price_observations pv LEFT JOIN evidence e ON e.id = pv.evidence_id WHERE pv.subscription_id = $1 AND pv.id != $2 ORDER BY e.created_at',
+          [subscriptionId, priceObservation.rows[0].id],
+        )
+        const priorObservation = priorObservationRows.rows.at(-1) || null
+        const subscriptionRow = await client.query('SELECT billing_cycle, currency FROM subscriptions WHERE id = $1', [subscriptionId])
+        const currentCadence = subscriptionRow.rows[0]?.billing_cycle ?? null
+        const currentCurrency = subscriptionRow.rows[0]?.currency ?? null
+
+        const priceCorrection = correctionByField.current_price ?? null
+        const useCorrectionAsPrevious = priceCorrection
+          && (!priorObservation?.evidenceCreatedAt || new Date(priceCorrection.createdAt) > new Date(priorObservation.evidenceCreatedAt))
+
+        let previousObservation = null
+        let previousEvidenceIdForEvent = null
+        if (useCorrectionAsPrevious) {
+          previousObservation = { amount: priceCorrection.value, currency: currentCurrency }
+        } else if (priorObservation) {
+          previousObservation = { amount: priorObservation.amount, currency: priorObservation.currency }
+          previousEvidenceIdForEvent = priorObservation.evidenceId
+        }
+
         const priceChange = PriceChangeService.detect({
           previousObservation,
           currentObservation: { amount: parsed.amount, currency: parsed.currency },
-          cadence: subscriptionCadence.rows[0]?.billing_cycle ?? null,
+          cadence: currentCadence,
         })
         if (priceChange) {
           await client.query(
             'INSERT INTO price_change_events (user_id, subscription_id, previous_evidence_id, evidence_id, currency, previous_price_cents, current_price_cents, direction, percent_change_bp, annualized_delta_cents, is_material, rule_version) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) ON CONFLICT (subscription_id, evidence_id) DO NOTHING',
-            [userId, subscriptionId, previousObservation?.evidenceId ?? null, evidence.rows[0].id, priceChange.currency, priceChange.previousPriceCents, priceChange.currentPriceCents, priceChange.direction, priceChange.percentChangeBp, priceChange.annualizedDeltaCents, priceChange.isMaterial, priceChange.ruleVersion],
+            [userId, subscriptionId, previousEvidenceIdForEvent, evidence.rows[0].id, priceChange.currency, priceChange.previousPriceCents, priceChange.currentPriceCents, priceChange.direction, priceChange.percentChangeBp, priceChange.annualizedDeltaCents, priceChange.isMaterial, priceChange.ruleVersion],
           )
         }
         await client.query('COMMIT')

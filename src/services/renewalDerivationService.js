@@ -32,6 +32,18 @@ const MONTH_INDEX = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, au
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
 const MONTH_DAY_YEAR = /^([A-Za-z]{3,9})\s+(\d{1,2}),?\s*(\d{4})$/
 
+// Date.UTC silently *normalizes* an impossible calendar date instead of
+// rejecting it (e.g. 2026-02-30 rolls into March 2, 2026-13-01's regex-
+// captured "13" becomes month index 12 -> January 2027) - a round-trip check
+// against the components that were actually matched is required to catch
+// this, since a normalized-but-wrong date is exactly the kind of fabrication
+// this parser exists to prevent.
+const buildUtcDate = (year, monthIndex, day) => {
+  const date = new Date(Date.UTC(year, monthIndex, day))
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== monthIndex || date.getUTCDate() !== day) return null
+  return date
+}
+
 const parseLooseDate = (text) => {
   if (typeof text !== 'string') return null
   const trimmed = text.trim()
@@ -39,14 +51,14 @@ const parseLooseDate = (text) => {
   const isoMatch = trimmed.match(ISO_DATE)
   if (isoMatch) {
     const [, year, month, day] = isoMatch
-    return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)))
+    return buildUtcDate(Number(year), Number(month) - 1, Number(day))
   }
   const monthMatch = trimmed.match(MONTH_DAY_YEAR)
   if (monthMatch) {
     const [, monthName, day, year] = monthMatch
     const monthIndex = MONTH_INDEX[monthName.slice(0, 3).toLowerCase()]
     if (monthIndex === undefined) return null
-    return new Date(Date.UTC(Number(year), monthIndex, Number(day)))
+    return buildUtcDate(Number(year), monthIndex, Number(day))
   }
   return null
 }
@@ -63,8 +75,11 @@ const addCadencePeriod = (date, cadence) => {
 }
 
 // Product's fixed look-ahead table: >30 days = no attention item (Subscription
-// Detail only), 8-30 = upcoming, 1-7 = soon, 0 (or overdue) = due_today. Never
-// an alarmist label like "Urgent".
+// Detail only), 8-30 = upcoming, 1-7 = soon, 0 = due_today. Never an
+// alarmist label like "Urgent". Only ever called with a non-negative
+// daysUntil: the confirmed path no longer returns a stale (already-passed)
+// date here, and the inferred path's forward-projection loop guarantees its
+// candidate is never before `now`.
 const bucketFor = (daysUntil) => {
   if (daysUntil > 30) return null
   if (daysUntil >= 8) return 'upcoming'
@@ -102,10 +117,14 @@ export const RenewalDerivationService = {
       const parsedDate = parseLooseDate(subscription.nextRenewal)
       if (parsedDate) {
         const daysUntil = daysBetween(parsedDate, nowDate)
-        return { certainty: 'confirmed', renewalDate: toISODate(parsedDate), daysUntil, bucket: bucketFor(daysUntil) }
+        // A confirmed date that has already passed is stale, not "due today"
+        // forever - the Product Owner's table only defines 0 -> due_today,
+        // never negative. Fall through to inference (step 2) or unknown
+        // (step 3) instead of returning a fact that is no longer true.
+        if (daysUntil >= 0) return { certainty: 'confirmed', renewalDate: toISODate(parsedDate), daysUntil, bucket: bucketFor(daysUntil) }
       }
-      // An unparseable date string degrades to inference/unknown below,
-      // exactly like an absent one - never thrown.
+      // An unparseable (or stale) date degrades to inference/unknown below,
+      // exactly like an absent one - never thrown, never fabricated.
     }
 
     // 2. Inferred: cadence + the most recent real billing event, projected forward past `now`.

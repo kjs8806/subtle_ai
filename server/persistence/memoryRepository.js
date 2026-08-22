@@ -32,6 +32,17 @@ export const createMemoryRepository = () => {
   const conflicts = new Map()
   const candidates = new Map()
   const priceChangeEvents = new Map()
+  // FEATURE-003: a monotonic, tie-proof "which happened more recently"
+  // ordering for this repository instance - used to compare an evidence
+  // record's creation moment against a correction's creation moment when
+  // picking the price-change baseline (see persistParsedEvidence below).
+  // Real wall-clock timestamps (Date.now()/toISOString(), millisecond
+  // resolution) are not reliable for this: two synchronous calls in the same
+  // process routinely land in the same millisecond, which would make "more
+  // recent of the two" ambiguous. A single in-process counter has no such
+  // tie, and process order *is* the real ordering that matters here.
+  let sequenceCounter = 0
+  const nextSequence = () => { sequenceCounter += 1; return sequenceCounter }
 
   const activeCorrectionFor = (subscriptionId, field) => [...corrections.values()].find((item) => item.subscriptionId === subscriptionId && item.field === field && !item.supersededAt)
   const hydrateSub = (sub) => sub && {
@@ -122,7 +133,7 @@ export const createMemoryRepository = () => {
       if (candidateSubs.length > 1) return { created: false, ambiguous: true }
       const subscriptionId = candidateSubs[0]?.id || randomUUID()
       const provenance = Object.fromEntries(Object.entries(parsed.fieldObservations || {}).map(([field, observation]) => [field, observation.provenance]))
-      const record = { ...parsed, id: evidenceId, userId, subscriptionId, provenance }
+      const record = { ...parsed, id: evidenceId, userId, subscriptionId, provenance, sequence: nextSequence() }
       const previous = candidateSubs[0]
       const observation = { amount: parsed.amount, currency: parsed.currency ?? null, observedAt: parsed.receivedAt, evidenceId }
       const billing = { amount: parsed.amount, currency: parsed.currency ?? null, billedAt: parsed.receivedAt, evidenceId }
@@ -168,12 +179,35 @@ export const createMemoryRepository = () => {
         : { id: subscriptionId, userId, canonicalService: parsed.canonicalService, rawMerchant: parsed.rawMerchant, plan: null, currentPrice: parsed.amount, currency: parsed.currency ?? null, billingCycle: parsed.cadence, nextRenewal: parsed.nextRenewal, status: 'active', source: 'Gmail receipt', evidence: [record], priceHistory: [observation], billingHistory: [billing], fieldObservations: fields }
 
       // FEATURE-003: detect a price-change event between this brand-new
-      // observation and the subscription's immediately-preceding one (if
-      // any). Cadence is read from `subscription.billingCycle` - already
-      // correction-precedence-resolved above - never raw evidence cadence.
+      // observation and whichever is more recently established of (a) the
+      // subscription's immediately-preceding price_observations entry - by
+      // its evidence's creation order, not observed_at (the email's claimed
+      // billing date, which can be older than an evidence row created just
+      // now for a delayed/backdated receipt) - or (b) an active
+      // current_price correction. Anchoring on "whichever is more recent"
+      // (rather than always preferring an active correction) means the
+      // correction only supplies the baseline for the first piece of
+      // evidence to arrive after it - every comparison after that goes back
+      // to normal evidence-to-evidence, so a price that hasn't actually
+      // changed since the last receipt never re-fires a false "increase" on
+      // every subsequent receipt. Cadence/currency are read from `subscription`
+      // - already correction-precedence-resolved above - never raw evidence.
       const previousObservation = previous ? previous.priceHistory.at(-1) || null : null
+      const previousEvidenceRecord = previous ? previous.evidence.at(-1) || null : null
+      const useCorrectionAsPrevious = priceCorrection
+        && (!previousEvidenceRecord || priceCorrection.sequence > previousEvidenceRecord.sequence)
+
+      let effectivePreviousObservation = null
+      let previousEvidenceIdForEvent = null
+      if (useCorrectionAsPrevious) {
+        effectivePreviousObservation = { amount: priceCorrection.value, currency: subscription.currency }
+      } else if (previousObservation) {
+        effectivePreviousObservation = previousObservation
+        previousEvidenceIdForEvent = previousObservation.evidenceId ?? null
+      }
+
       const priceChange = PriceChangeService.detect({
-        previousObservation,
+        previousObservation: effectivePreviousObservation,
         currentObservation: { amount: parsed.amount, currency: parsed.currency ?? null },
         cadence: subscription.billingCycle,
       })
@@ -196,7 +230,7 @@ export const createMemoryRepository = () => {
             id: eventId,
             userId,
             subscriptionId,
-            previousEvidenceId: previousObservation?.evidenceId ?? null,
+            previousEvidenceId: previousEvidenceIdForEvent,
             evidenceId,
             currency: priceChange.currency,
             previousPriceCents: priceChange.previousPriceCents,
@@ -236,7 +270,7 @@ export const createMemoryRepository = () => {
       if (!subscription) return null
       const previousActive = activeCorrectionFor(subscriptionId, field)
       if (previousActive) previousActive.supersededAt = new Date().toISOString()
-      const correction = { id: randomUUID(), subscriptionId, userId, field, value: clone(value), createdAt: new Date().toISOString(), supersededAt: null }
+      const correction = { id: randomUUID(), subscriptionId, userId, field, value: clone(value), createdAt: new Date().toISOString(), supersededAt: null, sequence: nextSequence() }
       corrections.set(correction.id, correction)
       subscription[CORRECTION_FIELD_TO_PROPERTY[field]] = clone(value)
       subscriptions.set(subscriptionId, subscription)
@@ -256,7 +290,7 @@ export const createMemoryRepository = () => {
       if (!correction || correction.userId !== userId) return null
       const previousActive = activeCorrectionFor(correction.subscriptionId, correction.field)
       if (previousActive) previousActive.supersededAt = new Date().toISOString()
-      const nextCorrection = { id: randomUUID(), subscriptionId: correction.subscriptionId, userId, field: correction.field, value: clone(conflict.conflictingValue), createdAt: new Date().toISOString(), supersededAt: null }
+      const nextCorrection = { id: randomUUID(), subscriptionId: correction.subscriptionId, userId, field: correction.field, value: clone(conflict.conflictingValue), createdAt: new Date().toISOString(), supersededAt: null, sequence: nextSequence() }
       corrections.set(nextCorrection.id, nextCorrection)
       const subscription = subscriptions.get(correction.subscriptionId)
       if (subscription) { subscription[CORRECTION_FIELD_TO_PROPERTY[correction.field]] = clone(conflict.conflictingValue); subscriptions.set(subscription.id, subscription) }
