@@ -136,6 +136,35 @@ const runContractTests = (label, createRepository, testFn = test) => {
     assert.deepEqual(await repository.listSubscriptions(otherUser.id), [], 'a rejected candidate never silently becomes a subscription')
   })
 
+  testFn(`[${label}] confirming a candidate that reuses a previously-rejected subscription row makes it active and visible again`, async () => {
+    const repository = await createRepository()
+    const user = await repository.createUser({ email: `${label}-d@example.com`, name: 'D' })
+    await repository.authorizeConnection(user.id)
+
+    // Reject a real subscription at a given merge key.
+    const original = await repository.persistParsedEvidence(user.id, receipt('reuse-msg-1', { canonicalService: 'Gym Membership', rawMerchant: 'thegym' }))
+    const subscriptionId = original.subscription.id
+    await repository.rejectSubscription(user.id, subscriptionId)
+    assert.deepEqual(await repository.listSubscriptions(user.id), [], 'rejected in the meantime')
+
+    // A later ambiguous email for the exact same merge key becomes a pending
+    // candidate (a separate table/row, not the rejected subscription).
+    const candidate = await repository.persistCandidate(user.id, candidateEvidence('reuse-candidate-1', { canonicalService: 'Gym Membership', rawMerchant: 'thegym' }))
+
+    // Automatic scan reprocessing must never resurrect the rejected row -
+    // unaffected by this test, still covered above. Confirming the candidate,
+    // however, is a deliberate explicit user action and must always produce a
+    // visible active subscription, even when it reuses that same row.
+    const confirmed = await repository.confirmCandidate(user.id, candidate.candidateId)
+    assert.equal(confirmed.subscription.id, subscriptionId, 'the same subscription row is reused, not duplicated')
+    assert.equal(confirmed.subscription.status, 'active', 'confirming a candidate always yields an active, visible subscription')
+
+    const activeList = await repository.listSubscriptions(user.id)
+    assert.equal(activeList.length, 1, 'it now appears in the default listing')
+    assert.equal(activeList[0].id, subscriptionId)
+    assert.equal(activeList[0].status, 'active')
+  })
+
   testFn(`[${label}] account isolation: another user's repository calls cannot read or mutate this user's subscription or correction`, async () => {
     const repository = await createRepository()
     const userA = await repository.createUser({ email: `${label}-iso-a@example.com`, name: 'Iso A' })

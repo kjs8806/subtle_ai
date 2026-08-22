@@ -259,6 +259,13 @@ export const createMemoryRepository = () => {
       const subscription = existingSubscription
         ? {
             ...existingSubscription,
+            // Confirming a candidate is a deliberate, explicit user action on
+            // a specific candidate they are looking at - unlike automatic
+            // scan reprocessing (persistParsedEvidence), which must never
+            // resurrect a rejected subscription, this must always produce a
+            // visible active subscription, even when it reuses a row that
+            // had previously been rejected.
+            status: 'active',
             plan: overrides.plan ?? existingSubscription.plan,
             currentPrice: overrides.currentPrice ?? latest?.amount ?? existingSubscription.currentPrice,
             currency: overrides.currency ?? latest?.currency ?? existingSubscription.currency,

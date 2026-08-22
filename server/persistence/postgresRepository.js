@@ -247,7 +247,13 @@ export const createPostgresRepository = ({ pool }) => {
         if (!existing.rows[0]) {
           await client.query('INSERT INTO subscriptions (id, user_id, canonical_service, raw_merchant, plan, current_price, currency, billing_cycle, next_renewal, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [subscriptionId, userId, candidate.rows[0].canonical_service, candidate.rows[0].raw_merchant, plan, currentPrice, currency, billingCycle, nextRenewal, 'Gmail receipt'])
         } else {
-          await client.query('UPDATE subscriptions SET current_price = COALESCE($1, current_price), currency = COALESCE($2, currency), billing_cycle = COALESCE($3, billing_cycle), next_renewal = COALESCE($4, next_renewal), plan = COALESCE($5, plan) WHERE id = $6 AND user_id = $7', [currentPrice, currency, billingCycle, nextRenewal, plan, subscriptionId, userId])
+          // Confirming a candidate is a deliberate, explicit user action on a
+          // specific candidate they are looking at - unlike automatic scan
+          // reprocessing (persistParsedEvidence), which must never resurrect
+          // a rejected subscription, this must always produce a visible
+          // active subscription, even when it reuses a row that had
+          // previously been rejected.
+          await client.query("UPDATE subscriptions SET current_price = COALESCE($1, current_price), currency = COALESCE($2, currency), billing_cycle = COALESCE($3, billing_cycle), next_renewal = COALESCE($4, next_renewal), plan = COALESCE($5, plan), status = 'active' WHERE id = $6 AND user_id = $7", [currentPrice, currency, billingCycle, nextRenewal, plan, subscriptionId, userId])
         }
         for (const ev of evidenceRows.rows) {
           await client.query('INSERT INTO subscription_evidence (subscription_id, evidence_id) VALUES ($1, $2) ON CONFLICT (subscription_id, evidence_id) DO NOTHING', [subscriptionId, ev.id])
