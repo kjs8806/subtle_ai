@@ -4,6 +4,14 @@ import { buildApp } from '../server/app.js'
 import { createFakeGmailProvider } from '../server/gmail/fakeProvider.js'
 import { createMemoryRepository } from '../server/persistence/memoryRepository.js'
 
+// Both OAuth callbacks are reached via a real top-level browser navigation, so
+// they always redirect back to '/' rather than return a JSON body - the
+// outcome is carried as a query param (auth_error / gmail_error) instead.
+const errorFromRedirect = (response, param) => {
+  const [, query] = (response.headers.location || '').split('?')
+  return new URLSearchParams(query || '').get(param)
+}
+
 const authorize = async (app) => {
   const start = await app.inject({ method: 'GET', url: '/api/v1/auth/google/start' })
   const state = start.cookies.find(({ name }) => name === 'subtle_oauth_state').value
@@ -12,7 +20,8 @@ const authorize = async (app) => {
     url: `/api/v1/auth/google/callback?state=${state}&code=mock-success`,
     cookies: { subtle_oauth_state: state },
   })
-  assert.equal(callback.statusCode, 200)
+  assert.equal(callback.statusCode, 302)
+  assert.equal(callback.headers.location, '/')
   return callback.cookies.find(({ name }) => name === 'subtle_session').value
 }
 
@@ -45,8 +54,8 @@ test('expired oauth state is rejected', async () => {
   const state = start.cookies.find(({ name }) => name === 'subtle_oauth_state').value
   time = 10 * 60 * 1000 + 1
   const response = await app.inject({ method: 'GET', url: `/api/v1/auth/google/callback?state=${state}&code=mock-success`, cookies: { subtle_oauth_state: state } })
-  assert.equal(response.statusCode, 400)
-  assert.equal(response.json().error.code, 'invalid_oauth_state')
+  assert.equal(response.statusCode, 302)
+  assert.equal(errorFromRedirect(response, 'auth_error'), 'invalid_oauth_state')
 })
 
 test('rejects protected routes without a session', async () => {
@@ -95,6 +104,72 @@ test('concurrent scans for the same connection are rejected with a conflict', as
   assert.equal(subscriptions.json().subscriptions.length, 1)
 })
 
+test('scan persists only subscription-classified receipts from a mixed mailbox', async () => {
+  const messages = [
+    { id: 'netflix-1', subject: 'Netflix renewal receipt', sender: 'billing@netflix.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your monthly payment of USD $22.99 renews Sep 12, 2026.' },
+    { id: 'uber-1', subject: 'Your Uber trip receipt', sender: 'receipts@uber.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Thanks for riding with Uber. Trip fare $18.42.' },
+    { id: 'lyft-1', subject: 'Your Lyft ride receipt', sender: 'no-reply@lyft.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your Lyft ride receipt. Total $14.71.' },
+    { id: 'amazon-1', subject: 'Your Amazon order has shipped', sender: 'ship-confirm@amazon.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your Amazon order has shipped.' },
+    { id: 'generic-1', subject: 'Payment receipt', sender: 'billing@example.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your payment was received.' },
+  ]
+  const provider = { ...createFakeGmailProvider(), listCandidateMessages: async () => messages }
+  const app = buildApp({ provider })
+  const session = await authorize(app)
+  const headers = { cookie: `subtle_session=${session}` }
+
+  const scan = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
+  assert.equal(scan.statusCode, 200)
+  assert.equal(scan.json().found, 1, 'only the Netflix renewal should be persisted')
+  assert.equal(scan.json().ambiguous, 1, 'the generic payment-receipt message is ambiguous, not one_time')
+
+  const subscriptions = await app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })
+  assert.equal(subscriptions.json().subscriptions.length, 1)
+  assert.equal(subscriptions.json().subscriptions[0].canonicalService, 'Netflix')
+  assert.equal(subscriptions.json().subscriptions[0].currency, 'USD')
+})
+
+// FEATURE-001 currency completion gap: currency is part of the minimum
+// evidence required for automatic creation, alongside subscription
+// classification and amount. See docs/engineering/FEATURE_001_CURRENCY.md.
+const scanSingleMessage = async (message) => {
+  const provider = { ...createFakeGmailProvider(), listCandidateMessages: async () => [message] }
+  const app = buildApp({ provider })
+  const session = await authorize(app)
+  const headers = { cookie: `subtle_session=${session}` }
+  const scan = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
+  const subscriptions = await app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })
+  return { scan: scan.json(), subscriptions: subscriptions.json().subscriptions }
+}
+
+test('Case A: an explicit USD renewal auto-creates with currency USD persisted', async () => {
+  const { scan, subscriptions } = await scanSingleMessage({ id: 'case-a', subject: 'Netflix renewal receipt', sender: 'billing@netflix.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your monthly membership renewal is USD $22.99.' })
+  assert.equal(scan.found, 1)
+  assert.equal(subscriptions.length, 1)
+  assert.equal(subscriptions[0].currency, 'USD')
+  assert.equal(subscriptions[0].currentPrice, 22.99)
+})
+
+test('Case B: an explicit CAD renewal auto-creates with currency CAD persisted', async () => {
+  const { scan, subscriptions } = await scanSingleMessage({ id: 'case-b', subject: 'Netflix renewal receipt', sender: 'billing@netflix.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your monthly membership renewal is CAD $22.99.' })
+  assert.equal(scan.found, 1)
+  assert.equal(subscriptions.length, 1)
+  assert.equal(subscriptions[0].currency, 'CAD')
+  assert.equal(subscriptions[0].currentPrice, 22.99)
+})
+
+test('Case C: an unresolved bare-$ renewal is ambiguous, not auto-created as fully confirmed', async () => {
+  const { scan, subscriptions } = await scanSingleMessage({ id: 'case-c', subject: 'Netflix renewal receipt', sender: 'billing@netflix.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your monthly membership renewal is $22.99.' })
+  assert.equal(scan.found, 0)
+  assert.equal(scan.ambiguous, 1)
+  assert.equal(subscriptions.length, 0)
+})
+
+test('Case D: an unsupported currency (EUR) is never auto-created and never falsely resolves to USD', async () => {
+  const { scan, subscriptions } = await scanSingleMessage({ id: 'case-d', subject: 'Membership renewal', sender: 'billing@example.eu', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your monthly subscription renewal is EUR 19.99' })
+  assert.equal(scan.found, 0)
+  assert.equal(subscriptions.length, 0)
+})
+
 test('disconnect prevents future scans', async () => {
   const app = buildApp()
   const session = await authorize(app)
@@ -116,8 +191,8 @@ test('gmail identity mismatch does not connect the source', async () => {
   const start = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/authorize', headers: { cookie: `subtle_session=${session}`, origin: 'http://127.0.0.1:5173' } })
   const state = start.cookies.find(({ name }) => name === 'subtle_gmail_oauth_state').value
   const response = await app.inject({ method: 'GET', url: `/api/v1/sources/gmail/callback?state=${state}&code=mock-success`, headers: { cookie: `subtle_session=${session}; subtle_gmail_oauth_state=${state}` } })
-  assert.equal(response.statusCode, 409)
-  assert.equal(response.json().error.code, 'identity_mismatch')
+  assert.equal(response.statusCode, 302)
+  assert.equal(errorFromRedirect(response, 'gmail_error'), 'identity_mismatch')
   const source = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers: { cookie: `subtle_session=${session}` } })
   assert.equal(source.json().status, 'not_connected')
 })
@@ -196,8 +271,8 @@ test('source responses never expose token custody fields', async () => {
 test('invalid oauth state is rejected', async () => {
   const app = buildApp()
   const response = await app.inject({ method: 'GET', url: '/api/v1/auth/google/callback?state=bad&code=mock-success' })
-  assert.equal(response.statusCode, 400)
-  assert.equal(response.json().error.code, 'invalid_oauth_state')
+  assert.equal(response.statusCode, 302)
+  assert.equal(errorFromRedirect(response, 'auth_error'), 'invalid_oauth_state')
 })
 
 test('oauth state cannot be reused', async () => {
@@ -207,6 +282,8 @@ test('oauth state cannot be reused', async () => {
   const url = `/api/v1/auth/google/callback?state=${state}&code=mock-success`
   const first = await app.inject({ method: 'GET', url, cookies: { subtle_oauth_state: state } })
   const second = await app.inject({ method: 'GET', url, cookies: { subtle_oauth_state: state } })
-  assert.equal(first.statusCode, 200)
-  assert.equal(second.statusCode, 400)
+  assert.equal(first.statusCode, 302)
+  assert.equal(first.headers.location, '/')
+  assert.equal(second.statusCode, 302)
+  assert.equal(errorFromRedirect(second, 'auth_error'), 'invalid_oauth_state')
 })

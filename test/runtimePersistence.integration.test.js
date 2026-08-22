@@ -75,7 +75,8 @@ const authenticate = async (app, subject) => {
     url: `/api/v1/auth/google/callback?state=${state}&code=mock-success:${subject}`,
     cookies: { subtle_oauth_state: state },
   })
-  assert.equal(callback.statusCode, 200, `authentication failed for ${subject}`)
+  assert.equal(callback.statusCode, 302, `authentication failed for ${subject}`)
+  assert.equal(callback.headers.location, '/')
   const session = callback.cookies.find(({ name }) => name === 'subtle_session').value
   const headers = { cookie: `subtle_session=${session}` }
   const me = await app.inject({ method: 'GET', url: '/api/v1/session', headers })
@@ -106,8 +107,12 @@ integration('server runtime persists through restart, isolates accounts, purges 
 
     const subs = await runtimeA.app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })
     assert.equal(subs.json().subscriptions.length, 1)
+    assert.equal(subs.json().subscriptions[0].currency, 'USD')
     const detail = await runtimeA.app.inject({ method: 'GET', url: `/api/v1/subscriptions/${subs.json().subscriptions[0].id}`, headers })
     assert.equal(detail.json().evidence.length, 1)
+    assert.equal(detail.json().evidence[0].currency, 'USD')
+    assert.equal(detail.json().priceHistory[0].currency, 'USD')
+    assert.equal(detail.json().billingHistory[0].currency, 'USD')
 
     // Seed a manual (non-Gmail-derived) subscription directly, the way an
     // approved manual entry would be persisted — no manual-entry API exists yet.
@@ -131,9 +136,13 @@ integration('server runtime persists through restart, isolates accounts, purges 
     assert.equal(subs.json().subscriptions.length, 2)
     const gmailSub = subs.json().subscriptions.find((s) => s.source === 'Gmail receipt')
     assert.ok(gmailSub)
+    assert.equal(gmailSub.currency, 'USD', 'currency survives the restart')
     subscriptionId = gmailSub.id
     const detail = await runtimeB.app.inject({ method: 'GET', url: `/api/v1/subscriptions/${subscriptionId}`, headers })
     assert.equal(detail.json().evidence.length, 1)
+    assert.equal(detail.json().evidence[0].currency, 'USD', 'evidence currency survives the restart')
+    assert.equal(detail.json().priceHistory[0].currency, 'USD', 'price observation currency survives the restart')
+    assert.equal(detail.json().billingHistory[0].currency, 'USD', 'billing event currency survives the restart')
 
     const { headers: otherHeaders } = await authenticate(runtimeB.app, testUsers.b)
     const otherSubs = await runtimeB.app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers: otherHeaders })
@@ -183,7 +192,7 @@ integration('server runtime persists through restart, isolates accounts, purges 
 
   await t.test('concurrency: two simultaneous scans for the same connection produce one accepted scan and one 409, with no duplicate processing', async () => {
     const slowProvider = createTestProvider({
-      listCandidateMessages: async () => { await sleep(250); return [{ id: 'mock-message-netflix-1', subject: 'Netflix renewal receipt', sender: 'billing@netflix.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your monthly payment of $22.99 renews Sep 12, 2026.' }] },
+      listCandidateMessages: async () => { await sleep(250); return [{ id: 'mock-message-netflix-1', subject: 'Netflix renewal receipt', sender: 'billing@netflix.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your monthly payment of USD $22.99 renews Sep 12, 2026.' }] },
     })
     const runtimeF = await createRuntime(buildApp, settings, { provider: slowProvider })
     const { headers: headersF } = await authenticate(runtimeF.app, testUsers.concurrent)

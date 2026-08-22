@@ -100,12 +100,15 @@ export const createMemoryRepository = () => {
       const provenance = Object.fromEntries(Object.entries(parsed.fieldObservations || {}).map(([field, observation]) => [field, observation.provenance]))
       const record = { ...parsed, id: evidenceId, userId, subscriptionId, provenance }
       const previous = candidates[0]
-      const observation = { amount: parsed.amount, observedAt: parsed.receivedAt }
-      const billing = { amount: parsed.amount, billedAt: parsed.receivedAt, evidenceId }
+      const observation = { amount: parsed.amount, currency: parsed.currency ?? null, observedAt: parsed.receivedAt }
+      const billing = { amount: parsed.amount, currency: parsed.currency ?? null, billedAt: parsed.receivedAt, evidenceId }
       const fields = Object.entries(parsed.fieldObservations || {}).map(([field, observation]) => ({ field, value: observation.value ?? null, provenance: observation.provenance, confidence: parsed.confidence.score, evidenceId }))
+      // See postgresRepository.js: parseReceipt's currency gate guarantees
+      // amount and currency are always jointly null or jointly resolved, so
+      // currentPrice and currency are always updated together here too.
       const subscription = previous
-        ? { ...previous, currentPrice: parsed.amount ?? previous.currentPrice, billingCycle: parsed.cadence || previous.billingCycle, nextRenewal: parsed.nextRenewal || previous.nextRenewal, evidence: [...previous.evidence, record], priceHistory: [...previous.priceHistory, observation], billingHistory: [...previous.billingHistory, billing], fieldObservations: [...previous.fieldObservations, ...fields] }
-        : { id: subscriptionId, userId, canonicalService: parsed.canonicalService, rawMerchant: parsed.rawMerchant, plan: null, currentPrice: parsed.amount, billingCycle: parsed.cadence, nextRenewal: parsed.nextRenewal, status: 'active', source: 'Gmail receipt', evidence: [record], priceHistory: [observation], billingHistory: [billing], fieldObservations: fields }
+        ? { ...previous, currentPrice: parsed.amount ?? previous.currentPrice, currency: parsed.currency ?? previous.currency, billingCycle: parsed.cadence || previous.billingCycle, nextRenewal: parsed.nextRenewal || previous.nextRenewal, evidence: [...previous.evidence, record], priceHistory: [...previous.priceHistory, observation], billingHistory: [...previous.billingHistory, billing], fieldObservations: [...previous.fieldObservations, ...fields] }
+        : { id: subscriptionId, userId, canonicalService: parsed.canonicalService, rawMerchant: parsed.rawMerchant, plan: null, currentPrice: parsed.amount, currency: parsed.currency ?? null, billingCycle: parsed.cadence, nextRenewal: parsed.nextRenewal, status: 'active', source: 'Gmail receipt', evidence: [record], priceHistory: [observation], billingHistory: [billing], fieldObservations: fields }
       if (failBeforeCommit) throw new Error('Simulated transaction failure')
       evidence.set(evidenceId, record)
       subscriptions.set(subscriptionId, subscription)

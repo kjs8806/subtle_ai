@@ -9,6 +9,14 @@ import { createTokenVault } from '../server/security/tokenVault.js'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+// Both OAuth callbacks are reached via a real top-level browser navigation, so
+// they always redirect back to '/' rather than return a JSON body - the
+// outcome is carried as a query param (auth_error / gmail_error) instead.
+const errorFromRedirect = (response, param) => {
+  const [, query] = (response.headers.location || '').split('?')
+  return new URLSearchParams(query || '').get(param)
+}
+
 // Real Google `sub` claims are opaque numeric strings, not UUIDs.
 const GOOGLE_SUBJECT_A = '104857612345678901234'
 const GOOGLE_SUBJECT_B = '211348800987654321000'
@@ -40,7 +48,8 @@ const authenticate = async (app, subject) => {
     url: `/api/v1/auth/google/callback?state=${state}&code=mock-success:${subject}`,
     cookies: { subtle_oauth_state: state },
   })
-  assert.equal(callback.statusCode, 200)
+  assert.equal(callback.statusCode, 302)
+  assert.equal(callback.headers.location, '/')
   const token = callback.cookies.find(({ name }) => name === 'subtle_session').value
   const headers = { cookie: `subtle_session=${token}` }
   const me = await app.inject({ method: 'GET', url: '/api/v1/session', headers })
@@ -106,7 +115,8 @@ const authenticateReal = async (app) => {
   const start = await app.inject({ method: 'GET', url: '/api/v1/auth/google/start' })
   const state = start.cookies.find(({ name }) => name === 'subtle_oauth_state').value
   const callback = await app.inject({ method: 'GET', url: `/api/v1/auth/google/callback?state=${state}&code=real-authorization-code`, cookies: { subtle_oauth_state: state } })
-  assert.equal(callback.statusCode, 200)
+  assert.equal(callback.statusCode, 302)
+  assert.equal(callback.headers.location, '/')
   const token = callback.cookies.find(({ name }) => name === 'subtle_session').value
   const headers = { cookie: `subtle_session=${token}` }
   const me = await app.inject({ method: 'GET', url: '/api/v1/session', headers })
@@ -168,16 +178,18 @@ test('Gmail OAuth with a matching Google subject connects the source', async () 
   const app = buildApp({ provider: createTestProvider(), gmailProvider: 'google' })
   const { headers } = await authenticate(app, GOOGLE_SUBJECT_A)
   const response = await connectGmail(app, headers, GOOGLE_SUBJECT_A)
-  assert.equal(response.statusCode, 200)
-  assert.equal(response.json().status, 'connected')
+  assert.equal(response.statusCode, 302)
+  assert.equal(response.headers.location, '/')
+  const source = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
+  assert.equal(source.json().status, 'connected')
 })
 
 test('Gmail OAuth with a different Google subject is rejected as identity_mismatch', async () => {
   const app = buildApp({ provider: createTestProvider(), gmailProvider: 'google' })
   const { headers } = await authenticate(app, GOOGLE_SUBJECT_A)
   const response = await connectGmail(app, headers, GOOGLE_SUBJECT_B)
-  assert.equal(response.statusCode, 409)
-  assert.equal(response.json().error.code, 'identity_mismatch')
+  assert.equal(response.statusCode, 302)
+  assert.equal(errorFromRedirect(response, 'gmail_error'), 'identity_mismatch')
 })
 
 test('identity mismatch does not store a refresh token or connect Gmail', async () => {
@@ -233,8 +245,8 @@ test('SEC-001: real Google auth fails closed on missing, null, empty, and malfor
     const state = start.cookies.find(({ name }) => name === 'subtle_oauth_state').value
     const callback = await app.inject({ method: 'GET', url: `/api/v1/auth/google/callback?state=${state}&code=irrelevant`, cookies: { subtle_oauth_state: state } })
 
-    assert.equal(callback.statusCode, 401, `subject ${JSON.stringify(subject)} must be rejected`)
-    assert.equal(callback.json().error.code, 'missing_subject')
+    assert.equal(callback.statusCode, 302, `subject ${JSON.stringify(subject)} must be rejected`)
+    assert.equal(errorFromRedirect(callback, 'auth_error'), 'missing_subject')
     assert.equal(callback.cookies.find(({ name }) => name === 'subtle_session'), undefined, 'no session cookie may be issued')
     assert.equal(counts.resolveOrCreateIdentity, 0, 'no identity may be created or upserted')
 
@@ -253,7 +265,8 @@ test('SEC-001: the mock-provider deterministic identity never activates for GMAI
   const start = await app.inject({ method: 'GET', url: '/api/v1/auth/google/start' })
   const state = start.cookies.find(({ name }) => name === 'subtle_oauth_state').value
   const callback = await app.inject({ method: 'GET', url: `/api/v1/auth/google/callback?state=${state}&code=irrelevant`, cookies: { subtle_oauth_state: state } })
-  assert.equal(callback.statusCode, 401)
+  assert.equal(callback.statusCode, 302)
+  assert.equal(errorFromRedirect(callback, 'auth_error'), 'missing_subject')
   assert.equal(callback.cookies.find(({ name }) => name === 'subtle_session'), undefined)
 })
 
@@ -265,8 +278,8 @@ test('SEC-002: Gmail OAuth with a missing, null, empty, or whitespace-only email
     const { headers, user } = await authenticate(app, GOOGLE_SUBJECT_A)
 
     const response = await connectGmail(app, headers, GOOGLE_SUBJECT_A)
-    assert.equal(response.statusCode, 409, `email ${JSON.stringify(email)} must be rejected`)
-    assert.equal(response.json().error.code, 'identity_mismatch')
+    assert.equal(response.statusCode, 302, `email ${JSON.stringify(email)} must be rejected`)
+    assert.equal(errorFromRedirect(response, 'gmail_error'), 'identity_mismatch')
     assert.equal(counts.authorizeConnection, 0, 'authorizeConnection() must not run for a rejected Gmail identity')
 
     const connection = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
@@ -285,8 +298,8 @@ test('SEC-002: a different (non-matching) Gmail subject is rejected without invo
   const { headers } = await authenticate(app, GOOGLE_SUBJECT_A)
 
   const response = await connectGmail(app, headers, GOOGLE_SUBJECT_B)
-  assert.equal(response.statusCode, 409)
-  assert.equal(response.json().error.code, 'identity_mismatch')
+  assert.equal(response.statusCode, 302)
+  assert.equal(errorFromRedirect(response, 'gmail_error'), 'identity_mismatch')
   assert.equal(counts.authorizeConnection, 0)
 
   const scan = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers: { ...headers, ...sameOrigin } })
@@ -370,8 +383,10 @@ test('SEC-005: the real Google provider adapter connects Gmail through the appli
 
   const { headers, user } = await authenticateReal(app)
   const response = await connectGmailReal(app, headers)
-  assert.equal(response.statusCode, 200)
-  assert.equal(response.json().status, 'connected')
+  assert.equal(response.statusCode, 302)
+  assert.equal(response.headers.location, '/')
+  const source = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
+  assert.equal(source.json().status, 'connected')
 
   const stored = await repository.getEncryptedRefreshToken(user.id)
   assert.ok(stored, 'a refresh token must be persisted')
@@ -388,8 +403,8 @@ test('SEC-005: the real Google provider adapter rejects a mismatching Gmail subj
 
   const { headers, user } = await authenticateReal(app)
   const response = await connectGmailReal(app, headers)
-  assert.equal(response.statusCode, 409)
-  assert.equal(response.json().error.code, 'identity_mismatch')
+  assert.equal(response.statusCode, 302)
+  assert.equal(errorFromRedirect(response, 'gmail_error'), 'identity_mismatch')
   assert.equal(await repository.getEncryptedRefreshToken(user.id), null)
   const connection = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
   assert.equal(connection.json().status, 'not_connected')
@@ -403,7 +418,8 @@ test('SEC-005: a failed real Gmail token exchange never normalizes to authorized
 
   const { headers, user } = await authenticateReal(app)
   const response = await connectGmailReal(app, headers)
-  assert.notEqual(response.statusCode, 200)
+  assert.equal(response.statusCode, 302)
+  assert.ok(errorFromRedirect(response, 'gmail_error'), 'a failed token exchange must redirect with a gmail_error')
   assert.equal(await repository.getEncryptedRefreshToken(user.id), null)
   const connection = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
   assert.equal(connection.json().status, 'not_connected')
@@ -417,8 +433,8 @@ test('SEC-006: first-time Gmail authorization without a refresh token does not c
 
   const { headers, user } = await authenticateReal(app)
   const response = await connectGmailReal(app, headers)
-  assert.equal(response.statusCode, 502)
-  assert.equal(response.json().error.code, 'missing_refresh_token')
+  assert.equal(response.statusCode, 302)
+  assert.equal(errorFromRedirect(response, 'gmail_error'), 'missing_refresh_token')
   assert.equal(await repository.getEncryptedRefreshToken(user.id), null)
   const connection = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
   assert.equal(connection.json().status, 'not_connected')
@@ -433,7 +449,8 @@ test('SEC-006: a reconnect where Google omits a new refresh token preserves the 
   const appFirst = buildApp({ repository, provider: firstProvider, gmailProvider: 'google', tokenVault, sessions })
   const { headers, user } = await authenticateReal(appFirst)
   const first = await connectGmailReal(appFirst, headers)
-  assert.equal(first.statusCode, 200)
+  assert.equal(first.statusCode, 302)
+  assert.equal(first.headers.location, '/')
   assert.equal(tokenVault.decrypt(await repository.getEncryptedRefreshToken(user.id)), 'first-refresh-token')
 
   // A reconnect (e.g. re-consent) where Google legitimately omits refresh_token
@@ -441,8 +458,10 @@ test('SEC-006: a reconnect where Google omits a new refresh token preserves the 
   const { provider: secondProvider } = createRealGoogleProvider({ signInSubject: GOOGLE_SUBJECT_A, gmailRefreshToken: null })
   const appSecond = buildApp({ repository, provider: secondProvider, gmailProvider: 'google', tokenVault, sessions })
   const second = await connectGmailReal(appSecond, headers)
-  assert.equal(second.statusCode, 200)
-  assert.equal(second.json().status, 'connected')
+  assert.equal(second.statusCode, 302)
+  assert.equal(second.headers.location, '/')
+  const source = await appSecond.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
+  assert.equal(source.json().status, 'connected')
   assert.equal(tokenVault.decrypt(await repository.getEncryptedRefreshToken(user.id)), 'first-refresh-token')
 })
 
