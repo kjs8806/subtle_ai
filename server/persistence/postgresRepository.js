@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
+import { PriceChangeService } from '../../src/services/priceChangeService.js'
 
 // node-postgres returns NUMERIC columns (current_price, amount, confidence) as
 // strings by default, to avoid float-precision loss on arbitrary-precision
@@ -37,6 +38,38 @@ const hydrateSubscription = async (pool, row) => {
 }
 
 const evidenceRowMapper = (row) => ({ id: row.id, canonicalService: row.canonical_service, rawMerchant: row.raw_merchant, amount: row.amount, currency: row.currency, cadence: row.cadence, nextRenewal: row.next_renewal, confidence: row.confidence, provenance: row.provenance, excerpt: row.excerpt, createdAt: row.created_at })
+
+// price_change_events stores its cents columns as BIGINT (OID 20) so the
+// increase/decrease math itself is never at risk of float precision loss.
+// node-postgres returns bigint as a string by default (app-wide, since
+// COUNT(*) and other unrelated bigint results elsewhere rely on that
+// default) - these three columns are always small cents amounts well within
+// Number.MAX_SAFE_INTEGER, so they are converted to real numbers here,
+// narrowly, rather than by overriding the global bigint type parser.
+const toNumberOrNull = (value) => (value === null || value === undefined ? null : Number(value))
+
+// FEATURE-003: a joined price_change_events + subscriptions row (see
+// listMaterialPriceChangeEvents) - the event carries its own money/rule
+// fields, while canonicalService/billingCycle come from the subscription it
+// belongs to (never fabricated onto the event itself).
+const priceChangeEventRowMapper = (row) => ({
+  id: row.id,
+  userId: row.user_id,
+  subscriptionId: row.subscription_id,
+  canonicalService: row.canonical_service,
+  billingCycle: row.billing_cycle,
+  previousEvidenceId: row.previous_evidence_id,
+  evidenceId: row.evidence_id,
+  currency: row.currency,
+  previousPriceCents: toNumberOrNull(row.previous_price_cents),
+  currentPriceCents: toNumberOrNull(row.current_price_cents),
+  direction: row.direction,
+  percentChangeBp: row.percent_change_bp,
+  annualizedDeltaCents: toNumberOrNull(row.annualized_delta_cents),
+  isMaterial: row.is_material,
+  ruleVersion: row.rule_version,
+  detectedAt: row.detected_at,
+})
 
 export const createPostgresRepository = ({ pool }) => {
   if (!pool) throw new Error('PostgreSQL pool is required')
@@ -111,8 +144,29 @@ export const createPostgresRepository = ({ pool }) => {
           }
         }
         await client.query('INSERT INTO billing_events (subscription_id, evidence_id, amount, currency, billed_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (subscription_id, evidence_id) DO NOTHING', [subscriptionId, evidence.rows[0].id, parsed.amount, parsed.currency, parsed.receivedAt])
-        await client.query('INSERT INTO price_observations (subscription_id, evidence_id, amount, currency, observed_at) VALUES ($1, $2, $3, $4, $5)', [subscriptionId, evidence.rows[0].id, parsed.amount, parsed.currency, parsed.receivedAt])
+        const priceObservation = await client.query('INSERT INTO price_observations (subscription_id, evidence_id, amount, currency, observed_at) VALUES ($1, $2, $3, $4, $5) RETURNING id', [subscriptionId, evidence.rows[0].id, parsed.amount, parsed.currency, parsed.receivedAt])
         for (const [field, observation] of Object.entries(parsed.fieldObservations || {})) await client.query('INSERT INTO field_observations (subscription_id, field, value, provenance, confidence, evidence_id) VALUES ($1, $2, $3, $4, $5, $6)', [subscriptionId, field, JSON.stringify(observation.value ?? null), observation.provenance, parsed.confidence.score, evidence.rows[0].id])
+
+        // FEATURE-003: detect a price-change event between this brand-new
+        // observation and the subscription's immediately-preceding one (if
+        // any), inside this same transaction. Cadence is read from the
+        // subscriptions row *after* the correction-precedence-aware
+        // update/insert above, so an active billing_cycle correction is
+        // honored automatically - this never re-reads raw evidence for that.
+        const priorObservation = await client.query('SELECT amount, currency, evidence_id AS "evidenceId" FROM price_observations WHERE subscription_id = $1 AND id != $2 ORDER BY observed_at', [subscriptionId, priceObservation.rows[0].id])
+        const previousObservation = priorObservation.rows.at(-1) || null
+        const subscriptionCadence = await client.query('SELECT billing_cycle FROM subscriptions WHERE id = $1', [subscriptionId])
+        const priceChange = PriceChangeService.detect({
+          previousObservation,
+          currentObservation: { amount: parsed.amount, currency: parsed.currency },
+          cadence: subscriptionCadence.rows[0]?.billing_cycle ?? null,
+        })
+        if (priceChange) {
+          await client.query(
+            'INSERT INTO price_change_events (user_id, subscription_id, previous_evidence_id, evidence_id, currency, previous_price_cents, current_price_cents, direction, percent_change_bp, annualized_delta_cents, is_material, rule_version) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) ON CONFLICT (subscription_id, evidence_id) DO NOTHING',
+            [userId, subscriptionId, previousObservation?.evidenceId ?? null, evidence.rows[0].id, priceChange.currency, priceChange.previousPriceCents, priceChange.currentPriceCents, priceChange.direction, priceChange.percentChangeBp, priceChange.annualizedDeltaCents, priceChange.isMaterial, priceChange.ruleVersion],
+          )
+        }
         await client.query('COMMIT')
         return { created: true, evidence: evidence.rows[0], subscription: await this.getSubscription(userId, subscriptionId) }
       } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
@@ -153,6 +207,19 @@ export const createPostgresRepository = ({ pool }) => {
     // not filter by status, so a rejected record remains inspectable.
     async listSubscriptions(userId) { const { rows } = await pool.query("SELECT * FROM subscriptions WHERE user_id = $1 AND status != 'rejected' ORDER BY created_at", [userId]); return Promise.all(rows.map((row) => hydrateSubscription(pool, row))) },
     async getSubscription(userId, id) { const { rows } = await pool.query('SELECT * FROM subscriptions WHERE user_id = $1 AND id = $2', [userId, id]); return hydrateSubscription(pool, rows[0]) },
+
+    // FEATURE-003: material (attention-worthy) price-change events for this
+    // user, joined with their subscription for canonicalService/billingCycle.
+    // A rejected subscription's events are excluded here, at the source,
+    // rather than relying on the caller to filter - same convention as
+    // listSubscriptions already excluding rejected rows.
+    async listMaterialPriceChangeEvents(userId) {
+      const { rows } = await pool.query(
+        "SELECT pce.*, s.canonical_service, s.billing_cycle FROM price_change_events pce JOIN subscriptions s ON s.id = pce.subscription_id WHERE pce.user_id = $1 AND pce.is_material = true AND s.status != 'rejected' ORDER BY pce.detected_at DESC",
+        [userId],
+      )
+      return rows.map(priceChangeEventRowMapper)
+    },
 
     // FEATURE-002: user-entered corrections, subscription rejection, and
     // ambiguous-candidate review. Every method below resolves ownership from

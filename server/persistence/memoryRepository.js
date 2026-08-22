@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { PriceChangeService } from '../../src/services/priceChangeService.js'
 
 const clone = (value) => structuredClone(value)
 const publicConnection = (connection) => {
@@ -30,6 +31,7 @@ export const createMemoryRepository = () => {
   const corrections = new Map()
   const conflicts = new Map()
   const candidates = new Map()
+  const priceChangeEvents = new Map()
 
   const activeCorrectionFor = (subscriptionId, field) => [...corrections.values()].find((item) => item.subscriptionId === subscriptionId && item.field === field && !item.supersededAt)
   const hydrateSub = (sub) => sub && {
@@ -122,7 +124,7 @@ export const createMemoryRepository = () => {
       const provenance = Object.fromEntries(Object.entries(parsed.fieldObservations || {}).map(([field, observation]) => [field, observation.provenance]))
       const record = { ...parsed, id: evidenceId, userId, subscriptionId, provenance }
       const previous = candidateSubs[0]
-      const observation = { amount: parsed.amount, currency: parsed.currency ?? null, observedAt: parsed.receivedAt }
+      const observation = { amount: parsed.amount, currency: parsed.currency ?? null, observedAt: parsed.receivedAt, evidenceId }
       const billing = { amount: parsed.amount, currency: parsed.currency ?? null, billedAt: parsed.receivedAt, evidenceId }
       const fields = Object.entries(parsed.fieldObservations || {}).map(([field, obs]) => ({ field, value: obs.value ?? null, provenance: obs.provenance, confidence: parsed.confidence.score, evidenceId }))
 
@@ -164,15 +166,65 @@ export const createMemoryRepository = () => {
             fieldObservations: [...previous.fieldObservations, ...fields],
           }
         : { id: subscriptionId, userId, canonicalService: parsed.canonicalService, rawMerchant: parsed.rawMerchant, plan: null, currentPrice: parsed.amount, currency: parsed.currency ?? null, billingCycle: parsed.cadence, nextRenewal: parsed.nextRenewal, status: 'active', source: 'Gmail receipt', evidence: [record], priceHistory: [observation], billingHistory: [billing], fieldObservations: fields }
+
+      // FEATURE-003: detect a price-change event between this brand-new
+      // observation and the subscription's immediately-preceding one (if
+      // any). Cadence is read from `subscription.billingCycle` - already
+      // correction-precedence-resolved above - never raw evidence cadence.
+      const previousObservation = previous ? previous.priceHistory.at(-1) || null : null
+      const priceChange = PriceChangeService.detect({
+        previousObservation,
+        currentObservation: { amount: parsed.amount, currency: parsed.currency ?? null },
+        cadence: subscription.billingCycle,
+      })
+
       if (failBeforeCommit) throw new Error('Simulated transaction failure')
       evidence.set(evidenceId, record)
       subscriptions.set(subscriptionId, subscription)
       billingEvents.add(`${subscriptionId}:${evidenceId}`)
       for (const conflict of newConflicts) conflicts.set(conflict.id, conflict)
+      if (priceChange) {
+        // Idempotency mirrors the UNIQUE(subscription_id, evidence_id)
+        // constraint in postgresRepository.js: evidence itself is deduped
+        // upstream by sourceId (see the `existing` check above), so this
+        // exact (subscriptionId, evidenceId) pair can never be reprocessed -
+        // the guard below is a defensive no-op in practice, not load-bearing.
+        const alreadyRecorded = [...priceChangeEvents.values()].some((event) => event.subscriptionId === subscriptionId && event.evidenceId === evidenceId)
+        if (!alreadyRecorded) {
+          const eventId = randomUUID()
+          priceChangeEvents.set(eventId, {
+            id: eventId,
+            userId,
+            subscriptionId,
+            previousEvidenceId: previousObservation?.evidenceId ?? null,
+            evidenceId,
+            currency: priceChange.currency,
+            previousPriceCents: priceChange.previousPriceCents,
+            currentPriceCents: priceChange.currentPriceCents,
+            direction: priceChange.direction,
+            percentChangeBp: priceChange.percentChangeBp,
+            annualizedDeltaCents: priceChange.annualizedDeltaCents,
+            isMaterial: priceChange.isMaterial,
+            ruleVersion: priceChange.ruleVersion,
+            detectedAt: new Date().toISOString(),
+          })
+        }
+      }
       return { subscription: hydrateSub(clone(subscription)), evidence: clone(record), created: true }
     },
     listSubscriptions: (userId) => clone([...subscriptions.values()].filter((item) => item.userId === userId && item.status !== 'rejected')).map(hydrateSub),
     getSubscription: (userId, id) => hydrateSub(clone([...subscriptions.values()].find((item) => item.userId === userId && item.id === id) || null)),
+
+    // FEATURE-003: material (attention-worthy) price-change events for this
+    // user, joined live with their subscription for canonicalService/
+    // billingCycle. A rejected subscription's events are excluded here, at
+    // the source, same convention as listSubscriptions.
+    listMaterialPriceChangeEvents: (userId) => [...priceChangeEvents.values()]
+      .filter((event) => event.userId === userId && event.isMaterial)
+      .map((event) => { const subscription = subscriptions.get(event.subscriptionId); return subscription && subscription.status !== 'rejected' ? { ...event, canonicalService: subscription.canonicalService, billingCycle: subscription.billingCycle } : null })
+      .filter(Boolean)
+      .sort((a, b) => String(b.detectedAt).localeCompare(String(a.detectedAt)))
+      .map(clone),
 
     // FEATURE-002: user-entered corrections, subscription rejection, and
     // ambiguous-candidate review. Ownership is always resolved from the
