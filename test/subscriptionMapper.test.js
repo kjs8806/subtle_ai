@@ -27,7 +27,7 @@ test('toDisplayItem maps a real backend subscription record into the UI item sha
   assert.equal(item.cadence, 'monthly')
   assert.equal(item.next, '2026-09-12T00:00:00.000Z')
   assert.equal(item.source, 'Gmail receipt')
-  assert.equal(item.confirmed, '2026-08-19T09:00:00.000Z')
+  assert.equal(item.confirmed, 'Aug 19, 2026')
   assert.deepEqual(item.history, [['2026-08-19T09:00:00.000Z', '$22.99']])
   assert.deepEqual(item.bills, [['2026-08-19T09:00:00.000Z', '$22.99']])
   assert.equal(item.pipelineRecord, record, 'the raw record is kept for field-level provenance lookups')

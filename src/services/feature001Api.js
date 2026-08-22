@@ -4,7 +4,8 @@
 const request = async (path, options = {}) => {
   let response
   try {
-    response = await fetch(path, { headers: { 'content-type': 'application/json', ...options.headers }, credentials: 'same-origin', ...options })
+    const headers = options.body ? { 'content-type': 'application/json', ...options.headers } : options.headers
+    response = await fetch(path, { headers, credentials: 'same-origin', ...options })
   } catch (cause) {
     const error = new Error('Network request failed')
     error.code = 'network_error'

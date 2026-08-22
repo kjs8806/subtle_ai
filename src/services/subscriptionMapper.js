@@ -20,6 +20,15 @@ const confidenceLabel = (score) => {
 // fieldObservations[].confidence instead, which both repositories return as a
 // consistent plain number.
 const firstFieldConfidence = (record) => record.fieldObservations?.find((observation) => typeof observation.confidence === 'number')?.confidence
+// evidence[].receivedAt is a timestamptz ISO string, never meant for direct
+// display - format it the same way approved demo fixtures format dates
+// ("Sep 12, 2026") rather than showing the raw ISO string.
+const formatDate = (value) => {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
 
 export const toDisplayItem = (record) => ({
   id: record.id,
@@ -37,7 +46,7 @@ export const toDisplayItem = (record) => ({
   analysisTitle: 'Receipt-backed discovery',
   analysisCopy: 'Review the detected fields and receipt evidence for this subscription.',
   source: record.source || 'Gmail receipt',
-  confirmed: record.evidence?.[0]?.receivedAt || 'Not provided',
+  confirmed: formatDate(record.evidence?.[0]?.receivedAt) || 'Not provided',
   confidence: confidenceLabel(firstFieldConfidence(record)),
   history: (record.priceHistory || []).map((value) => [value.observedAt, money(value.amount)]),
   bills: (record.billingHistory || []).map((value) => [value.billedAt, money(value.amount)]),

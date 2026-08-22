@@ -1,4 +1,13 @@
 import { randomUUID } from 'node:crypto'
+import pg from 'pg'
+
+// node-postgres returns NUMERIC columns (current_price, amount, confidence) as
+// strings by default, to avoid float-precision loss on arbitrary-precision
+// values. This app only ever stores small fixed-scale currency/score values,
+// so that precision concern doesn't apply here - and the API contract with the
+// frontend expects real numbers (`typeof value === 'number'`), not numeric
+// strings, which were being silently treated as missing.
+pg.types.setTypeParser(1700, (value) => (value === null ? null : parseFloat(value)))
 
 const rowConnection = (row) => row && ({ id: row.id, userId: row.user_id, provider: row.provider, status: row.authorization_state, scanStatus: row.scan_state, lastScanAt: row.last_scan_at })
 
