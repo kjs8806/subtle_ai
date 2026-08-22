@@ -9,52 +9,58 @@ This document records the current system and approved extensions; it does not au
 
 ## Foundations
 
-### Brand mark (DES-017)
+**DES-018/019/020/021 (2026-08-22) replaced the editorial sage/coral/top-nav system with a purple SaaS-dashboard direction** (left sidebar nav, stat cards, purple accent), matching Product Owner-supplied reference screenshots. The sections below describe the current (post-DES-018) system; DES-010/013/014/016/017 above describe the superseded system and are kept for history, not as current guidance.
 
-One SVG mark — a `--radius-md`-style rounded-square badge filled `--coral`, with a lowercase italic Georgia "s" in `--paper` (no accent dot) — is the single source of the logo. It is defined once in `src/main.js`'s `brandMark` and mirrored exactly in `public/icon.svg`, so the favicon, the in-app nav/footer mark, and the installed-app-icon are pixel-identical. The glyph is rendered as SVG `<text>` in the safe system font Georgia rather than the page's loaded webfonts (Playfair Display, Space Grotesk), because `public/icon.svg` is loaded standalone (favicon, OS home-screen icon, link previews) with no access to the page's `@import` — a webfont there would silently fall back and could visually diverge from the in-app copy.
+### Brand mark (DES-017, recolored by DES-018)
 
-### Type (DES-014, revised DES-016)
+One SVG mark — a `--radius-md`-style rounded-square badge filled `--purple`, with a lowercase italic Georgia "s" in `--paper` (no accent dot) — is the single source of the logo. It is defined once in `src/main.js`'s `brandMark` and mirrored exactly in `public/icon.svg`, so the favicon, the in-app nav/footer mark, and the installed-app-icon are pixel-identical. The glyph is rendered as SVG `<text>` in the safe system font Georgia rather than the page's loaded webfont (Inter), because `public/icon.svg` is loaded standalone (favicon, OS home-screen icon, link previews) with no access to the page's `@import` — a webfont there would silently fall back and could visually diverge from the in-app copy.
 
-- Display/editorial: Playfair Display — kept per Product Owner request; DES-014's swap to Fraunces was tried and reverted (see DES-016)
-- Interface/body: Space Grotesk
-- Metadata/labels: DM Mono
+### Type (DES-018)
 
-### Root tokens (DES-014)
+- Interface and display: Inter (headings, body, buttons)
+- Metadata/labels: DM Mono (eyebrows, mono badges, tabular figures)
+- Playfair Display (DES-014/016) is retired - the new direction has no separate "editorial" typeface.
 
-Same sage/coral/paper hue family as before; values refined for contrast and centralized as tokens.
+### Root tokens (DES-018)
 
-| Token | Value | Use |
-| --- | --- | --- |
-| Ink | `#1f2924` | Primary text and dark actions |
-| Ink soft | `#33423c` | Hover/active state for dark actions |
-| Muted | `#5c6b64` | Secondary information |
-| Paper | `#f7f8f3` | Page background |
-| Sage | `#e3ebdd` | Calm supporting surface |
-| Sage deep | `#b9c9ab` | Dividers/accents inside sage surfaces |
-| Coral | `#c15f45` | Emphasis, decorative accents, backgrounds |
-| Coral ink | `#9c4530` | Coral used as small text (AA contrast on white/paper) |
-| Line | `#dde3d6` | Dividers and borders |
-
-### Radius and elevation (DES-014)
+A new purple/indigo hue family on a light-lavender ground, replacing the sage/coral system.
 
 | Token | Value | Use |
 | --- | --- | --- |
-| `--radius-xs` | 6px | Service icons |
-| `--radius-sm` | 10px | Buttons, form inputs |
-| `--radius-md` | 16px | Cards, subscription list, mobile menu, cost grid |
-| `--radius-lg` | 22px | Dialogs |
+| Ink | `#181a2a` | Primary text |
+| Muted | `#6b7086` | Secondary information |
+| Paper | `#f5f5fb` | Page background |
+| Surface | `#ffffff` | Card/sidebar/dialog background |
+| Border | `#e6e5f2` | Dividers and borders |
+| Purple | `#6c5cf5` | Primary brand accent - active nav, primary buttons, stat icons |
+| Purple deep / ink | `#5643e0` / `#4a3ad1` | Hover/active states and small purple text (AA contrast) |
+| Purple soft | `#efebff` | Active-nav pill, badges, subtle accent fills |
+| Coral / coral soft / coral ink | `#e2632f` / `#fdece2` / `#b84f22` | Attention/notice accents (price-increase style callouts) |
+| Success / warning / danger (+ soft variants) | `#1a9c6b` / `#b3790c` / `#d6403f` | Status meaning - never color alone |
+
+### Radius and elevation (DES-018)
+
+| Token | Value | Use |
+| --- | --- | --- |
+| `--radius-xs` | 6px | Small chips |
+| `--radius-sm` | 10px | Buttons, form inputs, nav links |
+| `--radius-md` | 14px | Evidence rows, correction panel |
+| `--radius-lg` | 18px | Cards, panels, stat tiles |
+| `--radius-xl` | 22px | Dialogs |
 | `--shadow-sm` / `--shadow-md` / `--shadow-lg` | — | Resting, hover, and dialog elevation |
 
 ### Not yet centralized
 
-Per-service brand accents (`.service-red/blue/navy/purple/green`) and the Gmail status dot's warning/success colors (`#a68136`, `#6c9272`) remain literal, category-identifying colors rather than semantic tokens — this is intentional (they identify a specific service or state, not the app's own palette) but still open per the Known gaps below. State never relies on color alone.
+Per-service brand accents (`.service-red/blue/navy/purple/green`) remain literal, category-identifying colors rather than semantic tokens — this is intentional (they identify a specific service, not the app's own palette) but still open per the Known gaps below. State never relies on color alone.
 
-## Layout
+## Layout (DES-019)
 
-- Content width: 1180px maximum.
-- Existing responsive breakpoints: 900px and 650px, plus legacy landing-page behavior at 720px.
+- Persistent left sidebar (260px) with icon+label nav (Overview, Subscriptions, Worth your attention, Sources, Settings) down to 960px, below which it collapses into the existing slide-in mobile menu (`.mobile-topbar` + `#mobile-menu`, unchanged focus/`focusout`/Escape handling).
+- Main content width: 1240px maximum.
+- Responsive breakpoints: 1080px (dashboard grid to one column), 960px (sidebar → mobile drawer), 700px (stat grid/table to one column).
 - Interactive targets: at least 44 × 44 CSS pixels.
 - Mobile dialogs and Subscription Detail scroll without horizontal overflow.
+- Any element toggled via the DOM `hidden` property must actually disappear - a global `[hidden]{display:none!important}` rule guards against author `display` rules on the same selector winning over the native `[hidden]` default (a real bug hit during DES-018's implementation: the "Confirmed by you" pill and the Disconnect Gmail button both stayed visible until this rule was added).
 
 ## Component anatomy and behavior
 
@@ -111,22 +117,22 @@ Confidence complements provenance; it never converts an inference into a fact. P
 - Motion respects reduced-motion preferences.
 - State, provenance, and confidence are understandable without color.
 
-## Interaction and depth (DES-013, DES-014)
+## Interaction and depth (DES-013, DES-018)
 
 - Buttons, subscription rows, action cards, and the mobile menu all carry hover/active states; primary actions lift slightly on hover via `--shadow-sm`/`--shadow-md`/`--shadow-lg`.
-- The global nav is sticky and stays opaque above scrolling content; the active link shows a coral underline.
-- Dialogs fade, settle in, and now use `--radius-lg` for a softer edge (skipped entirely under `prefers-reduced-motion`, consistent with the existing reduced-motion rule).
+- The sidebar nav is persistent (not sticky-on-scroll, since it's a fixed-height column); the active link shows a `--purple-soft` filled pill, not an underline.
+- Dialogs fade, settle in, and use `--radius-xl` for a soft edge (skipped entirely under `prefers-reduced-motion`, consistent with the existing reduced-motion rule).
 - The Gmail source status carries a small state dot (muted/amber-pulsing/green) alongside its text label — never color alone.
-- `.empty-state` (previously unstyled) now matches the card system with a dashed border.
-- Cards, buttons, inputs, the subscription list, and service icons use the `--radius-*` scale instead of 0-radius rectangles; the subscription list and renewals table are now bordered, radius-clipped white cards rather than flush dividers.
-- Monetary figures (`--subscription-price`, spending summary, cost grid, renewals) use `font-variant-numeric: tabular-nums` for column alignment.
+- `.empty-state` matches the card system with a dashed border.
+- Cards, buttons, inputs, the subscription list, and service icons use the `--radius-*` scale instead of 0-radius rectangles.
+- Monetary figures (stat cards, subscription price, cost grid, renewals) use `font-variant-numeric: tabular-nums` for column alignment.
 
 ## Known gaps
 
 - Focus trapping/restoration and live announcements require implementation verification.
 - Some current controls appear smaller than the 44 × 44 target.
 - Field-level provenance is not consistently presented across Subscription Detail.
-- Mobile navigation hides links without a documented replacement pattern.
-- The core app palette is now centralized as tokens (DES-014); per-service brand accents and the Gmail status colors are still literal (see "Not yet centralized" above).
+- The core app palette is now centralized as tokens (DES-018); per-service brand accents are still literal (see "Not yet centralized" above).
 - Automated browser accessibility and responsive regression coverage are absent.
 - Component rules are not implemented as a standalone reusable library.
+- "Insights" (from the DES-018 reference) has no destination yet - intentionally left out of the sidebar (DES-019) rather than fabricated; revisit once a real feature is scoped.

@@ -4,17 +4,28 @@ import { toDisplayItem, toManualDisplayItem } from './services/subscriptionMappe
 import { monthlySpendFor } from './data/subscriptionModel.js'
 import { createDialogController, createLiveRegion } from './ui/accessibility.js'
 import { gmailDisclosureMarkup } from './ui/gmailDisclosure.js'
-import { initializeNavigation, navigationMarkup } from './ui/navigation.js'
-import { candidateRow, overviewMarkup, subscriptionRow } from './ui/overview.js'
+import { initializeNavigation, NAV_ICONS, navigationMarkup } from './ui/navigation.js'
+import { candidateRow, overviewMarkup, renewalRow, subscriptionRow } from './ui/overview.js'
 import { detailMarkup, rejectConfirmMarkup, renderDetail } from './ui/subscriptionDetail.js'
 import { loadingMarkup, sessionErrorMarkup, signedOutMarkup } from './ui/signedOut.js'
 
-const APP_CONFIG = { name: 'Subtle AI', tagline: 'your AI subscription optimizer' }
+const APP_CONFIG = { name: 'Subtle AI', tagline: 'Your AI subscription optimizer' }
 const money = value => typeof value === 'number' ? `$${value.toFixed(2)}` : 'Price not provided'
-const brandMark = `<svg class="brand-mark" viewBox="0 0 192 192" width="32" height="32" aria-hidden="true"><rect width="192" height="192" rx="44" fill="var(--coral)"/><text x="96" y="132" text-anchor="middle" fill="var(--paper)" font-family="Georgia, serif" font-size="124" font-style="italic">s</text></svg>`
-const brand = `<a class="brand" href="#overview" aria-label="${APP_CONFIG.name} home">${brandMark}<span>${APP_CONFIG.name}</span></a>`
-const shellHeader = `<header class="global-nav wrap">${brand}</header>`
+const brandMark = `<svg class="brand-mark" viewBox="0 0 192 192" width="32" height="32" aria-hidden="true"><rect width="192" height="192" rx="44" fill="var(--purple)"/><text x="96" y="132" text-anchor="middle" fill="var(--paper)" font-family="Georgia, serif" font-size="124" font-style="italic">s</text></svg>`
+const brand = `<a class="brand" href="#overview" aria-label="${APP_CONFIG.name} home">${brandMark}<span class="brand-text"><span class="brand-name">Subtle</span><span class="brand-tagline">${APP_CONFIG.tagline}</span></span></a>`
+const shellHeader = `<header class="pre-auth-header wrap">${brand}</header>`
 const addDialogMarkup = `<div class="dialog-backdrop" data-add-dialog hidden><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="add-title"><button class="dialog-close" data-close-dialog aria-label="Close">×</button><p class="eyebrow">Manual entry</p><h2 id="add-title">Add a subscription</h2><form class="subscription-form"><label>Service name<input name="name" placeholder="e.g. Netflix" required></label><div class="form-row"><label>Cost<input name="cost" type="number" min="0" step="0.01" inputmode="decimal" placeholder="22.99" required></label><label>Billing cadence<select name="cadence"><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></label></div><button class="primary-button form-submit" type="submit">Add to overview</button></form></section></div>`
+
+// Sidebar footer summary (mini Gmail status + account link). Kept read-only
+// (no independent scan/connect controls) so the interactive Gmail source
+// control stays a single instance - see the Sources panel in overview.js -
+// avoiding two independently-wired copies of the same async control.
+const sidebarFooterMarkup = (user, gmailSource) => {
+  const connected = gmailSource?.status === 'connected'
+  const lastScan = gmailSource?.lastScanAt ? new Date(gmailSource.lastScanAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null
+  const initials = (user?.name || user?.email || '?').trim().charAt(0).toUpperCase()
+  return `<div class="sidebar-source-card"><div class="source-row">${NAV_ICONS.sources}<span>${connected ? 'Gmail connected' : 'Gmail not connected'}</span></div><p>${connected ? (lastScan ? `Last scan: ${lastScan}` : 'Ready to scan') : 'Connect from Sources'}</p></div><a class="sidebar-user" href="#settings"><span class="avatar">${initials}</span><span class="who"><strong>${user?.name || 'Account'}</strong><span>${user?.email || ''}</span></span>${NAV_ICONS.chevron}</a>`
+}
 
 document.title = `${APP_CONFIG.name} — ${APP_CONFIG.tagline}`
 const app = document.querySelector('#app')
@@ -22,12 +33,21 @@ const live = createLiveRegion()
 
 // A subscription's `next` field is either an ISO timestamp (backend-derived) or
 // the literal 'Not provided' - only the former can be sorted/formatted as a date.
+const daysLabel = (date) => {
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const target = new Date(date); target.setHours(0, 0, 0, 0)
+  const diff = Math.round((target - today) / 86400000)
+  if (diff === 0) return 'Today'
+  if (diff === 1) return 'Tomorrow'
+  if (diff > 1) return `in ${diff} days`
+  return ''
+}
 const deriveUpcoming = (items) => items
   .map((item) => ({ item, date: new Date(item.next) }))
   .filter(({ date }) => !Number.isNaN(date.getTime()))
   .sort((a, b) => a.date - b.date)
   .slice(0, 3)
-  .map(({ item, date }) => ({ name: item.name, date: date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), amount: money(item.cost) }))
+  .map(({ item, date }) => ({ name: item.name, date: date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), daysLabel: daysLabel(date), amount: money(item.cost) }))
 
 // The OAuth callbacks are reached via a real top-level browser navigation (see
 // server/app.js), so they redirect back to '/' with the outcome carried as a
@@ -108,7 +128,7 @@ const renderAuthenticated = async (user, gmailError) => {
   const dateLabel = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
   const allItems = () => [...manualSubscriptions, ...backendItems]
 
-  app.innerHTML = `<main class="app-shell">${navigationMarkup(brand)}${overviewMarkup({ subscriptions: allItems(), actions: [], monthlySpend: monthlySpendFor(allItems()), upcoming: deriveUpcoming(allItems()), candidates, greeting, dateLabel })}<footer class="app-footer wrap">${brand}<div><span>Private by design</span><button class="quiet-button" data-sign-out type="button">Sign out</button></div></footer></main>${gmailDisclosureMarkup()}${detailMarkup()}${rejectConfirmMarkup()}${addDialogMarkup}`
+  app.innerHTML = `<div class="app-shell">${navigationMarkup(brand, { attentionCount: candidates.length })}<div class="main-col">${overviewMarkup({ subscriptions: allItems(), actions: [], monthlySpend: monthlySpendFor(allItems()), upcoming: deriveUpcoming(allItems()), candidates, greeting, dateLabel, user })}<footer class="app-footer wrap">${brand}<span>Private by design</span></footer></div></div>${gmailDisclosureMarkup()}${detailMarkup()}${rejectConfirmMarkup()}${addDialogMarkup}`
 
   initializeNavigation(app)
   const detailRoot = document.querySelector('[data-detail]'); const detailDialog = createDialogController(detailRoot)
@@ -118,6 +138,9 @@ const renderAuthenticated = async (user, gmailError) => {
   const status = document.querySelector('[data-gmail-status]'); const message = document.querySelector('[data-gmail-message]')
   const gmailButton = document.querySelector('[data-gmail-action]'); const disconnectButton = document.querySelector('[data-gmail-disconnect]')
   const discovery = document.querySelector('[data-discovery-result]')
+
+  const renderSidebarFooter = () => { const slot = document.querySelector('[data-sidebar-footer]'); if (slot) slot.innerHTML = sidebarFooterMarkup(user, gmailSourceUnavailable ? null : gmailSource) }
+  renderSidebarFooter()
 
   const findSubscription = id => allItems().find(item => String(item.id) === String(id))
   const wireRows = root => root.querySelectorAll('[data-subscription-id]:not([data-wired])').forEach(row => { row.dataset.wired = ''; row.addEventListener('click', () => openDetail(row.dataset.subscriptionId)) })
@@ -138,13 +161,17 @@ const renderAuthenticated = async (user, gmailError) => {
 
   const renderList = ({ newIds = new Set() } = {}) => {
     const items = allItems()
-    document.querySelector('[data-spend]').textContent = money(monthlySpendFor(items))
+    const spend = monthlySpendFor(items)
+    document.querySelector('[data-spend]').textContent = money(spend)
     document.querySelector('[data-count]').textContent = items.length
+    document.querySelector('[data-annual-spend]').textContent = money(spend * 12)
+    document.querySelector('[data-active-count]').textContent = items.length
+    document.querySelector('[data-subscriptions-count]').textContent = `${items.length} active`
     const list = document.querySelector('.subscription-list')
     list.innerHTML = items.length ? items.map(item => subscriptionRow(item, newIds.has(item.id))).join('') : '<p class="empty-state">No subscriptions yet. Connect Gmail or add one manually.</p>'
     wireRows(list)
     const upcoming = deriveUpcoming(items)
-    document.querySelector('.renewals').innerHTML = upcoming.length ? upcoming.map(item => `<p><strong>${item.name}</strong><span>${item.date}</span><b>${item.amount}</b></p>`).join('') : '<p class="empty-state">No upcoming renewals detected yet.</p>'
+    document.querySelector('.renewals').innerHTML = upcoming.length ? upcoming.map(renewalRow).join('') : '<p class="empty-state">No upcoming renewals detected yet.</p>'
   }
   wireRows(document)
 
@@ -154,7 +181,11 @@ const renderAuthenticated = async (user, gmailError) => {
   const renderCandidates = () => {
     const section = document.querySelector('#candidates-review')
     if (!section) return
-    section.querySelector('.eyebrow').textContent = `${candidates.length} to review`
+    section.querySelectorAll('.count-badge').forEach(badge => { badge.textContent = candidates.length })
+    document.querySelector('[data-attention-count]').textContent = candidates.length
+    const navBadge = document.querySelector('a[href="#candidates-review"] .nav-badge')
+    if (candidates.length) { if (navBadge) navBadge.textContent = candidates.length; else document.querySelectorAll('a[href="#candidates-review"]').forEach(link => link.insertAdjacentHTML('beforeend', `<span class="nav-badge">${candidates.length}</span>`)) }
+    else document.querySelectorAll('a[href="#candidates-review"] .nav-badge').forEach(badge => badge.remove())
     section.querySelector('.candidate-list').innerHTML = candidates.length ? candidates.map(candidateRow).join('') : '<p class="empty-state">Nothing to review right now.</p>'
   }
   document.querySelector('.candidate-list').addEventListener('click', async (event) => {
@@ -192,6 +223,12 @@ const renderAuthenticated = async (user, gmailError) => {
     backendItems = backendItems.map(item => item.remoteId === updated.id ? toDisplayItem(updated) : item)
     renderList()
   }
+  detailRoot.querySelector('[data-toggle-correction]').addEventListener('click', () => {
+    const panel = detailRoot.querySelector('[data-correction-panel]')
+    panel.hidden = !panel.hidden
+    if (!panel.hidden) panel.querySelector('select')?.focus()
+  })
+  detailRoot.querySelector('[data-close-correction]').addEventListener('click', () => { detailRoot.querySelector('[data-correction-panel]').hidden = true })
   detailRoot.querySelector('[data-correction-form]').addEventListener('submit', async (event) => {
     event.preventDefault()
     const subscriptionId = detailRoot.dataset.subscriptionId
@@ -262,16 +299,29 @@ const renderAuthenticated = async (user, gmailError) => {
   }
 
   const applyGmailSource = () => {
-    if (gmailSourceUnavailable) { setGmailState('Unavailable', "Gmail status couldn't be loaded. Try refreshing the page.", 'connect', { disabled: true }); return }
-    if (gmailSource.status !== 'connected') { setGmailState('Not connected', 'Connect to discover receipts', 'connect'); return }
-    if (gmailSource.scanStatus === 'scanning') { setGmailState('Scanning', 'Scanning receipts…', 'scan', { disabled: true }); return }
-    if (gmailSource.scanStatus === 'error') { setGmailState('Scan error', "The last scan failed. You can try again.", 'scan'); return }
-    setGmailState('Connected', 'Ready to scan receipts', 'scan')
+    if (gmailSourceUnavailable) { setGmailState('Unavailable', "Gmail status couldn't be loaded. Try refreshing the page.", 'connect', { disabled: true }) }
+    else if (gmailSource.status !== 'connected') { setGmailState('Not connected', 'Connect to discover receipts', 'connect') }
+    else if (gmailSource.scanStatus === 'scanning') { setGmailState('Scanning', 'Scanning receipts…', 'scan', { disabled: true }) }
+    else if (gmailSource.scanStatus === 'error') { setGmailState('Scan error', "The last scan failed. You can try again.", 'scan') }
+    else { setGmailState('Connected', 'Ready to scan receipts', 'scan') }
+    renderSidebarFooter()
   }
   applyGmailSource()
   if (gmailError) {
     message.textContent = GMAIL_ERROR_MESSAGES[gmailError] || "Gmail couldn't be connected. Please try again."
     live.announce(message.textContent)
+  }
+
+  // Only real, API-returned counts are shown here (found/ambiguous) - the
+  // scan endpoint does not currently return a total emails-scanned count, so
+  // that line is omitted rather than fabricated.
+  const CHECK_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m20 6-11 11-5-5"/></svg>'
+  const renderScanResults = (result) => {
+    const list = document.querySelector('[data-last-scan-results]')
+    if (!list) return
+    const items = [`${result.found || 0} subscription${result.found === 1 ? '' : 's'} found`]
+    if (result.ambiguous) items.push(`${result.ambiguous} need${result.ambiguous === 1 ? 's' : ''} your review`)
+    list.innerHTML = items.map(text => `<li>${CHECK_ICON}<span>${text}</span></li>`).join('')
   }
 
   const showDiscovery = items => {
@@ -299,6 +349,7 @@ const renderAuthenticated = async (user, gmailError) => {
       try { candidates = (await feature001Api.listCandidates()).candidates || [] } catch { /* the review section just keeps showing its last known state */ }
       renderCandidates()
       await refreshGmailSource()
+      renderScanResults(result)
       const copy = result.found ? `${result.found} subscription${result.found === 1 ? '' : 's'} found.` : 'No qualifying subscription receipts found.'
       live.announce(copy)
       const discovered = allItems().filter(item => newIds.has(item.id))
