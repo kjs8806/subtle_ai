@@ -1,18 +1,15 @@
-const MERCHANT_RULES = [
-  { pattern: /netflix/i, canonicalService: 'Netflix', category: 'Entertainment' },
-  { pattern: /dropbox/i, canonicalService: 'Dropbox', category: 'Cloud storage' },
-  { pattern: /google\s*(one|storage)|google\s*\*/i, canonicalService: 'Google One', category: 'Cloud storage' },
-  { pattern: /adobe/i, canonicalService: 'Adobe', category: 'Work tools' },
-  { pattern: /canva/i, canonicalService: 'Canva', category: 'Work tools' },
-  { pattern: /spotify/i, canonicalService: 'Spotify', category: 'Entertainment' },
-  { pattern: /nordvpn/i, canonicalService: 'NordVPN', category: 'Security' },
-]
+import { classifySubscriptionCandidate } from './subscriptionClassifier.js'
+import { findSubscriptionTemplate } from './subscriptionTemplates.js'
 
 const OVERLAP_PAIRS = new Set([
   ['Dropbox', 'Google One'].sort().join('|'),
 ])
 
-const RECEIPT_TERMS = /receipt|renewal|renewed|membership|invoice|subscription|trial|payment/i
+// Deliberately broader than just "receipt/invoice/payment": a one-time
+// transaction email (a shipping notice, a ride receipt) needs to reach the
+// classifier and be explicitly rejected with a reason, not be silently
+// dropped here as "not a receipt at all" - the two are different outcomes.
+const RECEIPT_TERMS = /receipt|renewal|renewed|membership|invoice|subscription|trial|payment|order|shipped|purchase|booking|reservation|itinerary|ticket|\btrip\b|\bride\b|delivered/i
 const CURRENCY_PATTERN = /(?:USD|US\$|\$)\s?([0-9]+(?:\.[0-9]{2})?)/i
 const CADENCE_PATTERN = /(monthly|per month|\/month|annual|yearly|per year|\/year)/i
 const DATE_PATTERN = /(?:next billing|renews?|renewal|billing date|due)[^\n]{0,20}?([A-Z][a-z]+\s+\d{1,2}(?:,\s*\d{4})?)/i
@@ -38,6 +35,11 @@ export const createEvidence = (data) => ({
   confidence: data.confidence,
   excerpt: data.excerpt,
   fieldObservations: data.fieldObservations || {},
+  // Classification confidence (was this email a subscription at all?) is a
+  // distinct concept from evidence confidence (how well do we know the
+  // *fields* of a subscription we already accepted?) - kept separate rather
+  // than folded into `confidence` so the two are never conflated.
+  classificationScore: data.classificationScore ?? null,
 })
 
 export const createPriceObservation = ({ amount, observedAt }) => ({ amount, observedAt })
@@ -60,36 +62,62 @@ export const createSubscription = (data) => ({
   recommendations: data.recommendations || [],
 })
 
-export const normalizeMerchant = (rawMerchant = '') => {
-  const rule = MERCHANT_RULES.find(({ pattern }) => pattern.test(rawMerchant))
-  return rule || { canonicalService: rawMerchant.trim() || 'Unknown service', category: 'Other' }
+// `sender` is a raw RFC 5322 From header (e.g. `"Anthropic, PBC"
+// <invoice+statements@anthropic.com>`), not a bare email address. Prefer the
+// quoted display name; fall back to the address's local part only when no
+// display name is present.
+const parseSenderName = (sender = '') => {
+  const match = sender.match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/)
+  if (match) return match[1].trim() || match[2].split('@')[0]
+  return sender.split('@')[0] || sender
 }
 
+export const normalizeMerchant = (rawMerchant = '') => {
+  const template = findSubscriptionTemplate(rawMerchant, rawMerchant)
+  return template
+    ? { canonicalService: template.canonicalService, category: template.category }
+    : { canonicalService: rawMerchant.trim() || 'Unknown service', category: 'Other' }
+}
+
+// parseReceipt classifies a candidate email before extracting any evidence
+// fields (see docs/engineering/SUBSCRIPTION_CLASSIFICATION.md). It always
+// returns an explicit result rather than overloading `null` for multiple
+// meanings:
+//
+//   { classification: 'not_receipt' | 'one_time' | 'ambiguous', evidence: null, classifierResult }
+//   { classification: 'subscription', evidence: <evidence object>, classifierResult }
+//
+// Only 'subscription' carries an `evidence` object; callers must not persist
+// anything for the other three classifications.
 export const parseReceipt = ({ id, subject = '', sender = '', receivedAt, body = '' }) => {
   const rawText = `${subject}\n${sender}\n${body}`
-  if (!RECEIPT_TERMS.test(rawText)) return null
+  if (!RECEIPT_TERMS.test(rawText)) return { classification: 'not_receipt', evidence: null, classifierResult: null }
 
-  const merchantMatch = MERCHANT_RULES.find(({ pattern }) => pattern.test(rawText))
-  const merchant = merchantMatch?.canonicalService || sender.split('@')[0] || 'Unknown service'
+  const classifierResult = classifySubscriptionCandidate({ subject, sender, body })
+  if (classifierResult.classification !== 'subscription') {
+    return { classification: classifierResult.classification, evidence: null, classifierResult }
+  }
+
+  const merchant = classifierResult.canonicalService || parseSenderName(sender) || 'Unknown service'
   const amountMatch = rawText.match(CURRENCY_PATTERN)
   const amount = amountMatch ? Number(amountMatch[1]) : null
   const cadenceMatch = rawText.match(CADENCE_PATTERN)?.[1]?.toLowerCase()
   const cadence = cadenceMatch?.includes('year') || cadenceMatch === 'annual' ? 'yearly' : cadenceMatch ? 'monthly' : null
   const nextRenewal = rawText.match(DATE_PATTERN)?.[1] || null
-  const confidence = confidenceFor({ merchant: merchantMatch, amount, cadence, nextRenewal })
+  const confidence = confidenceFor({ merchant: classifierResult.canonicalService, amount, cadence, nextRenewal })
   const fieldObservations = {
-    canonicalService: { value: merchant, provenance: merchantMatch ? 'confirmed' : 'inferred' },
+    canonicalService: { value: merchant, provenance: classifierResult.canonicalService ? 'confirmed' : 'inferred' },
     amount: { value: amount, provenance: amount === null ? 'inferred' : 'confirmed' },
     cadence: { value: cadence, provenance: cadence ? 'confirmed' : 'inferred' },
     nextRenewal: { value: nextRenewal, provenance: nextRenewal ? 'confirmed' : 'inferred' },
   }
 
-  return createEvidence({
+  const evidence = createEvidence({
     id: `evidence-${id}`,
     type: 'gmail_receipt',
     sourceId: id,
     sourceLabel: 'Gmail receipt',
-    rawMerchant: sender.split('@')[0] || merchant,
+    rawMerchant: parseSenderName(sender) || merchant,
     canonicalService: merchant,
     amount,
     cadence,
@@ -98,7 +126,10 @@ export const parseReceipt = ({ id, subject = '', sender = '', receivedAt, body =
     confidence,
     fieldObservations,
     excerpt: subject,
+    classificationScore: classifierResult.score,
   })
+
+  return { classification: 'subscription', evidence, classifierResult }
 }
 
 export const createSubscriptionRecord = (evidence, overrides = {}) => {

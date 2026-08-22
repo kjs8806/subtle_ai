@@ -150,9 +150,10 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
       let found = 0
       let ambiguous = 0
       for (const message of messages) {
-        const parsed = parseReceipt(message)
-        if (!parsed?.canonicalService || parsed.canonicalService === 'Unknown service' || parsed.amount === null) { ambiguous += 1; continue }
-        const result = await repository.persistParsedEvidence(request.user.id, parsed)
+        const { classification, evidence } = parseReceipt(message)
+        if (classification === 'ambiguous') { ambiguous += 1; continue }
+        if (classification !== 'subscription') continue // not_receipt or one_time: never persisted
+        const result = await repository.persistParsedEvidence(request.user.id, evidence)
         if (result.created) found += 1
       }
       const completed = await repository.completeScan(request.user.id, scan.id, found)

@@ -48,41 +48,55 @@ test('normalizes known merchants and preserves unknown names', () => {
 })
 
 test('parses a receipt with merchant, amount, cadence, and renewal date', () => {
-  const evidence = parseReceipt({
+  const { classification, evidence } = parseReceipt({
     id: 'receipt-1',
     subject: 'Netflix renewal receipt',
     sender: 'billing@netflix.com',
     body: 'Your monthly payment of $22.99 renews Sep 12, 2026.',
   })
 
+  assert.equal(classification, 'subscription')
   assert.equal(evidence.canonicalService, 'Netflix')
   assert.equal(evidence.amount, 22.99)
   assert.equal(evidence.cadence, 'monthly')
   assert.equal(evidence.nextRenewal, 'Sep 12, 2026')
   assert.equal(evidence.confidence.state, 'confirmed')
+  assert.equal(evidence.fieldObservations.canonicalService.provenance, 'confirmed', 'came from a known subscription template')
+  assert.equal(evidence.classificationScore >= 5, true, 'classificationScore is tracked separately from evidence confidence')
+})
+
+test('canonicalService provenance is inferred (not confirmed) for a merchant outside the template catalog', () => {
+  const { evidence } = parseReceipt({
+    id: 'fitness-1',
+    subject: 'Downtown Fitness Club',
+    sender: '"Downtown Fitness Club" <billing@downtownfitness.example>',
+    body: 'Downtown Fitness Club — your monthly membership renews September 1.',
+  })
+
+  assert.equal(evidence.canonicalService, 'Downtown Fitness Club')
+  assert.equal(evidence.fieldObservations.canonicalService.provenance, 'inferred')
 })
 
 test('represents a missing amount as unknown instead of zero', () => {
-  const evidence = parseReceipt({
+  const { classification, evidence } = parseReceipt({
     id: 'receipt-without-amount',
     subject: 'Netflix renewal receipt',
     sender: 'billing@netflix.com',
     body: 'Your monthly plan renews Sep 12, 2026.',
   })
 
+  assert.equal(classification, 'subscription')
   assert.equal(evidence.amount, null)
   assert.equal(evidence.confidence.state, 'inferred')
   assert.equal(createSubscriptionRecord(evidence).currentPrice, null)
 })
 
-test('keeps partial receipt data usable without inventing merchant or billing fields', () => {
-  const evidence = parseReceipt({ id: 'partial-receipt', subject: 'Payment received' })
+test('a generic receipt with no recurrence or one-time signal is ambiguous, not auto-imported', () => {
+  const result = parseReceipt({ id: 'partial-receipt', subject: 'Payment received' })
 
-  assert.equal(evidence.canonicalService, 'Unknown service')
-  assert.equal(evidence.rawMerchant, 'Unknown service')
-  assert.equal(evidence.amount, null)
-  assert.equal(evidence.cadence, null)
-  assert.equal(evidence.nextRenewal, null)
+  assert.equal(result.classification, 'ambiguous')
+  assert.equal(result.evidence, null)
+  assert.equal(result.classifierResult.score, 0)
 })
 
 test('calculates monthly equivalents for annual subscriptions', () => {
@@ -93,7 +107,9 @@ test('calculates monthly equivalents for annual subscriptions', () => {
 })
 
 test('ignores text without receipt terms', () => {
-  assert.equal(parseReceipt({ id: 'message-1', subject: 'Hello', sender: 'friend@example.com', body: 'See you tomorrow.' }), null)
+  const result = parseReceipt({ id: 'message-1', subject: 'Hello', sender: 'friend@example.com', body: 'See you tomorrow.' })
+  assert.equal(result.classification, 'not_receipt')
+  assert.equal(result.evidence, null)
 })
 
 test('detects only increases in price history', () => {
@@ -108,8 +124,8 @@ test('detects only increases in price history', () => {
 })
 
 test('merges repeated detections and keeps the latest observed price', () => {
-  const first = parseReceipt({ id: 'receipt-1', subject: 'Netflix payment receipt', sender: 'billing@netflix.com', body: '$10 monthly' })
-  const second = parseReceipt({ id: 'receipt-2', subject: 'Netflix payment receipt', sender: 'billing@netflix.com', body: '$12 monthly' })
+  const first = parseReceipt({ id: 'receipt-1', subject: 'Netflix payment receipt', sender: 'billing@netflix.com', body: '$10 monthly' }).evidence
+  const second = parseReceipt({ id: 'receipt-2', subject: 'Netflix payment receipt', sender: 'billing@netflix.com', body: '$12 monthly' }).evidence
   const records = mergeSubscriptionDetections([
     createSubscriptionRecord(first),
     createSubscriptionRecord(second),
@@ -121,8 +137,8 @@ test('merges repeated detections and keeps the latest observed price', () => {
 })
 
 test('links recommendation evidence for known overlapping services', () => {
-  const dropboxEvidence = parseReceipt({ id: 'dropbox-1', subject: 'Dropbox payment receipt', sender: 'billing@dropbox.com', body: '$10 monthly' })
-  const googleEvidence = parseReceipt({ id: 'google-1', subject: 'Google One payment receipt', sender: 'billing@google.com', body: '$12 monthly' })
+  const dropboxEvidence = parseReceipt({ id: 'dropbox-1', subject: 'Dropbox payment receipt', sender: 'billing@dropbox.com', body: '$10 monthly' }).evidence
+  const googleEvidence = parseReceipt({ id: 'google-1', subject: 'Google One payment receipt', sender: 'billing@google.com', body: '$12 monthly' }).evidence
   const dropbox = createSubscriptionRecord(dropboxEvidence)
   const google = createSubscriptionRecord(googleEvidence)
   const recommendations = buildRecommendations(dropbox, [google])
@@ -132,8 +148,8 @@ test('links recommendation evidence for known overlapping services', () => {
 })
 
 test('does not infer overlap from category alone', () => {
-  const netflix = createSubscriptionRecord(parseReceipt({ id: 'netflix-1', subject: 'Netflix payment receipt', sender: 'billing@netflix.com', body: '$10 monthly' }))
-  const spotify = createSubscriptionRecord(parseReceipt({ id: 'spotify-1', subject: 'Spotify payment receipt', sender: 'billing@spotify.com', body: '$12 monthly' }))
+  const netflix = createSubscriptionRecord(parseReceipt({ id: 'netflix-1', subject: 'Netflix payment receipt', sender: 'billing@netflix.com', body: '$10 monthly' }).evidence)
+  const spotify = createSubscriptionRecord(parseReceipt({ id: 'spotify-1', subject: 'Spotify payment receipt', sender: 'billing@spotify.com', body: '$12 monthly' }).evidence)
 
   assert.deepEqual(buildRecommendations(netflix, [spotify]), [])
 })

@@ -95,6 +95,29 @@ test('concurrent scans for the same connection are rejected with a conflict', as
   assert.equal(subscriptions.json().subscriptions.length, 1)
 })
 
+test('scan persists only subscription-classified receipts from a mixed mailbox', async () => {
+  const messages = [
+    { id: 'netflix-1', subject: 'Netflix renewal receipt', sender: 'billing@netflix.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your monthly payment of $22.99 renews Sep 12, 2026.' },
+    { id: 'uber-1', subject: 'Your Uber trip receipt', sender: 'receipts@uber.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Thanks for riding with Uber. Trip fare $18.42.' },
+    { id: 'lyft-1', subject: 'Your Lyft ride receipt', sender: 'no-reply@lyft.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your Lyft ride receipt. Total $14.71.' },
+    { id: 'amazon-1', subject: 'Your Amazon order has shipped', sender: 'ship-confirm@amazon.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your Amazon order has shipped.' },
+    { id: 'generic-1', subject: 'Payment receipt', sender: 'billing@example.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your payment was received.' },
+  ]
+  const provider = { ...createFakeGmailProvider(), listCandidateMessages: async () => messages }
+  const app = buildApp({ provider })
+  const session = await authorize(app)
+  const headers = { cookie: `subtle_session=${session}` }
+
+  const scan = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
+  assert.equal(scan.statusCode, 200)
+  assert.equal(scan.json().found, 1, 'only the Netflix renewal should be persisted')
+  assert.equal(scan.json().ambiguous, 1, 'the generic payment-receipt message is ambiguous, not one_time')
+
+  const subscriptions = await app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })
+  assert.equal(subscriptions.json().subscriptions.length, 1)
+  assert.equal(subscriptions.json().subscriptions[0].canonicalService, 'Netflix')
+})
+
 test('disconnect prevents future scans', async () => {
   const app = buildApp()
   const session = await authorize(app)
