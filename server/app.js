@@ -10,7 +10,13 @@ import { SESSION_COOKIE, createSessionManager } from './security/session.js'
 import { createTokenVault } from './security/tokenVault.js'
 import { createRateLimiter, enforceSameOrigin, securityHeaders } from './security/http.js'
 import { parseReceipt } from '../src/services/receiptPipeline.js'
+import { RenewalDerivationService } from '../src/services/renewalDerivationService.js'
 import { createRuntime } from './bootstrap.js'
+
+// FEATURE-003: integer cents (see PriceChangeService/AnnualImpactCalculator)
+// are an internal-only representation to keep the money math exact - the
+// wire format is always a plain decimal number, e.g. 3.00, not 300.
+const centsToAmount = (cents) => (typeof cents === 'number' ? Math.round(cents) / 100 : null)
 
 const userId = 'mock-user'
 
@@ -225,6 +231,66 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
     return repository.disconnectConnection(request.user.id)
   })
   app.get('/api/v1/subscriptions', { preHandler: requireUser }, async (request) => ({ subscriptions: await repository.listSubscriptions(request.user.id) }))
+
+  // FEATURE-003: Price Change & Renewal Intelligence. This handler only
+  // orchestrates - it fetches material price-change events (repository,
+  // already join-filtered to exclude rejected subscriptions) and active
+  // subscriptions (listSubscriptions, which already excludes rejected ones),
+  // then asks RenewalDerivationService to derive each subscription's renewal
+  // bucket at read time. All threshold/bucket/materiality business rules
+  // live in the domain services and repository, never here. Scoped to
+  // request.user.id only, same as every other endpoint in this file.
+  app.get('/api/v1/subscriptions/attention', { preHandler: requireUser }, async (request) => {
+    const [priceChangeEvents, subscriptions] = await Promise.all([
+      repository.listMaterialPriceChangeEvents(request.user.id),
+      repository.listSubscriptions(request.user.id),
+    ])
+    const nowDate = new Date(now())
+
+    const priceItems = priceChangeEvents.map((event) => ({
+      type: 'price_increase',
+      subscriptionId: event.subscriptionId,
+      canonicalService: event.canonicalService,
+      currency: event.currency,
+      previousPrice: centsToAmount(event.previousPriceCents),
+      currentPrice: centsToAmount(event.currentPriceCents),
+      cadence: event.billingCycle,
+      perPeriodIncrease: centsToAmount(event.currentPriceCents - event.previousPriceCents),
+      annualizedIncrease: centsToAmount(event.annualizedDeltaCents),
+      evidenceId: event.evidenceId,
+      ruleVersion: event.ruleVersion,
+      detectedAt: event.detectedAt,
+      priority: 'normal', // Product tier 2: material price increase
+    }))
+
+    const renewalItems = []
+    for (const subscription of subscriptions) {
+      const derived = RenewalDerivationService.derive({ subscription, billingHistory: subscription.billingHistory, now: nowDate })
+      if (derived.certainty === 'unknown' || !derived.bucket) continue // >30 days away, or no supported prediction: Subscription Detail only
+      renewalItems.push({
+        type: 'renewal',
+        subscriptionId: subscription.id,
+        canonicalService: subscription.canonicalService,
+        currency: subscription.currency,
+        renewalDate: derived.renewalDate,
+        bucket: derived.bucket,
+        certainty: derived.certainty,
+        amount: subscription.currentPrice,
+        cadence: subscription.billingCycle,
+        // Product tier 1: renewal within 7 days (soon/due_today) is higher
+        // attention than an 8-30 day (upcoming) renewal.
+        priority: derived.bucket === 'upcoming' ? 'normal' : 'high',
+      })
+    }
+
+    // Fixed 3-tier priority per the Product Owner (no further ranking - that
+    // belongs to a future feature): 1) renewal within 7 days, 2) material
+    // price increase, 3) renewal 8-30 days. Array.sort is stable, so ties
+    // keep their existing relative order.
+    const tierOf = (item) => (item.type === 'renewal' && item.priority === 'high' ? 1 : item.type === 'price_increase' ? 2 : 3)
+    const items = [...renewalItems, ...priceItems].sort((a, b) => tierOf(a) - tierOf(b))
+    return { items }
+  })
   app.get('/api/v1/subscriptions/:subscriptionId', { preHandler: requireUser }, async (request, reply) => {
     const subscription = await repository.getSubscription(request.user.id, request.params.subscriptionId)
     if (!subscription) return reply.code(404).send({ error: { code: 'not_found', message: 'Subscription not found' } })
