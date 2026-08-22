@@ -36,8 +36,8 @@ summary:hover{color:var(--coral)}
 
 /* v2 — palette refinement and a radius/elevation system, superseding DES-010 (see DES-014) */
 :root{--ink:#1f2924;--ink-soft:#33423c;--muted:#5c6b64;--paper:#f7f8f3;--sage:#e3ebdd;--sage-deep:#b9c9ab;--coral:#c15f45;--coral-ink:#9c4530;--coral-soft:#f3e2da;--line:#dde3d6;--radius-xs:6px;--radius-sm:10px;--radius-md:16px;--radius-lg:22px}
-.brand-mark,.overview-header h1,.section-heading h2,.upcoming h2,.dialog h2{font-family:'Fraunces',serif;letter-spacing:-.01em;font-optical-sizing:auto}
-.brand-mark{font-weight:600}
+.overview-header h1,.section-heading h2,.upcoming h2,.dialog h2{font-family:'Fraunces',serif;letter-spacing:-.01em;font-optical-sizing:auto}
+.brand-mark{display:block;flex-shrink:0;background:transparent;border-radius:0}
 .action-label,.renewals em,.subscription-name em,.impact{color:var(--coral-ink)}
 .dialog-backdrop{background:#12181599}
 .spending-summary>div{border-top-color:var(--sage-deep)}

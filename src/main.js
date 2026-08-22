@@ -12,7 +12,8 @@ const APP_CONFIG = { name: 'Subtle AI', tagline: 'your AI subscription optimizer
 const subscriptions = demoSubscriptions.map(item => ({ ...item }))
 createPipelineRecords(subscriptions).forEach((record, index) => { subscriptions[index].pipelineRecord = record })
 const money = value => typeof value === 'number' ? `$${value.toFixed(2)}` : 'Price not provided'
-const brand = `<a class="brand" href="#overview" aria-label="${APP_CONFIG.name} home"><span class="brand-mark" aria-hidden="true">s</span><span>${APP_CONFIG.name}</span></a>`
+const brandMark = `<svg class="brand-mark" viewBox="0 0 192 192" width="32" height="32" aria-hidden="true"><rect width="192" height="192" rx="44" fill="var(--ink)"/><path d="M130 64 A36 36 0 1 0 96 100 A36 36 0 1 1 62 136" fill="none" stroke="var(--paper)" stroke-width="22" stroke-linecap="round"/><circle cx="130" cy="64" r="10" fill="var(--coral)"/></svg>`
+const brand = `<a class="brand" href="#overview" aria-label="${APP_CONFIG.name} home">${brandMark}<span>${APP_CONFIG.name}</span></a>`
 
 document.title = `${APP_CONFIG.name} — ${APP_CONFIG.tagline}`
 const app = document.querySelector('#app')
