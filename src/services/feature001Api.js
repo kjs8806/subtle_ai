@@ -33,4 +33,9 @@ export const feature001Api = {
   disconnectGmail: () => request('/api/v1/sources/gmail/disconnect', { method: 'POST' }),
   listSubscriptions: () => request('/api/v1/subscriptions'),
   getSubscription: (id) => request(`/api/v1/subscriptions/${encodeURIComponent(id)}`),
+  correctSubscription: (id, field, value) => request(`/api/v1/subscriptions/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ field, value }) }),
+  rejectSubscription: (id) => request(`/api/v1/subscriptions/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify({}) }),
+  listCandidates: () => request('/api/v1/subscriptions/candidates'),
+  confirmCandidate: (id, overrides = {}) => request(`/api/v1/subscriptions/candidates/${encodeURIComponent(id)}/confirm`, { method: 'POST', body: JSON.stringify(overrides) }),
+  rejectCandidate: (id) => request(`/api/v1/subscriptions/candidates/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify({}) }),
 }

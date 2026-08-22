@@ -5,8 +5,8 @@ import { monthlySpendFor } from './data/subscriptionModel.js'
 import { createDialogController, createLiveRegion } from './ui/accessibility.js'
 import { gmailDisclosureMarkup } from './ui/gmailDisclosure.js'
 import { initializeNavigation, navigationMarkup } from './ui/navigation.js'
-import { overviewMarkup, subscriptionRow } from './ui/overview.js'
-import { detailMarkup, renderDetail } from './ui/subscriptionDetail.js'
+import { candidateRow, overviewMarkup, subscriptionRow } from './ui/overview.js'
+import { detailMarkup, rejectConfirmMarkup, renderDetail } from './ui/subscriptionDetail.js'
 import { loadingMarkup, sessionErrorMarkup, signedOutMarkup } from './ui/signedOut.js'
 
 const APP_CONFIG = { name: 'Subtle AI', tagline: 'your AI subscription optimizer' }
@@ -89,27 +89,31 @@ const renderAuthenticated = async (user, gmailError) => {
   // a Gmail-triggered refresh must never make them disappear.
   let manualSubscriptions = []
   let backendItems = []
+  let candidates = []
   let gmailSource = { status: 'not_connected', scanStatus: 'idle' }
   let gmailSourceUnavailable = false
 
-  const [subsResult, sourceResult] = await Promise.allSettled([
+  const [subsResult, sourceResult, candidatesResult] = await Promise.allSettled([
     feature001Api.listSubscriptions(),
     feature001Api.getGmailSource(),
+    feature001Api.listCandidates(),
   ])
   if (subsResult.status === 'fulfilled') backendItems = (subsResult.value.subscriptions || []).map(toDisplayItem)
   if (sourceResult.status === 'fulfilled') gmailSource = sourceResult.value
   else gmailSourceUnavailable = true
+  if (candidatesResult.status === 'fulfilled') candidates = candidatesResult.value.candidates || []
 
   const greeting = user?.name ? `Good morning, ${user.name.split(' ')[0]}.` : 'Good morning.'
   const dateLabel = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
   const allItems = () => [...manualSubscriptions, ...backendItems]
 
-  app.innerHTML = `<main class="app-shell">${navigationMarkup(brand)}${overviewMarkup({ subscriptions: allItems(), actions: [], monthlySpend: monthlySpendFor(allItems()), upcoming: deriveUpcoming(allItems()), greeting, dateLabel })}<footer class="app-footer wrap">${brand}<div><span>Private by design</span><button class="quiet-button" data-sign-out type="button">Sign out</button></div></footer></main>${gmailDisclosureMarkup()}${detailMarkup()}${addDialogMarkup}`
+  app.innerHTML = `<main class="app-shell">${navigationMarkup(brand)}${overviewMarkup({ subscriptions: allItems(), actions: [], monthlySpend: monthlySpendFor(allItems()), upcoming: deriveUpcoming(allItems()), candidates, greeting, dateLabel })}<footer class="app-footer wrap">${brand}<div><span>Private by design</span><button class="quiet-button" data-sign-out type="button">Sign out</button></div></footer></main>${gmailDisclosureMarkup()}${detailMarkup()}${rejectConfirmMarkup()}${addDialogMarkup}`
 
   initializeNavigation(app)
   const detailRoot = document.querySelector('[data-detail]'); const detailDialog = createDialogController(detailRoot)
   const gmailRoot = document.querySelector('[data-gmail-dialog]'); const gmailDialog = createDialogController(gmailRoot)
   const addRoot = document.querySelector('[data-add-dialog]'); const addDialog = createDialogController(addRoot)
+  const rejectRoot = document.querySelector('[data-reject-dialog]'); const rejectDialog = createDialogController(rejectRoot)
   const status = document.querySelector('[data-gmail-status]'); const message = document.querySelector('[data-gmail-message]')
   const gmailButton = document.querySelector('[data-gmail-action]'); const disconnectButton = document.querySelector('[data-gmail-disconnect]')
   const discovery = document.querySelector('[data-discovery-result]')
@@ -142,6 +146,95 @@ const renderAuthenticated = async (user, gmailError) => {
     document.querySelector('.renewals').innerHTML = upcoming.length ? upcoming.map(item => `<p><strong>${item.name}</strong><span>${item.date}</span><b>${item.amount}</b></p>`).join('') : '<p class="empty-state">No upcoming renewals detected yet.</p>'
   }
   wireRows(document)
+
+  // FEATURE-002: ambiguous-candidate review. Confirm/reject act on the whole
+  // pending candidate, not a subscription (there is no subscription yet), and
+  // both remove the candidate from the pending list either way.
+  const renderCandidates = () => {
+    const section = document.querySelector('#candidates-review')
+    if (!section) return
+    section.querySelector('.eyebrow').textContent = `${candidates.length} to review`
+    section.querySelector('.candidate-list').innerHTML = candidates.length ? candidates.map(candidateRow).join('') : '<p class="empty-state">Nothing to review right now.</p>'
+  }
+  document.querySelector('.candidate-list').addEventListener('click', async (event) => {
+    const confirmButton = event.target.closest('[data-confirm-candidate]')
+    const rejectButton = event.target.closest('[data-reject-candidate]')
+    const button = confirmButton || rejectButton
+    if (!button) return
+    const candidateId = event.target.closest('[data-candidate-id]')?.dataset.candidateId
+    if (!candidateId) return
+    button.disabled = true
+    try {
+      if (confirmButton) { await feature001Api.confirmCandidate(candidateId); live.announce('Subscription confirmed.') }
+      else { await feature001Api.rejectCandidate(candidateId); live.announce('Marked as not a subscription.') }
+      candidates = candidates.filter(candidate => candidate.id !== candidateId)
+      renderCandidates()
+      const { subscriptions: rawList } = await feature001Api.listSubscriptions()
+      backendItems = (rawList || []).map(toDisplayItem)
+      renderList()
+    } catch {
+      button.disabled = false
+      live.announce("That couldn't be completed. Please try again.")
+    }
+  })
+
+  // FEATURE-002: corrections ("This looks wrong") and "Not a subscription"
+  // rejection, both scoped to the subscription id the detail dialog is
+  // currently showing (renderDetail stamps it onto detailRoot.dataset).
+  const coerceCorrectionValue = (field, raw) => {
+    const trimmed = typeof raw === 'string' ? raw.trim() : raw
+    if (field === 'currentPrice') { const parsed = Number(trimmed); return Number.isFinite(parsed) ? parsed : trimmed }
+    if (field === 'currency') return typeof trimmed === 'string' ? trimmed.toUpperCase() : trimmed
+    return trimmed
+  }
+  const applyUpdatedSubscription = (updated) => {
+    backendItems = backendItems.map(item => item.remoteId === updated.id ? toDisplayItem(updated) : item)
+    renderList()
+  }
+  detailRoot.querySelector('[data-correction-form]').addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const subscriptionId = detailRoot.dataset.subscriptionId
+    const errorEl = detailRoot.querySelector('[data-correction-error]')
+    errorEl.hidden = true
+    if (!subscriptionId) return
+    const field = detailRoot.querySelector('[data-correction-field]').value
+    const rawValue = detailRoot.querySelector('[data-correction-value]').value
+    if (!rawValue.trim()) { errorEl.hidden = false; errorEl.textContent = 'Enter a corrected value.'; return }
+    const submitButton = event.currentTarget.querySelector('button[type="submit"]')
+    submitButton.disabled = true
+    try {
+      const updated = await feature001Api.correctSubscription(subscriptionId, field, coerceCorrectionValue(field, rawValue))
+      applyUpdatedSubscription(updated)
+      renderDetail(detailRoot, toDisplayItem(updated), detailDialog)
+      live.announce('Correction saved.')
+    } catch (error) {
+      errorEl.hidden = false
+      errorEl.textContent = error.message || "That value couldn't be saved. Please try again."
+    } finally {
+      submitButton.disabled = false
+    }
+  })
+  detailRoot.querySelector('[data-open-reject]').addEventListener('click', (event) => {
+    rejectRoot.querySelector('[data-reject-name]').textContent = detailRoot.querySelector('#detail-title').textContent
+    rejectDialog.open(event.currentTarget)
+  })
+  rejectRoot.querySelector('[data-confirm-reject]').addEventListener('click', async (event) => {
+    const subscriptionId = detailRoot.dataset.subscriptionId
+    if (!subscriptionId) return
+    event.currentTarget.disabled = true
+    try {
+      await feature001Api.rejectSubscription(subscriptionId)
+      backendItems = backendItems.filter(item => item.remoteId !== subscriptionId)
+      renderList()
+      rejectDialog.close()
+      detailDialog.close()
+      live.announce('No longer counted as an active subscription.')
+    } catch {
+      live.announce("That couldn't be completed. Please try again.")
+    } finally {
+      event.currentTarget.disabled = false
+    }
+  })
 
   document.querySelector('[data-sign-out]').addEventListener('click', async (event) => {
     event.currentTarget.disabled = true
@@ -202,6 +295,8 @@ const renderAuthenticated = async (user, gmailError) => {
       backendItems = (rawList || []).map(toDisplayItem)
       const newIds = new Set(allItems().filter(item => !previousIds.has(item.id)).map(item => item.id))
       renderList({ newIds })
+      try { candidates = (await feature001Api.listCandidates()).candidates || [] } catch { /* the review section just keeps showing its last known state */ }
+      renderCandidates()
       await refreshGmailSource()
       const copy = result.found ? `${result.found} subscription${result.found === 1 ? '' : 's'} found.` : 'No qualifying subscription receipts found.'
       live.announce(copy)

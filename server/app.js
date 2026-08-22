@@ -14,6 +14,19 @@ import { createRuntime } from './bootstrap.js'
 
 const userId = 'mock-user'
 
+// FEATURE-002: the six correctable fields, keyed by the camelCase name the
+// API/UI uses (matching the rest of the subscription payload's casing) and
+// mapped to the snake_case field name the repository/DB layer expects (see
+// migrations/008_feature_002_corrections.sql's subscription_corrections CHECK).
+const CORRECTION_FIELD_MAP = { canonicalService: 'canonical_service', plan: 'plan', currentPrice: 'current_price', currency: 'currency', billingCycle: 'billing_cycle', nextRenewal: 'next_renewal' }
+const invalidRequest = (message) => { const error = new Error(message); error.statusCode = 400; error.code = 'invalid_request'; return error }
+const validateCorrectionValue = (apiField, value) => {
+  if (apiField === 'currentPrice') { if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw invalidRequest('currentPrice must be a non-negative number') }
+  else if (apiField === 'currency') { if (value !== 'USD' && value !== 'CAD') throw invalidRequest('currency must be USD or CAD') }
+  else if (apiField === 'nextRenewal') { if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) throw invalidRequest('nextRenewal must be a valid date string') }
+  else { if (typeof value !== 'string' || !value.trim()) throw invalidRequest(`${apiField} must be a non-empty string`) }
+}
+
 export const buildApp = ({ repository = createMemoryRepository(), provider = config.gmailProvider === 'google' ? createGoogleProvider({ clientId: config.googleClientId, clientSecret: config.googleClientSecret, oidcRedirectUri: config.googleOidcRedirectUri, gmailRedirectUri: config.googleGmailRedirectUri }) : createFakeGmailProvider(), gmailProvider = config.gmailProvider, sessions = createSessionManager(), tokenVault = config.tokenEncryptionKey ? createTokenVault({ secret: config.tokenEncryptionKey }) : null, production = config.production, publicOrigin = config.publicOrigin, now = () => Date.now() } = {}) => {
   // Real Google auth is always served over HTTPS (Codespaces' forwarded-port proxy
   // included), regardless of NODE_ENV, so cookie/origin hardening must not be gated
@@ -172,8 +185,16 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
       let found = 0
       let ambiguous = 0
       for (const message of messages) {
-        const { classification, evidence } = parseReceipt(message)
-        if (classification === 'ambiguous') { ambiguous += 1; continue }
+        const { classification, evidence, candidate } = parseReceipt(message)
+        if (classification === 'ambiguous') {
+          // FEATURE-002: an ambiguous message is never auto-imported, but it is
+          // no longer silently discarded - it is persisted as a pending
+          // candidate for the user to review, confirm, or reject. It never
+          // counts toward `found` and never appears as an active subscription.
+          if (candidate && repository.persistCandidate) await repository.persistCandidate(request.user.id, candidate)
+          ambiguous += 1
+          continue
+        }
         if (classification !== 'subscription') continue // not_receipt or one_time: never persisted
         const result = await repository.persistParsedEvidence(request.user.id, evidence)
         if (result.created) found += 1
@@ -208,6 +229,40 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
     const subscription = await repository.getSubscription(request.user.id, request.params.subscriptionId)
     if (!subscription) return reply.code(404).send({ error: { code: 'not_found', message: 'Subscription not found' } })
     return subscription
+  })
+
+  // FEATURE-002: corrections, rejection, and ambiguous-candidate review.
+  // Every route below is scoped to request.user.id (set by the session
+  // preHandler above) - never to a client-supplied id - and looks the target
+  // record up under that id first, returning 404 for anything not owned by
+  // the caller, matching the existing GET /subscriptions/:id convention.
+  app.patch('/api/v1/subscriptions/:subscriptionId', { preHandler: requireUser }, async (request, reply) => {
+    const { field, value } = request.body || {}
+    if (typeof field !== 'string' || !(field in CORRECTION_FIELD_MAP)) return reply.code(400).send({ error: { code: 'invalid_request', message: 'field must be one of canonicalService, plan, currentPrice, currency, billingCycle, nextRenewal' } })
+    if (value === undefined) return reply.code(400).send({ error: { code: 'invalid_request', message: 'value is required' } })
+    validateCorrectionValue(field, value)
+    const result = await repository.applyCorrection(request.user.id, request.params.subscriptionId, CORRECTION_FIELD_MAP[field], value)
+    if (!result) return reply.code(404).send({ error: { code: 'not_found', message: 'Subscription not found' } })
+    return result.subscription
+  })
+  app.post('/api/v1/subscriptions/:subscriptionId/reject', { preHandler: requireUser }, async (request, reply) => {
+    const subscription = await repository.rejectSubscription(request.user.id, request.params.subscriptionId)
+    if (!subscription) return reply.code(404).send({ error: { code: 'not_found', message: 'Subscription not found' } })
+    return subscription
+  })
+  app.get('/api/v1/subscriptions/candidates', { preHandler: requireUser }, async (request) => ({ candidates: await repository.listCandidates(request.user.id) }))
+  app.post('/api/v1/subscriptions/candidates/:candidateId/confirm', { preHandler: requireUser }, async (request, reply) => {
+    const overrides = request.body || {}
+    const result = await repository.confirmCandidate(request.user.id, request.params.candidateId, overrides)
+    if (!result) return reply.code(404).send({ error: { code: 'not_found', message: 'Candidate not found' } })
+    if (result.error === 'invalid_state') return reply.code(409).send({ error: { code: 'invalid_candidate_state', message: 'Candidate is not pending' } })
+    return result.subscription
+  })
+  app.post('/api/v1/subscriptions/candidates/:candidateId/reject', { preHandler: requireUser }, async (request, reply) => {
+    const result = await repository.rejectCandidate(request.user.id, request.params.candidateId)
+    if (!result) return reply.code(404).send({ error: { code: 'not_found', message: 'Candidate not found' } })
+    if (result.error === 'invalid_state') return reply.code(409).send({ error: { code: 'invalid_candidate_state', message: 'Candidate is already confirmed' } })
+    return { status: 'rejected' }
   })
   return app
 }
