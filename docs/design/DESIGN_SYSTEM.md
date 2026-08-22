@@ -9,9 +9,9 @@ This document records the current system and approved extensions; it does not au
 
 ## Foundations
 
-### Brand mark (DES-015)
+### Brand mark (DES-017)
 
-One SVG mark (a bold rounded "S" stroke with a single coral accent dot, drawn in `src/main.js`'s `brandMark` and mirrored in `public/icon.svg`) is the single source of the logo — same shape at favicon, in-app nav/footer, and installed-app-icon size. Do not reintroduce a font-rendered glyph as the mark.
+One SVG mark — a `--radius-md`-style rounded-square badge filled `--coral`, with a lowercase italic Georgia "s" in `--paper` (no accent dot) — is the single source of the logo. It is defined once in `src/main.js`'s `brandMark` and mirrored exactly in `public/icon.svg`, so the favicon, the in-app nav/footer mark, and the installed-app-icon are pixel-identical. The glyph is rendered as SVG `<text>` in the safe system font Georgia rather than the page's loaded webfonts (Playfair Display, Space Grotesk), because `public/icon.svg` is loaded standalone (favicon, OS home-screen icon, link previews) with no access to the page's `@import` — a webfont there would silently fall back and could visually diverge from the in-app copy.
 
 ### Type (DES-014, revised DES-016)
 
