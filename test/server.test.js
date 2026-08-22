@@ -65,21 +65,25 @@ test('rejects protected routes without a session', async () => {
   assert.equal(response.json().error.code, 'unauthenticated')
 })
 
-test('mock authorization and scan create one evidence-backed subscription idempotently', async () => {
+test('mock authorization and scan create evidence-backed subscriptions idempotently', async () => {
   const app = buildApp()
   const session = await authorize(app)
   const headers = { cookie: `subtle_session=${session}` }
   const source = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
   assert.equal(source.json().status, 'connected')
 
+  // The default mock scenario (server/gmail/fakeProvider.js) models a small
+  // multi-service inbox - one receipt each for Netflix, Spotify, Dropbox,
+  // Disney+, YouTube Premium, and ChatGPT Plus - so a fresh mock sign-in has
+  // more than a single row to show.
   const firstScan = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
   assert.equal(firstScan.statusCode, 200)
-  assert.equal(firstScan.json().found, 1)
+  assert.equal(firstScan.json().found, 6)
   const secondScan = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
   assert.equal(secondScan.json().found, 0)
 
   const subscriptions = await app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })
-  assert.equal(subscriptions.json().subscriptions.length, 1)
+  assert.equal(subscriptions.json().subscriptions.length, 6)
   const detail = await app.inject({ method: 'GET', url: `/api/v1/subscriptions/${subscriptions.json().subscriptions[0].id}`, headers })
   assert.equal(detail.json().evidence.length, 1)
   assert.equal(detail.json().fieldObservations.find(({ field }) => field === 'amount').provenance, 'confirmed')
@@ -101,7 +105,7 @@ test('concurrent scans for the same connection are rejected with a conflict', as
   assert.equal(conflict.json().error.code, 'scan_already_running')
 
   const subscriptions = await app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })
-  assert.equal(subscriptions.json().subscriptions.length, 1)
+  assert.equal(subscriptions.json().subscriptions.length, 6)
 })
 
 test('scan persists only subscription-classified receipts from a mixed mailbox', async () => {

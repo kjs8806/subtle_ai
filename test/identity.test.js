@@ -212,7 +212,10 @@ test('account isolation holds when ownership is keyed by internal UUID', async (
   assert.equal(scan.statusCode, 200)
 
   const subsA = await app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers: userA.headers })
-  assert.equal(subsA.json().subscriptions.length, 1)
+  // The default mock scan scenario (server/gmail/fakeProvider.js) produces
+  // six receipts (Netflix, Spotify, Dropbox, Disney+, YouTube Premium,
+  // ChatGPT Plus), not one.
+  assert.equal(subsA.json().subscriptions.length, 6)
   const subsB = await app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers: userB.headers })
   assert.equal(subsB.json().subscriptions.length, 0)
 
@@ -506,11 +509,11 @@ test('SEC-006: a failed disconnect purges neither the subscriptions nor the evid
   const scan = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers: { ...headers, ...sameOrigin } })
   assert.equal(scan.statusCode, 200)
   const before = await app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })
-  assert.equal(before.json().subscriptions.length, 1)
+  assert.equal(before.json().subscriptions.length, 6)
 
   const response = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/disconnect', headers: { ...headers, ...sameOrigin } })
   assert.notEqual(response.statusCode, 200)
 
   const after = await app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })
-  assert.equal(after.json().subscriptions.length, 1, 'evidence-backed subscriptions must survive a failed disconnect')
+  assert.equal(after.json().subscriptions.length, 6, 'evidence-backed subscriptions must survive a failed disconnect')
 })

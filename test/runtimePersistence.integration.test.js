@@ -103,10 +103,13 @@ integration('server runtime persists through restart, isolates accounts, purges 
 
     const scan = await runtimeA.app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
     assert.equal(scan.statusCode, 200)
-    assert.equal(scan.json().found, 1)
+    // The default mock scan scenario (server/gmail/fakeProvider.js) produces
+    // six receipts (Netflix, Spotify, Dropbox, Disney+, YouTube Premium,
+    // ChatGPT Plus), not one.
+    assert.equal(scan.json().found, 6)
 
     const subs = await runtimeA.app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })
-    assert.equal(subs.json().subscriptions.length, 1)
+    assert.equal(subs.json().subscriptions.length, 6)
     assert.equal(subs.json().subscriptions[0].currency, 'USD')
     const detail = await runtimeA.app.inject({ method: 'GET', url: `/api/v1/subscriptions/${subs.json().subscriptions[0].id}`, headers })
     assert.equal(detail.json().evidence.length, 1)
@@ -133,7 +136,7 @@ integration('server runtime persists through restart, isolates accounts, purges 
     userIdA = userId
 
     const subs = await runtimeB.app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })
-    assert.equal(subs.json().subscriptions.length, 2)
+    assert.equal(subs.json().subscriptions.length, 7, 'six Gmail-derived plus the one seeded manual subscription')
     const gmailSub = subs.json().subscriptions.find((s) => s.source === 'Gmail receipt')
     assert.ok(gmailSub)
     assert.equal(gmailSub.currency, 'USD', 'currency survives the restart')
@@ -174,7 +177,7 @@ integration('server runtime persists through restart, isolates accounts, purges 
     const { headers: headersD } = await authenticate(runtimeD.app, testUsers.idempotency)
     await runtimeD.app.inject({ method: 'POST', url: '/api/v1/sources/gmail/authorize', headers: headersD })
     const firstScan = await runtimeD.app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers: headersD })
-    assert.equal(firstScan.json().found, 1)
+    assert.equal(firstScan.json().found, 6)
     await runtimeD.close()
 
     const runtimeE = await createRuntime(buildApp, settings, { provider: createTestProvider() })
@@ -184,7 +187,7 @@ integration('server runtime persists through restart, isolates accounts, purges 
     assert.equal(secondScan.json().found, 0)
 
     const subs = await runtimeE.app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers: headersE })
-    assert.equal(subs.json().subscriptions.length, 1)
+    assert.equal(subs.json().subscriptions.length, 6)
     assert.equal(subs.json().subscriptions[0].billingHistory.length, 1)
     assert.equal(subs.json().subscriptions[0].evidence.length, 1)
     await runtimeE.close()
