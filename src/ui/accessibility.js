@@ -12,8 +12,8 @@ export const createDialogController = (backdrop) => {
   let trigger = null
   const dialog = backdrop.querySelector('[role="dialog"]')
   const focusable = () => [...dialog.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])')]
-  const close = () => { backdrop.hidden = true; trigger?.focus(); trigger = null }
-  const open = (opener) => { trigger = opener || document.activeElement; backdrop.hidden = false; focusable()[0]?.focus() }
+  const close = () => { backdrop.classList.remove('is-open'); backdrop.hidden = true; trigger?.focus(); trigger = null }
+  const open = (opener) => { trigger = opener || document.activeElement; backdrop.hidden = false; requestAnimationFrame(() => backdrop.classList.add('is-open')); focusable()[0]?.focus() }
   backdrop.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') { event.preventDefault(); close(); return }
     if (event.key !== 'Tab') return

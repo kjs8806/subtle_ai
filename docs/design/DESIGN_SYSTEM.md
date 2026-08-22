@@ -95,6 +95,14 @@ Confidence complements provenance; it never converts an inference into a fact. P
 - Motion respects reduced-motion preferences.
 - State, provenance, and confidence are understandable without color.
 
+## Interaction and depth (DES-013)
+
+- Buttons, subscription rows, action cards, and the mobile menu all carry hover/active states; primary actions lift slightly on hover via `--shadow-sm`/`--shadow-md`/`--shadow-lg`.
+- The global nav is sticky and stays opaque above scrolling content; the active link shows a coral underline.
+- Dialogs fade and settle in on open (skipped entirely under `prefers-reduced-motion`, consistent with the existing reduced-motion rule).
+- The Gmail source status carries a small state dot (muted/amber-pulsing/green) alongside its text label — never color alone.
+- `.empty-state` (previously unstyled) now matches the card system with a dashed border.
+
 ## Known gaps
 
 - Focus trapping/restoration and live announcements require implementation verification.

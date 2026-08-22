@@ -47,7 +47,7 @@ addRoot.querySelector('form').addEventListener('submit', event => {
 })
 
 const setGmailState = (state, copy, action = 'connect') => {
-  status.textContent = state; message.textContent = copy; gmailButton.dataset.gmailAction = action
+  status.textContent = state; status.dataset.state = state.toLowerCase().replace(/\s+/g, '-'); message.textContent = copy; gmailButton.dataset.gmailAction = action
   gmailButton.textContent = action === 'scan' ? 'Scan receipts' : 'Find subscriptions from receipts'
 }
 const addDiscovered = records => records.map(record => {

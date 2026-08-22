@@ -19,5 +19,6 @@
 | DES-010 | Accepted | Retain responsive installable PWA delivery and the editorial/calm visual language. | Extends the current experience without an unapproved redesign. | [Design system](DESIGN_SYSTEM.md) | 2026-08-20 |
 | DES-011 | Accepted | Use `APP_CONFIG.name` for visible branding. | Keeps the brand easy to change. | [FEATURE-001](../product/features/FEATURE-001.md) | 2026-08-20 |
 | DES-012 | Accepted | Never fabricate progress, counts, timestamps, confidence, or success. | Feedback must remain trustworthy. | [FEATURE-001](../product/features/FEATURE-001.md) | 2026-08-20 |
+| DES-013 | Accepted | Add interaction feedback (hover/active/focus states, elevation, sticky nav, dialog motion, connection-status indicator) using only existing tokens and typography; no palette, radius, or layout redesign. | Buttons, rows, and dialogs had no hover/active states or depth, which reads as unfinished against current interface conventions; DES-010 and UX principle 13 rule out a broader redesign. | [DESIGN_SYSTEM](DESIGN_SYSTEM.md) | 2026-08-22 |
 
 Append new decisions; do not rewrite accepted rationale. To replace a decision, mark it Superseded and link the new decision. Product scope changes return to the Product Owner, and technical implementation decisions return to the Tech Lead.
