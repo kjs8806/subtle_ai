@@ -37,6 +37,11 @@ export const toDisplayItem = (record) => ({
   plan: record.plan || 'Plan not provided',
   category: 'Other',
   cost: record.currentPrice,
+  // Additive field only - the UI still renders a currency-neutral `$` (valid
+  // for both supported currencies) rather than a "USD"/"CAD" label, so a null
+  // currency here never displays as a false USD claim. See
+  // docs/engineering/FEATURE_001_CURRENCY.md.
+  currency: record.currency ?? null,
   cadence: record.billingCycle === 'yearly' ? 'yearly' : 'monthly',
   next: record.nextRenewal || 'Not provided',
   icon: (record.canonicalService || '?').charAt(0).toUpperCase(),
@@ -61,6 +66,7 @@ export const toManualDisplayItem = ({ name, cost, cadence }) => ({
   plan: 'Added manually',
   category: 'Other',
   cost,
+  currency: null,
   cadence,
   next: 'Not provided',
   icon: name.charAt(0).toUpperCase(),

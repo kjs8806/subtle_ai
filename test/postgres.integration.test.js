@@ -18,11 +18,12 @@ const connectPool = async () => {
   }
 }
 
-const receipt = (sourceId, rawMerchant = 'billing', amount = 10) => ({
+const receipt = (sourceId, rawMerchant = 'billing', amount = 10, currency = 'USD') => ({
   sourceId,
   canonicalService: 'Netflix',
   rawMerchant,
   amount,
+  currency,
   cadence: null,
   nextRenewal: null,
   receivedAt: '2026-08-19T09:00:00.000Z',
@@ -30,6 +31,7 @@ const receipt = (sourceId, rawMerchant = 'billing', amount = 10) => ({
   fieldObservations: {
     canonicalService: { value: 'Netflix', provenance: 'confirmed' },
     amount: { value: amount, provenance: 'confirmed' },
+    currency: { value: currency, provenance: currency ? 'confirmed' : 'inferred' },
     cadence: { value: null, provenance: 'inferred' },
   },
   excerpt: 'Netflix receipt',
@@ -53,6 +55,8 @@ integration('PostgreSQL migrations, ownership, idempotency, provenance, and purg
     const duplicate = await repository.persistParsedEvidence(userA.id, receipt('message-1'))
     assert.equal(first.created, true)
     assert.equal(duplicate.created, false)
+    assert.equal(first.subscription.currency, 'USD')
+    assert.equal(first.evidence.currency, 'USD')
     assert.equal((await pool.query('SELECT count(*) FROM billing_events')).rows[0].count, '1')
     const detail = await pool.query('SELECT provenance FROM field_observations WHERE subscription_id = $1 AND field = $2', [first.subscription.id, 'cadence'])
     assert.equal(detail.rows[0].provenance, 'inferred')
@@ -112,6 +116,67 @@ integration('resolveOrCreateIdentity maps a Google subject to an internal UUID u
     assert.equal(race2.id, race3.id)
     assert.equal((await pool.query('SELECT count(*) FROM auth_identities WHERE provider = $1 AND provider_subject = $2', ['google', concurrentSubject])).rows[0].count, '1')
     assert.equal((await pool.query('SELECT count(*) FROM users WHERE id = $1', [race1.id])).rows[0].count, '1')
+  } finally {
+    await pool.end()
+  }
+})
+
+// FEATURE-001 currency completion gap: CAD, USD, and NULL must all persist
+// correctly on every amount-bearing table, and the DB itself must reject any
+// value outside the supported set - not just the application layer.
+integration('currency persists correctly across subscriptions, evidence, billing_events, and price_observations, including NULL, and the DB rejects unsupported values', async () => {
+  const pool = await connectPool()
+  try {
+    await pool.query('DROP SCHEMA public CASCADE')
+    await pool.query('CREATE SCHEMA public')
+    await runMigrations({ pool })
+    const repository = createPostgresRepository({ pool })
+    const user = await repository.createUser({ email: 'currency@example.com', name: 'Currency' })
+    await repository.authorizeConnection(user.id, createTokenVault({ secret: 'a'.repeat(32) }).encrypt('refresh-token'))
+
+    const cad = await repository.persistParsedEvidence(user.id, receipt('cad-message', 'cad-billing', 19.99, 'CAD'))
+    assert.equal(cad.subscription.currency, 'CAD')
+    assert.equal(cad.evidence.currency, 'CAD')
+    assert.equal(cad.subscription.priceHistory[0].currency, 'CAD')
+    assert.equal(cad.subscription.billingHistory[0].currency, 'CAD')
+
+    const usd = await repository.persistParsedEvidence(user.id, receipt('usd-message', 'usd-billing', 9.99, 'USD'))
+    assert.equal(usd.subscription.currency, 'USD')
+
+    const unknown = await repository.persistParsedEvidence(user.id, receipt('unknown-message', 'unknown-billing', 4.99, null))
+    assert.equal(unknown.subscription.currency, null)
+    assert.equal(unknown.evidence.currency, null)
+    assert.equal(unknown.subscription.priceHistory[0].currency, null)
+    assert.equal(unknown.subscription.billingHistory[0].currency, null)
+
+    // Existing pre-migration rows have no currency evidence and must stay
+    // NULL - never backfilled to USD or anything else.
+    await pool.query('INSERT INTO subscriptions (user_id, canonical_service, raw_merchant, current_price, source) VALUES ($1, $2, $3, $4, $5)', [user.id, 'Legacy Service', 'legacy-billing', 15, 'Gmail receipt'])
+    const legacy = await pool.query('SELECT currency FROM subscriptions WHERE raw_merchant = $1', ['legacy-billing'])
+    assert.equal(legacy.rows[0].currency, null)
+
+    const sourceMessage = await pool.query('SELECT id FROM source_messages LIMIT 1')
+
+    await assert.rejects(
+      pool.query('INSERT INTO subscriptions (user_id, canonical_service, currency) VALUES ($1, $2, $3)', [user.id, 'Invalid Currency Co', 'EUR']),
+      /violates check constraint/,
+      'subscriptions should reject an unsupported currency value',
+    )
+    await assert.rejects(
+      pool.query('INSERT INTO evidence (user_id, source_message_id, currency, provenance) VALUES ($1, $2, $3, $4)', [user.id, sourceMessage.rows[0].id, 'EUR', 'confirmed']),
+      /violates check constraint/,
+      'evidence should reject an unsupported currency value',
+    )
+    await assert.rejects(
+      pool.query('INSERT INTO billing_events (subscription_id, evidence_id, currency) VALUES ($1, $2, $3)', [cad.subscription.id, usd.evidence.id, 'EUR']),
+      /violates check constraint/,
+      'billing_events should reject an unsupported currency value',
+    )
+    await assert.rejects(
+      pool.query('INSERT INTO price_observations (subscription_id, currency) VALUES ($1, $2)', [cad.subscription.id, 'EUR']),
+      /violates check constraint/,
+      'price_observations should reject an unsupported currency value',
+    )
   } finally {
     await pool.end()
   }

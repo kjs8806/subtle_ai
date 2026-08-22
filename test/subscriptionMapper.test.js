@@ -8,6 +8,7 @@ const record = {
   rawMerchant: 'netflix.com',
   plan: null,
   currentPrice: 22.99,
+  currency: 'USD',
   billingCycle: 'monthly',
   nextRenewal: '2026-09-12T00:00:00.000Z',
   status: 'active',
@@ -24,6 +25,7 @@ test('toDisplayItem maps a real backend subscription record into the UI item sha
   assert.equal(item.remoteId, 'sub-1')
   assert.equal(item.name, 'Netflix')
   assert.equal(item.cost, 22.99)
+  assert.equal(item.currency, 'USD')
   assert.equal(item.cadence, 'monthly')
   assert.equal(item.next, '2026-09-12T00:00:00.000Z')
   assert.equal(item.source, 'Gmail receipt')
@@ -57,6 +59,14 @@ test('toDisplayItem never fabricates a name, plan, or renewal date for missing f
   assert.equal(sparse.plan, 'Plan not provided')
   assert.equal(sparse.next, 'Not provided')
   assert.equal(sparse.cost, null)
+  assert.equal(sparse.currency, null, 'currency is never fabricated as USD when the backend has none')
+})
+
+test('toDisplayItem passes currency: CAD and currency: null through unchanged, without breaking', () => {
+  const cad = toDisplayItem({ ...record, currency: 'CAD' })
+  assert.equal(cad.currency, 'CAD')
+  const unknown = toDisplayItem({ ...record, currency: null })
+  assert.equal(unknown.currency, null)
 })
 
 test('toManualDisplayItem preserves the exact manual-entry shape (client-only, no backend record)', () => {

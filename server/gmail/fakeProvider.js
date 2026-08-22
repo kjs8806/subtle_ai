@@ -1,5 +1,5 @@
 const scenarios = {
-  success: [{ id: 'mock-message-netflix-1', subject: 'Netflix renewal receipt', sender: 'billing@netflix.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your monthly payment of $22.99 renews Sep 12, 2026.' }],
+  success: [{ id: 'mock-message-netflix-1', subject: 'Netflix renewal receipt', sender: 'billing@netflix.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your monthly payment of USD $22.99 renews Sep 12, 2026.' }],
   empty: [],
   ambiguous: [{ id: 'mock-message-ambiguous-1', subject: 'Payment receipt', sender: 'billing@example.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your payment was received.' }],
   failure: null,

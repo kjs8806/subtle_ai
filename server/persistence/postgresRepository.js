@@ -14,12 +14,12 @@ const rowConnection = (row) => row && ({ id: row.id, userId: row.user_id, provid
 const hydrateSubscription = async (pool, row) => {
   if (!row) return null
   const [evidence, priceHistory, billingHistory, fieldObservations] = await Promise.all([
-    pool.query('SELECT e.id, e.canonical_service AS "canonicalService", e.raw_merchant AS "rawMerchant", e.amount, e.cadence, e.next_renewal AS "nextRenewal", e.confidence, e.provenance, e.excerpt, sm.provider_message_id AS "sourceId", sm.received_at AS "receivedAt" FROM evidence e JOIN subscription_evidence se ON se.evidence_id = e.id JOIN source_messages sm ON sm.id = e.source_message_id WHERE se.subscription_id = $1 ORDER BY e.created_at', [row.id]),
-    pool.query('SELECT amount, observed_at AS "observedAt" FROM price_observations WHERE subscription_id = $1 ORDER BY observed_at', [row.id]),
-    pool.query('SELECT amount, billed_at AS "billedAt", evidence_id AS "evidenceId" FROM billing_events WHERE subscription_id = $1 ORDER BY billed_at', [row.id]),
+    pool.query('SELECT e.id, e.canonical_service AS "canonicalService", e.raw_merchant AS "rawMerchant", e.amount, e.currency, e.cadence, e.next_renewal AS "nextRenewal", e.confidence, e.provenance, e.excerpt, sm.provider_message_id AS "sourceId", sm.received_at AS "receivedAt" FROM evidence e JOIN subscription_evidence se ON se.evidence_id = e.id JOIN source_messages sm ON sm.id = e.source_message_id WHERE se.subscription_id = $1 ORDER BY e.created_at', [row.id]),
+    pool.query('SELECT amount, currency, observed_at AS "observedAt" FROM price_observations WHERE subscription_id = $1 ORDER BY observed_at', [row.id]),
+    pool.query('SELECT amount, currency, billed_at AS "billedAt", evidence_id AS "evidenceId" FROM billing_events WHERE subscription_id = $1 ORDER BY billed_at', [row.id]),
     pool.query('SELECT field, value, provenance, confidence, evidence_id AS "evidenceId" FROM field_observations WHERE subscription_id = $1 ORDER BY id', [row.id]),
   ])
-  return { id: row.id, userId: row.user_id, canonicalService: row.canonical_service, rawMerchant: row.raw_merchant, plan: row.plan, currentPrice: row.current_price, billingCycle: row.billing_cycle, nextRenewal: row.next_renewal, status: row.status, source: row.source, evidence: evidence.rows, priceHistory: priceHistory.rows, billingHistory: billingHistory.rows, fieldObservations: fieldObservations.rows }
+  return { id: row.id, userId: row.user_id, canonicalService: row.canonical_service, rawMerchant: row.raw_merchant, plan: row.plan, currentPrice: row.current_price, currency: row.currency, billingCycle: row.billing_cycle, nextRenewal: row.next_renewal, status: row.status, source: row.source, evidence: evidence.rows, priceHistory: priceHistory.rows, billingHistory: billingHistory.rows, fieldObservations: fieldObservations.rows }
 }
 
 export const createPostgresRepository = ({ pool }) => {
@@ -61,12 +61,16 @@ export const createPostgresRepository = ({ pool }) => {
         const candidates = await client.query('SELECT id FROM subscriptions WHERE user_id = $1 AND canonical_service = $2 AND raw_merchant = $3', [userId, parsed.canonicalService, parsed.rawMerchant])
         if (candidates.rowCount > 1) { await client.query('ROLLBACK'); return { created: false, ambiguous: true } }
         const subscriptionId = candidates.rows[0]?.id || randomUUID()
-        if (!candidates.rows[0]) await client.query('INSERT INTO subscriptions (id, user_id, canonical_service, raw_merchant, current_price, billing_cycle, next_renewal, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [subscriptionId, userId, parsed.canonicalService, parsed.rawMerchant, parsed.amount, parsed.cadence, parsed.nextRenewal, 'Gmail receipt'])
-        else await client.query('UPDATE subscriptions SET current_price = COALESCE($1, current_price), billing_cycle = COALESCE($2, billing_cycle), next_renewal = COALESCE($3, next_renewal) WHERE id = $4 AND user_id = $5', [parsed.amount, parsed.cadence, parsed.nextRenewal, subscriptionId, userId])
-        const evidence = await client.query('INSERT INTO evidence (user_id, source_message_id, canonical_service, raw_merchant, amount, cadence, next_renewal, confidence, provenance, excerpt) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *', [userId, source.rows[0].id, parsed.canonicalService, parsed.rawMerchant, parsed.amount, parsed.cadence, parsed.nextRenewal, parsed.confidence.score, parsed.confidence.state, parsed.excerpt])
+        // parseReceipt's currency gate guarantees amount and currency are
+        // always jointly null or jointly resolved for anything reaching this
+        // point - current_price and currency are always updated together so
+        // they can never drift out of sync with each other.
+        if (!candidates.rows[0]) await client.query('INSERT INTO subscriptions (id, user_id, canonical_service, raw_merchant, current_price, currency, billing_cycle, next_renewal, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)', [subscriptionId, userId, parsed.canonicalService, parsed.rawMerchant, parsed.amount, parsed.currency, parsed.cadence, parsed.nextRenewal, 'Gmail receipt'])
+        else await client.query('UPDATE subscriptions SET current_price = COALESCE($1, current_price), currency = COALESCE($2, currency), billing_cycle = COALESCE($3, billing_cycle), next_renewal = COALESCE($4, next_renewal) WHERE id = $5 AND user_id = $6', [parsed.amount, parsed.currency, parsed.cadence, parsed.nextRenewal, subscriptionId, userId])
+        const evidence = await client.query('INSERT INTO evidence (user_id, source_message_id, canonical_service, raw_merchant, amount, currency, cadence, next_renewal, confidence, provenance, excerpt) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *', [userId, source.rows[0].id, parsed.canonicalService, parsed.rawMerchant, parsed.amount, parsed.currency, parsed.cadence, parsed.nextRenewal, parsed.confidence.score, parsed.confidence.state, parsed.excerpt])
         await client.query('INSERT INTO subscription_evidence (subscription_id, evidence_id) VALUES ($1, $2)', [subscriptionId, evidence.rows[0].id])
-        await client.query('INSERT INTO billing_events (subscription_id, evidence_id, amount, billed_at) VALUES ($1, $2, $3, $4) ON CONFLICT (subscription_id, evidence_id) DO NOTHING', [subscriptionId, evidence.rows[0].id, parsed.amount, parsed.receivedAt])
-        await client.query('INSERT INTO price_observations (subscription_id, evidence_id, amount, observed_at) VALUES ($1, $2, $3, $4)', [subscriptionId, evidence.rows[0].id, parsed.amount, parsed.receivedAt])
+        await client.query('INSERT INTO billing_events (subscription_id, evidence_id, amount, currency, billed_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (subscription_id, evidence_id) DO NOTHING', [subscriptionId, evidence.rows[0].id, parsed.amount, parsed.currency, parsed.receivedAt])
+        await client.query('INSERT INTO price_observations (subscription_id, evidence_id, amount, currency, observed_at) VALUES ($1, $2, $3, $4, $5)', [subscriptionId, evidence.rows[0].id, parsed.amount, parsed.currency, parsed.receivedAt])
         for (const [field, observation] of Object.entries(parsed.fieldObservations || {})) await client.query('INSERT INTO field_observations (subscription_id, field, value, provenance, confidence, evidence_id) VALUES ($1, $2, $3, $4, $5, $6)', [subscriptionId, field, JSON.stringify(observation.value ?? null), observation.provenance, parsed.confidence.score, evidence.rows[0].id])
         await client.query('COMMIT')
         return { created: true, evidence: evidence.rows[0], subscription: await this.getSubscription(userId, subscriptionId) }

@@ -13,7 +13,7 @@ export const createPipelineRecords = (subscriptions = []) => subscriptions.map((
     subject: `${item.name} ${item.plan} receipt`,
     sender: `${item.name.toLowerCase()}@receipts.example`,
     receivedAt: item.confirmed,
-    body: `${item.name} subscription payment ${money(item.cost)} ${item.cadence}`,
+    body: `${item.name} subscription payment USD ${money(item.cost)} ${item.cadence}`,
   })
   return createSubscriptionRecord(evidence, {
     id: String(item.id),
