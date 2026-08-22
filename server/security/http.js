@@ -10,8 +10,8 @@ export const securityHeaders = async (_request, reply) => {
   })
 }
 
-export const enforceSameOrigin = ({ production, origin }) => async (request, reply) => {
-  if (!production || SAFE_METHODS.has(request.method)) return
+export const enforceSameOrigin = ({ enforce, origin }) => async (request, reply) => {
+  if (!enforce || SAFE_METHODS.has(request.method)) return
   const supplied = request.headers.origin
   if (!supplied || supplied !== origin) return reply.code(403).send({ error: { code: 'invalid_origin', message: 'Request origin rejected' } })
 }

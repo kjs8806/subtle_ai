@@ -16,6 +16,19 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: subtle_ai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d subtle_ai_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v7
         with:
@@ -45,6 +58,16 @@ jobs:
         run: npm ci
       - name: Run tests
         run: npm test
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/subtle_ai_test
+      - name: Run PostgreSQL integration tests
+        run: npm run test:postgres
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/subtle_ai_test
+      - name: Run application-runtime PostgreSQL persistence tests
+        run: npm run test:runtime
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/subtle_ai_test
       - name: Build application
         run: npm run build
       - name: Check whitespace errors

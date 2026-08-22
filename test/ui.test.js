@@ -59,12 +59,27 @@ test('mobile navigation has explicit destinations and semantic current state', (
   assert.match(readFileSync(new URL('../src/ui/navigation.js', import.meta.url), 'utf8'), /focusout/)
 })
 
-test('manual add retains cost and cadence and updates the real overview state', () => {
+test('the service worker treats /api/** as network-only and never caches authenticated API responses', () => {
+  const sw = readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8')
+  assert.match(sw, /pathname\.startsWith\('\/api\/'\)/)
+  // The /api/ branch must return before the generic cache-then-network branch
+  // that calls caches.open(...).put(...) - otherwise API responses would still
+  // get cached on the way through.
+  const apiBranchIndex = sw.indexOf("pathname.startsWith('/api/')")
+  const cachePutIndex = sw.indexOf('cache.put')
+  assert.ok(apiBranchIndex > -1 && cachePutIndex > apiBranchIndex, 'the /api/ branch must be checked, and return, before any cache.put call')
+})
+
+test('manual add retains cost and cadence, coexists with backend subscriptions, and updates the real overview state', () => {
   const main = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8')
   assert.match(main, /name="cost"/)
   assert.match(main, /name="cadence"/)
-  assert.match(main, /subscriptions\.push\(item\)/)
-  assert.match(main, /monthlySpendFor\(subscriptions\)/)
+  // Manual entries are tracked separately from backend-sourced ones (not
+  // `subscriptions.push`) specifically so a Gmail refresh/scan/disconnect,
+  // which replaces backendItems wholesale from the API response, can never
+  // make a manually-added subscription disappear.
+  assert.match(main, /manualSubscriptions\.push\(item\)/)
+  assert.match(main, /monthlySpendFor\(allItems\(\)\)/)
   assert.match(main, /data-count/)
   assert.doesNotMatch(main, /ready to be added/)
 })

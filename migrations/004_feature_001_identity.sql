@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS subscriptions_identity_idx;

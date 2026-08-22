@@ -63,6 +63,7 @@ These items must be reconsidered before their relevant release or environment ga
 - Approved technical decisions: [TECH_DECISIONS.md](TECH_DECISIONS.md).
 - Security boundaries and threat-model requirement: [SECURITY.md](SECURITY.md).
 - Deployment and release gates: [DEPLOYMENT.md](DEPLOYMENT.md).
+- Real-Gmail validation setup runbook and findings: [REAL_GMAIL_VALIDATION.md](REAL_GMAIL_VALIDATION.md).
 
 FEATURE-001 remains **Implementing**. This approval authorizes the Tech Lead to produce the remaining implementation plan within these constraints; it does not itself authorize implementation beyond the approved plan or declare FEATURE-001 complete.
 
