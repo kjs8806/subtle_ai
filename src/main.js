@@ -1,11 +1,12 @@
 import './style.css'
 import { feature001Api } from './services/feature001Api.js'
 import { toDisplayItem, toManualDisplayItem } from './services/subscriptionMapper.js'
+import { toAttentionAction } from './services/attentionMapper.js'
 import { monthlySpendFor } from './data/subscriptionModel.js'
 import { createDialogController, createLiveRegion } from './ui/accessibility.js'
 import { gmailDisclosureMarkup } from './ui/gmailDisclosure.js'
 import { initializeNavigation, navigationMarkup } from './ui/navigation.js'
-import { candidateRow, overviewMarkup, subscriptionRow } from './ui/overview.js'
+import { actionCard, candidateRow, overviewMarkup, subscriptionRow } from './ui/overview.js'
 import { detailMarkup, rejectConfirmMarkup, renderDetail } from './ui/subscriptionDetail.js'
 import { loadingMarkup, sessionErrorMarkup, signedOutMarkup } from './ui/signedOut.js'
 
@@ -91,24 +92,30 @@ const renderAuthenticated = async (user, gmailError) => {
   let manualSubscriptions = []
   let backendItems = []
   let candidates = []
+  // FEATURE-003: the "Worth your attention" feed - material price-change
+  // events and renewal reminders from GET /api/v1/subscriptions/attention,
+  // mapped into the action-card shape overview.js's actionCard() expects.
+  let actions = []
   let gmailSource = { status: 'not_connected', scanStatus: 'idle' }
   let gmailSourceUnavailable = false
 
-  const [subsResult, sourceResult, candidatesResult] = await Promise.allSettled([
+  const [subsResult, sourceResult, candidatesResult, attentionResult] = await Promise.allSettled([
     feature001Api.listSubscriptions(),
     feature001Api.getGmailSource(),
     feature001Api.listCandidates(),
+    feature001Api.getAttention(),
   ])
   if (subsResult.status === 'fulfilled') backendItems = (subsResult.value.subscriptions || []).map(toDisplayItem)
   if (sourceResult.status === 'fulfilled') gmailSource = sourceResult.value
   else gmailSourceUnavailable = true
   if (candidatesResult.status === 'fulfilled') candidates = candidatesResult.value.candidates || []
+  if (attentionResult.status === 'fulfilled') actions = (attentionResult.value.items || []).map(toAttentionAction)
 
   const greeting = user?.name ? `Good morning, ${user.name.split(' ')[0]}.` : 'Good morning.'
   const dateLabel = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
   const allItems = () => [...manualSubscriptions, ...backendItems]
 
-  app.innerHTML = `<main class="app-shell">${navigationMarkup(brand)}${overviewMarkup({ subscriptions: allItems(), actions: [], monthlySpend: monthlySpendFor(allItems()), upcoming: deriveUpcoming(allItems()), candidates, greeting, dateLabel })}<footer class="app-footer wrap">${brand}<div><span>Private by design</span><button class="quiet-button" data-sign-out type="button">Sign out</button></div></footer></main>${gmailDisclosureMarkup()}${detailMarkup()}${rejectConfirmMarkup()}${addDialogMarkup}`
+  app.innerHTML = `<main class="app-shell">${navigationMarkup(brand)}${overviewMarkup({ subscriptions: allItems(), actions, monthlySpend: monthlySpendFor(allItems()), upcoming: deriveUpcoming(allItems()), candidates, greeting, dateLabel })}<footer class="app-footer wrap">${brand}<div><span>Private by design</span><button class="quiet-button" data-sign-out type="button">Sign out</button></div></footer></main>${gmailDisclosureMarkup()}${detailMarkup()}${rejectConfirmMarkup()}${addDialogMarkup}`
 
   initializeNavigation(app)
   const detailRoot = document.querySelector('[data-detail]'); const detailDialog = createDialogController(detailRoot)
@@ -148,6 +155,32 @@ const renderAuthenticated = async (user, gmailError) => {
   }
   wireRows(document)
 
+  // FEATURE-003: "Worth your attention" feed. Re-rendered (not just fetched
+  // once at boot) after any action that could change price-change/renewal
+  // intelligence - a scan, a correction, a rejection, or a candidate
+  // confirmation - so a stale attention item never lingers past the action
+  // that resolved it. A fetch failure here leaves the last known feed in
+  // place rather than clearing it, same defensive pattern as refreshGmailSource.
+  const renderActions = () => {
+    const section = document.querySelector('#attention')
+    if (!section) return
+    section.querySelector('.eyebrow').textContent = `${actions.length} actionable opportunities`
+    section.querySelector('.action-feed').innerHTML = actions.length ? actions.map(actionCard).join('') : '<p class="empty-state">Nothing needs your attention right now.</p>'
+  }
+  const refreshAttention = async () => {
+    try { actions = ((await feature001Api.getAttention()).items || []).map(toAttentionAction) }
+    catch { /* the attention feed just keeps showing its last known state */ }
+    renderActions()
+  }
+  // The feed is fully re-rendered each time, so a single delegated listener
+  // (rather than re-wiring every card's button) is enough to open Subscription
+  // Detail for the action's subscription - same target id used by wireRows.
+  document.querySelector('.action-feed').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-action-target]')
+    if (!button) return
+    openDetail(button.dataset.actionTarget)
+  })
+
   // FEATURE-002: ambiguous-candidate review. Confirm/reject act on the whole
   // pending candidate, not a subscription (there is no subscription yet), and
   // both remove the candidate from the pending list either way.
@@ -173,6 +206,7 @@ const renderAuthenticated = async (user, gmailError) => {
       const { subscriptions: rawList } = await feature001Api.listSubscriptions()
       backendItems = (rawList || []).map(toDisplayItem)
       renderList()
+      await refreshAttention()
     } catch {
       button.disabled = false
       live.announce("That couldn't be completed. Please try again.")
@@ -208,6 +242,7 @@ const renderAuthenticated = async (user, gmailError) => {
       applyUpdatedSubscription(updated)
       renderDetail(detailRoot, toDisplayItem(updated), detailDialog)
       live.announce('Correction saved.')
+      await refreshAttention()
     } catch (error) {
       errorEl.hidden = false
       errorEl.textContent = error.message || "That value couldn't be saved. Please try again."
@@ -230,6 +265,7 @@ const renderAuthenticated = async (user, gmailError) => {
       rejectDialog.close()
       detailDialog.close()
       live.announce('No longer counted as an active subscription.')
+      await refreshAttention()
     } catch {
       live.announce("That couldn't be completed. Please try again.")
     } finally {
@@ -298,6 +334,7 @@ const renderAuthenticated = async (user, gmailError) => {
       renderList({ newIds })
       try { candidates = (await feature001Api.listCandidates()).candidates || [] } catch { /* the review section just keeps showing its last known state */ }
       renderCandidates()
+      await refreshAttention()
       await refreshGmailSource()
       const copy = result.found ? `${result.found} subscription${result.found === 1 ? '' : 's'} found.` : 'No qualifying subscription receipts found.'
       live.announce(copy)
