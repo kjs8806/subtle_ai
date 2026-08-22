@@ -75,7 +75,8 @@ const authenticate = async (app, subject) => {
     url: `/api/v1/auth/google/callback?state=${state}&code=mock-success:${subject}`,
     cookies: { subtle_oauth_state: state },
   })
-  assert.equal(callback.statusCode, 200, `authentication failed for ${subject}`)
+  assert.equal(callback.statusCode, 302, `authentication failed for ${subject}`)
+  assert.equal(callback.headers.location, '/')
   const session = callback.cookies.find(({ name }) => name === 'subtle_session').value
   const headers = { cookie: `subtle_session=${session}` }
   const me = await app.inject({ method: 'GET', url: '/api/v1/session', headers })

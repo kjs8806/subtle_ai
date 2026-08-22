@@ -4,6 +4,14 @@ import { buildApp } from '../server/app.js'
 import { createFakeGmailProvider } from '../server/gmail/fakeProvider.js'
 import { createMemoryRepository } from '../server/persistence/memoryRepository.js'
 
+// Both OAuth callbacks are reached via a real top-level browser navigation, so
+// they always redirect back to '/' rather than return a JSON body - the
+// outcome is carried as a query param (auth_error / gmail_error) instead.
+const errorFromRedirect = (response, param) => {
+  const [, query] = (response.headers.location || '').split('?')
+  return new URLSearchParams(query || '').get(param)
+}
+
 const authorize = async (app) => {
   const start = await app.inject({ method: 'GET', url: '/api/v1/auth/google/start' })
   const state = start.cookies.find(({ name }) => name === 'subtle_oauth_state').value
@@ -12,7 +20,8 @@ const authorize = async (app) => {
     url: `/api/v1/auth/google/callback?state=${state}&code=mock-success`,
     cookies: { subtle_oauth_state: state },
   })
-  assert.equal(callback.statusCode, 200)
+  assert.equal(callback.statusCode, 302)
+  assert.equal(callback.headers.location, '/')
   return callback.cookies.find(({ name }) => name === 'subtle_session').value
 }
 
@@ -45,8 +54,8 @@ test('expired oauth state is rejected', async () => {
   const state = start.cookies.find(({ name }) => name === 'subtle_oauth_state').value
   time = 10 * 60 * 1000 + 1
   const response = await app.inject({ method: 'GET', url: `/api/v1/auth/google/callback?state=${state}&code=mock-success`, cookies: { subtle_oauth_state: state } })
-  assert.equal(response.statusCode, 400)
-  assert.equal(response.json().error.code, 'invalid_oauth_state')
+  assert.equal(response.statusCode, 302)
+  assert.equal(errorFromRedirect(response, 'auth_error'), 'invalid_oauth_state')
 })
 
 test('rejects protected routes without a session', async () => {
@@ -139,8 +148,8 @@ test('gmail identity mismatch does not connect the source', async () => {
   const start = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/authorize', headers: { cookie: `subtle_session=${session}`, origin: 'http://127.0.0.1:5173' } })
   const state = start.cookies.find(({ name }) => name === 'subtle_gmail_oauth_state').value
   const response = await app.inject({ method: 'GET', url: `/api/v1/sources/gmail/callback?state=${state}&code=mock-success`, headers: { cookie: `subtle_session=${session}; subtle_gmail_oauth_state=${state}` } })
-  assert.equal(response.statusCode, 409)
-  assert.equal(response.json().error.code, 'identity_mismatch')
+  assert.equal(response.statusCode, 302)
+  assert.equal(errorFromRedirect(response, 'gmail_error'), 'identity_mismatch')
   const source = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers: { cookie: `subtle_session=${session}` } })
   assert.equal(source.json().status, 'not_connected')
 })
@@ -219,8 +228,8 @@ test('source responses never expose token custody fields', async () => {
 test('invalid oauth state is rejected', async () => {
   const app = buildApp()
   const response = await app.inject({ method: 'GET', url: '/api/v1/auth/google/callback?state=bad&code=mock-success' })
-  assert.equal(response.statusCode, 400)
-  assert.equal(response.json().error.code, 'invalid_oauth_state')
+  assert.equal(response.statusCode, 302)
+  assert.equal(errorFromRedirect(response, 'auth_error'), 'invalid_oauth_state')
 })
 
 test('oauth state cannot be reused', async () => {
@@ -230,6 +239,8 @@ test('oauth state cannot be reused', async () => {
   const url = `/api/v1/auth/google/callback?state=${state}&code=mock-success`
   const first = await app.inject({ method: 'GET', url, cookies: { subtle_oauth_state: state } })
   const second = await app.inject({ method: 'GET', url, cookies: { subtle_oauth_state: state } })
-  assert.equal(first.statusCode, 200)
-  assert.equal(second.statusCode, 400)
+  assert.equal(first.statusCode, 302)
+  assert.equal(first.headers.location, '/')
+  assert.equal(second.statusCode, 302)
+  assert.equal(errorFromRedirect(second, 'auth_error'), 'invalid_oauth_state')
 })
