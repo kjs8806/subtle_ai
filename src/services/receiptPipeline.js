@@ -37,6 +37,7 @@ export const createEvidence = (data) => ({
   receivedAt: data.receivedAt,
   confidence: data.confidence,
   excerpt: data.excerpt,
+  fieldObservations: data.fieldObservations || {},
 })
 
 export const createPriceObservation = ({ amount, observedAt }) => ({ amount, observedAt })
@@ -76,6 +77,12 @@ export const parseReceipt = ({ id, subject = '', sender = '', receivedAt, body =
   const cadence = cadenceMatch?.includes('year') || cadenceMatch === 'annual' ? 'yearly' : cadenceMatch ? 'monthly' : null
   const nextRenewal = rawText.match(DATE_PATTERN)?.[1] || null
   const confidence = confidenceFor({ merchant: merchantMatch, amount, cadence, nextRenewal })
+  const fieldObservations = {
+    canonicalService: { value: merchant, provenance: merchantMatch ? 'confirmed' : 'inferred' },
+    amount: { value: amount, provenance: amount === null ? 'inferred' : 'confirmed' },
+    cadence: { value: cadence, provenance: cadence ? 'confirmed' : 'inferred' },
+    nextRenewal: { value: nextRenewal, provenance: nextRenewal ? 'confirmed' : 'inferred' },
+  }
 
   return createEvidence({
     id: `evidence-${id}`,
@@ -89,6 +96,7 @@ export const parseReceipt = ({ id, subject = '', sender = '', receivedAt, body =
     nextRenewal,
     receivedAt: receivedAt || null,
     confidence,
+    fieldObservations,
     excerpt: subject,
   })
 }

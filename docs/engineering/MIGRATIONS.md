@@ -1,10 +1,12 @@
 # Database Migration and Recovery Rules
 
 > **Owner:** Tech Lead
-> **Status:** Approved policy; runtime tooling not implemented
-> **Last reviewed:** 2026-08-20
+> **Status:** Approved policy; runtime tooling implemented for the supervised Codespaces environment
+> **Last reviewed:** 2026-08-21
 
-`migrations/001_feature_001.sql` is a planned PostgreSQL schema. The current app does not connect to or execute migrations against PostgreSQL.
+`migrations/001_feature_001.sql` through `005_feature_001_token_contract.sql` define the current PostgreSQL schema. `server/persistence/migrations.js` executes unapplied ordered migrations transactionally, guarded by a PostgreSQL advisory lock so concurrent or repeated startups against the same database apply safely. When `PERSISTENCE_PROVIDER=postgres`, `server/bootstrap.js` runs these migrations automatically at server startup, before the server accepts requests; a migration failure aborts startup rather than starting with a partially migrated schema. Activation against shared or production data remains gated — see [Activation gate](#activation-gate).
+
+Migration `004` removes the provisional service/merchant uniqueness index. Migration `005` changes encrypted token storage to text ciphertext plus explicit key-version metadata.
 
 ## Rules
 

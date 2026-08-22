@@ -1,9 +1,15 @@
 import { randomUUID } from 'node:crypto'
 
 const clone = (value) => structuredClone(value)
+const publicConnection = (connection) => {
+  if (!connection) return null
+  const { encryptedRefreshToken, ...safeConnection } = connection
+  return clone(safeConnection)
+}
 
 export const createMemoryRepository = () => {
   const users = new Map([['mock-user', { id: 'mock-user', email: 'demo@example.com', name: 'Demo User' }]])
+  const identities = new Map()
   const connections = new Map()
   const subscriptions = new Map()
   const evidence = new Map()
@@ -17,23 +23,43 @@ export const createMemoryRepository = () => {
       return clone(user)
     },
     getUser: (id) => clone(users.get(id) || null),
-    getConnection: (userId) => clone(connections.get(userId) || { status: 'not_connected', scanStatus: 'idle' }),
-    authorizeConnection: (userId) => {
-      const connection = { id: connections.get(userId)?.id || randomUUID(), userId, provider: 'gmail', status: 'connected', scanStatus: 'idle', lastScanAt: null }
-      connections.set(userId, connection)
-      return clone(connection)
+    getIdentityForUser: ({ userId, provider }) => {
+      for (const identity of identities.values()) if (identity.userId === userId && identity.provider === provider) return clone({ subject: identity.subject, email: identity.email })
+      return null
     },
+    resolveOrCreateIdentity: ({ provider, subject, email, name }) => {
+      const key = `${provider}:${subject}`
+      const existing = identities.get(key)
+      if (existing) return clone(users.get(existing.userId))
+      const id = randomUUID()
+      const user = { id, email, name }
+      users.set(id, user)
+      identities.set(key, { userId: id, provider, subject, email })
+      return clone(user)
+    },
+    getConnection: (userId) => publicConnection(connections.get(userId) || { status: 'not_connected', scanStatus: 'idle' }),
+    authorizeConnection: (userId, encryptedRefreshToken = null) => {
+      const connection = { id: connections.get(userId)?.id || randomUUID(), userId, provider: 'gmail', status: 'connected', scanStatus: 'idle', lastScanAt: null, encryptedRefreshToken }
+      connections.set(userId, connection)
+      return publicConnection(connection)
+    },
+    getEncryptedRefreshToken: (userId) => connections.get(userId)?.encryptedRefreshToken || null,
     disconnectConnection: (userId) => {
       const connection = connections.get(userId)
       if (!connection) return clone({ status: 'not_connected', scanStatus: 'idle' })
+      for (const [id, item] of evidence) if (item.userId === userId) evidence.delete(id)
+      for (const [id, item] of subscriptions) if (item.userId === userId) subscriptions.delete(id)
+      for (const id of scans.keys()) if (scans.get(id).userId === userId) scans.delete(id)
       connection.status = 'not_connected'
       connection.scanStatus = 'idle'
+      connection.encryptedRefreshToken = null
       connections.set(userId, connection)
       return clone(connection)
     },
     beginScan: (userId) => {
       const connection = connections.get(userId)
       if (!connection || connection.status !== 'connected') return null
+      if (connection.scanStatus === 'scanning') return { conflict: true }
       const scan = { id: randomUUID(), userId, status: 'scanning', startedAt: new Date().toISOString(), completedAt: null, found: 0 }
       scans.set(scan.id, scan)
       connection.scanStatus = 'scanning'
@@ -71,11 +97,12 @@ export const createMemoryRepository = () => {
         && item.rawMerchant === parsed.rawMerchant)
       if (candidates.length > 1) return { created: false, ambiguous: true }
       const subscriptionId = candidates[0]?.id || randomUUID()
-      const record = { ...parsed, id: evidenceId, userId, subscriptionId, provenance: { canonicalService: 'confirmed', amount: parsed.amount === null ? 'inferred' : 'confirmed', cadence: parsed.cadence ? 'confirmed' : 'inferred' } }
+      const provenance = Object.fromEntries(Object.entries(parsed.fieldObservations || {}).map(([field, observation]) => [field, observation.provenance]))
+      const record = { ...parsed, id: evidenceId, userId, subscriptionId, provenance }
       const previous = candidates[0]
       const observation = { amount: parsed.amount, observedAt: parsed.receivedAt }
       const billing = { amount: parsed.amount, billedAt: parsed.receivedAt, evidenceId }
-      const fields = Object.entries(record.provenance).map(([field, provenance]) => ({ field, value: record[field] ?? null, provenance, confidence: parsed.confidence.score, evidenceId }))
+      const fields = Object.entries(parsed.fieldObservations || {}).map(([field, observation]) => ({ field, value: observation.value ?? null, provenance: observation.provenance, confidence: parsed.confidence.score, evidenceId }))
       const subscription = previous
         ? { ...previous, currentPrice: parsed.amount ?? previous.currentPrice, billingCycle: parsed.cadence || previous.billingCycle, nextRenewal: parsed.nextRenewal || previous.nextRenewal, evidence: [...previous.evidence, record], priceHistory: [...previous.priceHistory, observation], billingHistory: [...previous.billingHistory, billing], fieldObservations: [...previous.fieldObservations, ...fields] }
         : { id: subscriptionId, userId, canonicalService: parsed.canonicalService, rawMerchant: parsed.rawMerchant, plan: null, currentPrice: parsed.amount, billingCycle: parsed.cadence, nextRenewal: parsed.nextRenewal, status: 'active', source: 'Gmail receipt', evidence: [record], priceHistory: [observation], billingHistory: [billing], fieldObservations: fields }

@@ -2,7 +2,7 @@
 
 ## Current status
 
-Subtle AI is a prototype with a mock Fastify boundary, fake Gmail provider, in-memory persistence, and a planned PostgreSQL schema. It is not production-ready and must not process real Gmail credentials or production financial data until the release gates below are satisfied.
+Subtle AI has a mock Fastify boundary, fake Gmail provider, in-memory persistence, and optional Google/PostgreSQL runtime primitives. It is not production-ready and must not process real Gmail credentials or production financial data until the release gates below are satisfied.
 
 ## Non-negotiable boundaries
 

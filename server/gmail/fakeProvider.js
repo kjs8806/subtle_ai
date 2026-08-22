@@ -7,12 +7,15 @@ const scenarios = {
 
 export const createFakeGmailProvider = () => ({
   createAuthorizationRequest: ({ state }) => ({ url: `/api/v1/sources/gmail/callback?state=${encodeURIComponent(state)}&code=mock-success` }),
+  createGmailAuthorizationRequest: ({ state }) => ({ url: `/api/v1/sources/gmail/callback?state=${encodeURIComponent(state)}&code=mock-success` }),
   exchangeAuthorizationCode: async ({ code }) => {
     if (code === 'mock-cancel') return { status: 'cancelled' }
     if (code === 'mock-error') throw new Error('Mock authorization failed')
     return { status: 'authorized', refreshToken: 'mock-refresh-token' }
   },
+  exchangeGmailAuthorizationCode: async ({ code }) => ({ status: code === 'mock-cancel' ? 'cancelled' : 'authorized', refreshToken: 'mock-refresh-token' }),
   listCandidateMessages: async () => scenarios[process.env.MOCK_GMAIL_SCENARIO || 'success'],
   getMessage: async (message) => message,
+  refreshAccessToken: async () => ({ accessToken: 'mock-access-token' }),
   revokeConnection: async () => ({ status: 'disconnected' }),
 })

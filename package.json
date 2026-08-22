@@ -10,7 +10,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "node --test",
-    "test:server": "node --test test/server.test.js"
+    "test:server": "node --test test/server.test.js",
+    "test:postgres": "node --test test/postgres.integration.test.js",
+    "test:runtime": "node --test test/runtimePersistence.integration.test.js"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",
@@ -18,6 +20,7 @@
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
-    "fastify": "^5.12.1"
+    "fastify": "^5.12.1",
+    "pg": "^8.23.0"
   }
 }
