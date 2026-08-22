@@ -33,6 +33,7 @@ const formatDate = (value) => {
 export const toDisplayItem = (record) => ({
   id: record.id,
   remoteId: record.id,
+  status: record.status || 'active',
   name: record.canonicalService || 'Unknown service',
   plan: record.plan || 'Plan not provided',
   category: 'Other',
