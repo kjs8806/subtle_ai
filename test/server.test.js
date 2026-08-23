@@ -74,11 +74,15 @@ test('mock authorization and scan create evidence-backed subscriptions idempoten
 
   // The default mock scenario (server/gmail/fakeProvider.js) models a small
   // multi-service inbox - one receipt each for Netflix, Spotify, Dropbox,
-  // Disney+, YouTube Premium, and ChatGPT Plus - so a fresh mock sign-in has
-  // more than a single row to show.
+  // Disney+, and YouTube Premium, plus two ChatGPT Plus receipts (so it has a
+  // price history), plus two weak-signal receipts (iCloud+, Microsoft 365)
+  // that land as ambiguous candidates rather than subscriptions - so a fresh
+  // mock sign-in has more than a single row to show, and exercises both the
+  // "needs a decision" recommendation engine and ambiguous-candidate review.
   const firstScan = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
   assert.equal(firstScan.statusCode, 200)
-  assert.equal(firstScan.json().found, 6)
+  assert.equal(firstScan.json().found, 7)
+  assert.equal(firstScan.json().ambiguous, 2)
   const secondScan = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
   assert.equal(secondScan.json().found, 0)
 
