@@ -13,7 +13,7 @@ test('buildActionItems no longer surfaces a price-increase card - that is now GE
   assert.deepEqual(buildActionItems([netflix]), [])
 })
 
-test('buildActionItems surfaces one deduped overlap card for a known overlapping pair', () => {
+test('buildActionItems surfaces one deduped overlap card for a known overlapping pair, pointing "Review subscription" at the pricier one', () => {
   const dropbox = record('dropbox-1', 'Dropbox payment receipt', 'billing@dropbox.com', 'USD $10 monthly')
   const googleOne = record('google-1', 'Google One payment receipt', 'billing@google.com', 'USD $12 monthly')
 
@@ -22,6 +22,7 @@ test('buildActionItems surfaces one deduped overlap card for a known overlapping
   assert.equal(items[0].label, 'Potential overlap')
   assert.deepEqual(items[0].affectedServices.sort(), ['Dropbox', 'Google One'])
   assert.equal(items[0].saving, '$120.00/year', 'saving is the cheaper of the two annualized')
+  assert.equal(items[0].subscriptionId, googleOne.id, 'the pricier subscription ($12 > $10) is the one worth reviewing')
 })
 
 test('buildActionItems returns nothing for a subscription with no price history or overlap', () => {

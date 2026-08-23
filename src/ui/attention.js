@@ -72,7 +72,7 @@ export const attentionCardMarkup = (item) => `<button class="attention-card" typ
 // unrelated to FEATURE-003) - kept out of the severity/filter system since
 // they predate it and the mockup doesn't cover them, but still surfaced here
 // under "All" so the existing feature isn't silently dropped.
-export const overlapCardMarkup = (action) => `<article class="action-card"><p class="action-label">${escapeHtml(action.label)}</p><h3 class="affected-services">${escapeHtml(action.affectedServices.join(' + '))}</h3><p>${escapeHtml(action.body)}</p>${action.saving ? `<p class="impact"><span>${escapeHtml(action.impactLabel)}</span><strong>${escapeHtml(action.saving)}</strong></p>` : ''}<div><button class="primary-button" data-action-target="${escapeHtml(action.id)}" type="button">Review subscription</button>${action.secondary ? `<button class="quiet-button" type="button">${escapeHtml(action.secondary)}</button>` : ''}</div></article>`
+export const overlapCardMarkup = (action) => `<article class="action-card"><p class="action-label">${escapeHtml(action.label)}</p><h3 class="affected-services">${escapeHtml(action.affectedServices.join(' + '))}</h3><p>${escapeHtml(action.body)}</p>${action.saving ? `<p class="impact"><span>${escapeHtml(action.impactLabel)}</span><strong>${escapeHtml(action.saving)}</strong></p>` : ''}<div><a class="primary-button" href="#${routePath('subscription-detail', { id: action.subscriptionId })}">Review subscription</a>${action.secondary ? `<button class="quiet-button" type="button" data-dismiss-overlap="${escapeHtml(action.id)}">${escapeHtml(action.secondary)}</button>` : ''}</div></article>`
 
 const emptyAllCaughtUpMarkup = () => `<div class="subscriptions-empty"><span class="empty-icon">${ICON_CHECK}</span><h2>You're all caught up</h2><p>Nothing needs your attention right now. We'll let you know if that changes.</p></div>`
 const emptyForFilterMarkup = () => `<p class="empty-state">Nothing here for this filter.</p>`
@@ -99,7 +99,7 @@ export const attentionPageMarkup = ({ items = [], overlapActions = [] } = {}) =>
   const counts = countsByFilter(items)
   const hasAnyItems = items.length > 0
 
-  return `<div class="main-content wrap" id="page-attention"><header class="page-header"><div><p class="eyebrow">${total} to review</p><h1>Worth your attention</h1><p>Things Subtle AI believes may need a decision.</p></div></header>
+  return `<div class="main-content wrap" id="page-attention"><header class="page-header"><div><p class="eyebrow" data-attention-total>${total} to review</p><h1>Worth your attention</h1><p>Things Subtle AI believes may need a decision.</p></div></header>
 
 <div class="attention-info-banner">${ICON_INFO}<p><strong>You're in control.</strong> These are suggestions, not automatic changes - nothing here affects your subscriptions until you act on it.</p></div>
 

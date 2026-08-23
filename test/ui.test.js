@@ -189,9 +189,13 @@ test('Worth your attention (FEATURE-003) is a dedicated page unifying price chan
   assert.doesNotMatch(row, /subscription-row/, 'a candidate never renders as a confirmed subscription row')
 
   // Legacy overlap-detection cards (unrelated to FEATURE-003) still render,
-  // but keep their own "Review subscription" action outside the new dialog.
-  const overlapAction = { id: 'overlap-1', label: 'Potential overlap', affectedServices: ['Dropbox', 'Google One'], body: 'Both provide cloud storage.', saving: '$120.00/year', impactLabel: 'Potential savings' }
-  assert.match(overlapCardMarkup(overlapAction), /Review subscription/)
+  // with a real "Review subscription" link to the affected subscription and
+  // a "Keep both" button that dismisses the card (both were previously dead
+  // controls with no handler at all).
+  const overlapAction = { id: 'overlap-1', subscriptionId: 'sub-dropbox', label: 'Potential overlap', affectedServices: ['Dropbox', 'Google One'], body: 'Both provide cloud storage.', saving: '$120.00/year', impactLabel: 'Potential savings', secondary: 'Keep both' }
+  const overlapCard = overlapCardMarkup(overlapAction)
+  assert.match(overlapCard, new RegExp(`<a class="primary-button" href="#${routePath('subscription-detail', { id: 'sub-dropbox' }).replace(/\//g, '\\/')}">Review subscription</a>`))
+  assert.match(overlapCard, /data-dismiss-overlap="overlap-1"/)
   assert.match(attentionPageMarkup({ items: [], overlapActions: [overlapAction] }), /Other suggestions/)
 
   const empty = attentionPageMarkup({ items: [], overlapActions: [] })

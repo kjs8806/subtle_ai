@@ -14,6 +14,10 @@ const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 }
 
 const overlapItem = (record, related) => ({
   id: `overlap-${[record.id, related.id].sort().join('-')}`,
+  // "Review subscription" has to point at one specific subscription even
+  // though the card names two - the pricier of the pair is the one most
+  // worth a second look (it's the larger potential saving if one is kept).
+  subscriptionId: (record.currentPrice || 0) >= (related.currentPrice || 0) ? record.id : related.id,
   priority: 'high',
   label: 'Potential overlap',
   affectedServices: [record.canonicalService, related.canonicalService],

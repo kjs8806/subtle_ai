@@ -110,8 +110,13 @@ const renderAuthenticated = async (user, gmailError) => {
   // detection now lives server-side (FEATURE-003, see attentionItems below) -
   // this only covers overlap, which predates it and isn't part of its scope.
   // Recomputed via refreshOverlapActions() wherever backendItems changes.
+  // "Keep both" acknowledges a card without changing any subscription, so
+  // (unlike FEATURE-003's attention-item dismissal) there's nothing to
+  // persist server-side - dismissedOverlapIds is in-memory only and resets
+  // on reload, same as this feature's total lack of durable state today.
   let overlapActions = []
-  const refreshOverlapActions = () => { overlapActions = buildActionItems(backendItems.map(item => item.pipelineRecord).filter(Boolean)) }
+  const dismissedOverlapIds = new Set()
+  const refreshOverlapActions = () => { overlapActions = buildActionItems(backendItems.map(item => item.pipelineRecord).filter(Boolean)).filter(action => !dismissedOverlapIds.has(action.id)) }
 
   // FEATURE-003: the unified, server-computed "Worth your attention" list
   // (price changes, renewals, and FEATURE-002's ambiguous-candidate review,
@@ -366,6 +371,28 @@ const renderAuthenticated = async (user, gmailError) => {
       if (!item) return
       renderAttentionDetail(attentionRoot, item)
       attentionDialog.open(card)
+    })
+
+    // "Keep both" on a legacy overlap card - acknowledges it without
+    // changing any subscription, so it's just removed from view (see
+    // dismissedOverlapIds above; "Review subscription" needs no handler,
+    // it's a real link to the pricier subscription's detail page). Patches
+    // the DOM directly rather than re-rendering the whole page, so it
+    // doesn't reset the filter/sort state above, which the overlap section
+    // is otherwise unrelated to.
+    const overlapSection = root.querySelector('[data-attention-overlap]')
+    overlapSection?.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-dismiss-overlap]')
+      if (!button) return
+      dismissedOverlapIds.add(button.dataset.dismissOverlap)
+      refreshOverlapActions()
+      button.closest('.action-card').remove()
+      if (!overlapActions.length) overlapSection.remove()
+      else overlapSection.querySelector('.count-badge').textContent = overlapActions.length
+      const totalEl = root.querySelector('[data-attention-total]')
+      if (totalEl) totalEl.textContent = `${attentionTotal()} to review`
+      updateAttentionBadge()
+      live.announce('Keeping both.')
     })
   }
 
