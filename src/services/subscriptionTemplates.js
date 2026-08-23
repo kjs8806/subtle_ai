@@ -29,6 +29,7 @@ export const SUBSCRIPTION_TEMPLATES = [
   { canonicalService: 'Canva', category: 'Work tools', merchantPatterns: [/canva/i], senderPatterns: [/@canva\.com$/i] },
   { canonicalService: 'NordVPN', category: 'Security', merchantPatterns: [/nordvpn/i], senderPatterns: [/@nordvpn\.com$/i] },
   { canonicalService: 'ExpressVPN', category: 'Security', merchantPatterns: [/expressvpn/i], senderPatterns: [/@expressvpn\.com$/i] },
+  { canonicalService: 'ChatGPT Plus', category: 'Work tools', merchantPatterns: [/chatgpt/i], senderPatterns: [/@openai\.com$/i] },
 
   // Multi-product companies - domain alone never matches; the specific
   // recurring product must be named in the message content.

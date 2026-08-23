@@ -3,8 +3,6 @@
 // src/ui/overview.js and src/ui/subscriptionDetail.js. Kept as a pure function,
 // separate from src/main.js's DOM wiring, so the mapping itself is unit-testable
 // without a DOM.
-const TONES = ['blue', 'navy', 'purple', 'green', 'red']
-const toneFor = (name) => TONES[[...String(name || '')].reduce((sum, char) => sum + char.charCodeAt(0), 0) % TONES.length]
 const money = (value) => typeof value === 'number' ? `$${value.toFixed(2)}` : 'Price not provided'
 // Matches the qualitative confidence labels already used by DESIGN-001's "How do
 // we know?" section (e.g. demo fixtures' "High confidence"/"Medium confidence"),
@@ -45,8 +43,6 @@ export const toDisplayItem = (record) => ({
   currency: record.currency ?? null,
   cadence: record.billingCycle === 'yearly' ? 'yearly' : 'monthly',
   next: record.nextRenewal || 'Not provided',
-  icon: (record.canonicalService || '?').charAt(0).toUpperCase(),
-  tone: toneFor(record.canonicalService),
   takeTone: 'review',
   signal: 'New from receipt',
   analysisTitle: 'Receipt-backed discovery',
@@ -54,8 +50,8 @@ export const toDisplayItem = (record) => ({
   source: record.source || 'Gmail receipt',
   confirmed: formatDate(record.evidence?.[0]?.receivedAt) || 'Not provided',
   confidence: confidenceLabel(firstFieldConfidence(record)),
-  history: (record.priceHistory || []).map((value) => [value.observedAt, money(value.amount)]),
-  bills: (record.billingHistory || []).map((value) => [value.billedAt, money(value.amount)]),
+  history: (record.priceHistory || []).map((value) => [formatDate(value.observedAt) || 'Not provided', money(value.amount)]),
+  bills: (record.billingHistory || []).map((value) => [formatDate(value.billedAt) || 'Not provided', money(value.amount)]),
   pipelineRecord: record,
 })
 
@@ -70,8 +66,6 @@ export const toManualDisplayItem = ({ name, cost, cadence }) => ({
   currency: null,
   cadence,
   next: 'Not provided',
-  icon: name.charAt(0).toUpperCase(),
-  tone: 'navy',
   takeTone: 'good',
   signal: '',
   source: 'Manual entry',

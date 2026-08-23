@@ -1,22 +1,56 @@
+import { NAV_ICONS } from './navigation.js'
+import { subscriptionRow } from './subscriptions.js'
+import { serviceIconMarkup } from '../services/serviceIcons.js'
+
 const money = (value) => typeof value === 'number' ? `$${value.toFixed(2)}` : 'Price not provided'
-const attentionFor = (item) => item.takeTone !== 'good' ? item.signal : ''
 const escapeHtml = value => String(value ?? '').replace(/[&<>"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[character])
+const svg = (paths, viewBox = '0 0 24 24') => `<svg width="18" height="18" viewBox="${viewBox}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`
 
-export const subscriptionRow = (item, discovered = false) => `<button class="subscription-row${discovered ? ' discovered' : ''}" data-subscription-id="${escapeHtml(item.id)}" type="button" aria-label="Review ${escapeHtml(item.name)} ${escapeHtml(item.plan)}"><span class="service-icon service-${escapeHtml(item.tone)}">${escapeHtml(item.icon)}</span><span class="subscription-name"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.plan)}${attentionFor(item) ? ` · <em>${escapeHtml(attentionFor(item))}</em>` : ''}</span></span><span class="subscription-price">${money(typeof item.cost === 'number' ? (item.cadence === 'yearly' ? item.cost / 12 : item.cost) : null)}${typeof item.cost === 'number' ? '<small>/mo</small>' : ''}<span>${escapeHtml(item.next)}</span></span></button>`
+const ICONS = {
+  // A trending sparkline, matching the reference mockup's Monthly spend icon.
+  spend: svg('<path d="M3 15.5 7.5 11l3 3L17 7l4 3.5"/>'),
+  // An ascending bar chart, matching the reference mockup's Annual spend icon.
+  annual: svg('<path d="M5 19v-5M10.5 19V9M16 19v-8M21 19V6"/>'),
+  active: svg('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="m9 12 2 2 4-4"/>'),
+}
 
-// FEATURE-002: an ambiguous candidate is a pending review item, never an
-// active subscription - it gets its own row shape (evidence count + explicit
-// Confirm/Reject actions) rather than reusing subscriptionRow, which opens
-// Subscription Detail and implies an already-discovered record.
-export const candidateRow = (candidate) => `<article class="candidate-row" data-candidate-id="${escapeHtml(candidate.id)}"><div class="candidate-info"><strong>${escapeHtml(candidate.canonicalService)}</strong>${candidate.rawMerchant ? `<span>${escapeHtml(candidate.rawMerchant)}</span>` : ''}<small>${candidate.evidence.length} receipt${candidate.evidence.length === 1 ? '' : 's'} found, not yet confirmed</small></div><div class="candidate-actions"><button class="primary-button" data-confirm-candidate type="button" aria-label="Confirm ${escapeHtml(candidate.canonicalService)} as a subscription">Confirm subscription</button><button class="quiet-button" data-reject-candidate type="button" aria-label="${escapeHtml(candidate.canonicalService)} is not a subscription">Not a subscription</button></div></article>`
+const PREVIEW_LIMIT = 5
+const ATTENTION_PREVIEW_LIMIT = 3
 
-export const overviewMarkup = ({ subscriptions, actions, monthlySpend, upcoming = [], candidates = [], greeting = 'Good morning.', dateLabel = '' }) => {
-  const potentialSavings = actions.reduce((total, action) => total + (action.monthlySavings || 0), 0)
-  return `<div class="app-content wrap" id="overview"><header class="overview-header">${dateLabel ? `<p class="eyebrow">${escapeHtml(dateLabel)}</p>` : ''}<h1>${escapeHtml(greeting)}</h1><p>Here’s what your subscriptions are telling you.</p><button class="secondary-button" data-open-add type="button">Add subscription</button></header>
-<section class="spending-summary" aria-labelledby="spending-title"><p id="spending-title">Monthly recurring spend</p><strong data-spend>${money(monthlySpend)}</strong><span>/month</span>${potentialSavings ? `<div><b>Potential savings</b><strong>${money(potentialSavings)}/month</strong></div>` : ''}<small><span data-count>${subscriptions.length}</span> subscriptions</small></section>
-<section class="attention" id="attention" aria-labelledby="attention-title"><header class="section-heading"><div><p class="eyebrow">${actions.length} actionable opportunities</p><h2 id="attention-title">Worth your attention</h2></div></header><div class="action-feed">${actions.length ? actions.map(action => `<article class="action-card"><p class="action-label">${escapeHtml(action.label)}</p><h3 class="affected-services">${escapeHtml(action.affectedServices.join(' + '))}</h3><p>${escapeHtml(action.body)}</p>${action.saving ? `<p class="impact"><span>${escapeHtml(action.impactLabel)}</span><strong>${escapeHtml(action.saving)}</strong></p>` : ''}<div><button class="primary-button" data-action-target="${escapeHtml(action.id)}" type="button">Review</button>${action.secondary ? `<button class="quiet-button" type="button">${escapeHtml(action.secondary)}</button>` : ''}</div></article>`).join('') : '<p class="empty-state">Nothing needs your attention right now.</p>'}</div></section>
-<section class="upcoming" aria-labelledby="upcoming-title"><h2 id="upcoming-title">Coming up</h2><div class="renewals">${upcoming.length ? upcoming.map(item => `<p><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.date)}</span><b>${escapeHtml(item.amount)}</b></p>`).join('') : '<p class="empty-state">No upcoming renewals detected yet.</p>'}</div></section>
-<section id="subscriptions" class="subscriptions" aria-labelledby="subscriptions-title"><header class="section-heading"><div><p class="eyebrow">Your recurring expenses</p><h2 id="subscriptions-title">Your subscriptions</h2></div></header><div class="subscription-list">${subscriptions.length ? subscriptions.map(item => subscriptionRow(item)).join('') : '<p class="empty-state">No subscriptions yet. Connect Gmail or add one manually.</p>'}</div></section>
-<section id="candidates-review" class="candidates-review" aria-labelledby="candidates-title"><header class="section-heading"><div><p class="eyebrow">${candidates.length} to review</p><h2 id="candidates-title">Needs your review</h2></div></header><p class="section-hint">Subtle found receipts that might be subscriptions but couldn't confirm automatically.</p><div class="candidate-list">${candidates.length ? candidates.map(candidateRow).join('') : '<p class="empty-state">Nothing to review right now.</p>'}</div></section>
-<section class="sync-status" aria-label="Subscription source status"><div><strong>Gmail receipts</strong><span data-gmail-message>Connect to discover receipts</span></div><span data-gmail-status>Not connected</span><button class="secondary-button" data-gmail-action="connect" type="button">Find subscriptions from receipts</button><button class="quiet-button" data-gmail-disconnect type="button" hidden>Disconnect Gmail</button><div class="discovery-result" data-discovery-result hidden></div></section></div>`
+// Overview's job is orientation, not management: a limited subscriptions
+// preview (full list lives on /subscriptions), a limited attention preview
+// (full review lives on /attention), and one small read-only source-status
+// card (management lives on /sources). No settings, no full candidate review,
+// no interactive Gmail controls belong here.
+const attentionPreviewItem = (candidate) => `<a class="attention-preview-item" href="#/attention">${serviceIconMarkup(candidate.canonicalService, { size: 'sm' })}<span class="who"><strong>${escapeHtml(candidate.canonicalService)}</strong><span>Possible subscription · Uncertain</span></span>${NAV_ICONS.chevron}</a>`
+
+export const overviewMarkup = ({ subscriptions = [], actions = [], monthlySpend, candidates = [], greeting = 'Good morning.', dateLabel = '', gmailSource, gmailSourceUnavailable = false }) => {
+  const activeCount = subscriptions.length
+  const attentionTotal = actions.length + candidates.length
+  const preview = subscriptions.slice(0, PREVIEW_LIMIT)
+  const attentionPreview = [...actions.map(action => ({ isAction: true, action })), ...candidates.map(candidate => ({ isAction: false, candidate }))].slice(0, ATTENTION_PREVIEW_LIMIT)
+
+  const connected = !gmailSourceUnavailable && gmailSource?.status === 'connected'
+  const lastScan = connected && gmailSource?.lastScanAt ? new Date(gmailSource.lastScanAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null
+  const sourceStatusText = gmailSourceUnavailable ? "Status unavailable" : connected ? (lastScan ? `Last scan ${lastScan}` : 'Connected · ready to scan') : 'Not connected'
+
+  return `<div class="main-content wrap" id="page-overview"><header class="overview-header">${dateLabel ? `<p class="eyebrow">${escapeHtml(dateLabel)}</p>` : ''}<h1>${escapeHtml(greeting)}</h1><p>Here’s what your subscriptions are telling you.</p></header>
+
+<section class="stat-grid" aria-label="Spending summary">
+<div class="stat-card" aria-labelledby="spending-title"><p id="spending-title">Monthly recurring spend</p><strong data-spend>${money(monthlySpend)}</strong><small><span data-count>${activeCount}</span> subscriptions</small><span class="stat-icon">${ICONS.spend}</span></div>
+<div class="stat-card"><p>Annual spend</p><strong data-annual-spend>${money(monthlySpend * 12)}</strong><span class="stat-meta">Projected</span><span class="stat-icon tone-success">${ICONS.annual}</span></div>
+<div class="stat-card"><p>Active subscriptions</p><strong data-active-count>${activeCount}</strong><span class="stat-icon">${ICONS.active}</span></div>
+<div class="stat-card"><p>Worth your attention</p><strong data-attention-count>${attentionTotal}</strong><span class="stat-meta">${attentionTotal ? 'Needs review' : 'All clear'}</span><span class="stat-icon tone-coral">${NAV_ICONS.attention}</span></div>
+</section>
+
+<div class="overview-grid">
+<section class="panel-card subscriptions-preview" aria-labelledby="subscriptions-title"><div class="panel-head"><h2 id="subscriptions-title">Your subscriptions</h2><span class="count-badge">${activeCount} active</span></div><div class="subscription-list">${preview.length ? preview.map(item => subscriptionRow(item)).join('') : '<p class="empty-state">No subscriptions yet. Connect Gmail or add one manually.</p>'}</div>${subscriptions.length ? `<div class="panel-foot"><a href="#/subscriptions">View all subscriptions</a></div>` : ''}</section>
+
+<div class="overview-side">
+<section class="panel-card attention-preview" aria-labelledby="attention-title"><div class="panel-head"><h2 id="attention-title">Worth your attention</h2>${attentionTotal ? `<span class="count-badge">${attentionTotal}</span>` : ''}</div><div class="attention-preview-list">${attentionPreview.length ? attentionPreview.map(entry => entry.isAction ? `<a class="attention-preview-item" href="#/attention"><span class="action-icon">${NAV_ICONS.attention}</span><span class="who"><strong>${escapeHtml(entry.action.label)}</strong><span>${escapeHtml(entry.action.affectedServices.join(' + '))}</span></span>${NAV_ICONS.chevron}</a>` : attentionPreviewItem(entry.candidate)).join('') : '<p class="empty-state">Nothing needs your attention right now.</p>'}</div>${attentionTotal ? `<div class="panel-foot"><a href="#/attention">View all</a></div>` : ''}</section>
+
+<section class="panel-card source-status-card" aria-labelledby="source-status-title"><div class="panel-head"><h2 id="source-status-title">Sources</h2></div><div class="source-status-row"><span class="service-icon icon-md" style="background:#fdece2;color:#b84f22">${svg('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>')}</span><span class="who"><strong>Gmail</strong><span data-gmail-status-preview>${escapeHtml(sourceStatusText)}</span></span></div><div class="panel-foot"><a href="#/sources">Manage sources</a></div></section>
+</div>
+</div>
+</div>`
 }
