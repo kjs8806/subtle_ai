@@ -341,6 +341,7 @@ button,a,input,select{font:inherit}
 [data-saving] strong{color:var(--coral-ink)}
 
 .evidence{padding:20px 24px}
+.evidence-title{margin:0 0 14px;font:700 16px 'Inter',sans-serif}
 .evidence-list{display:flex;flex-direction:column;gap:8px}
 .evidence-item{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--paper)}
 .evidence-item .evidence-icon{display:grid;flex-shrink:0;width:32px;height:32px;place-items:center;border-radius:50%}

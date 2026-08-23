@@ -35,7 +35,7 @@ export const detailMarkup = () => `<div class="main-content wrap" id="page-subsc
 
 <section data-notice class="panel-card" hidden><strong data-notice-title></strong><p data-notice-copy></p><p data-saving hidden><span>Potential savings</span> <strong></strong></p></section>
 
-<section class="panel-card evidence" aria-labelledby="evidence-title"><div class="panel-head"><h2 id="evidence-title">Information source</h2></div><div class="evidence-list" data-evidence-list></div><details data-evidence-more hidden><summary>Show all evidence</summary><div class="evidence-list" data-evidence-list-more></div></details><dl class="provenance-dl"><div><dt>Last confirmed</dt><dd data-confirmed></dd></div><div><dt>Evidence confidence</dt><dd data-confidence></dd></div></dl></section>
+<section class="panel-card evidence" aria-labelledby="evidence-title"><h2 id="evidence-title" class="evidence-title">Information source</h2><div class="evidence-list" data-evidence-list></div><details data-evidence-more hidden><summary>Show all evidence</summary><div class="evidence-list" data-evidence-list-more></div></details><dl class="provenance-dl"><div><dt>Last confirmed</dt><dd data-confirmed></dd></div><div><dt>Evidence confidence</dt><dd data-confidence></dd></div></dl></section>
 
 <section class="panel-card"><details><summary>Price history</summary><div data-price-history></div></details><details><summary>Billing history</summary><div data-billing-history></div></details></section>
 

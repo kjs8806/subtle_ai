@@ -50,8 +50,8 @@ export const toDisplayItem = (record) => ({
   source: record.source || 'Gmail receipt',
   confirmed: formatDate(record.evidence?.[0]?.receivedAt) || 'Not provided',
   confidence: confidenceLabel(firstFieldConfidence(record)),
-  history: (record.priceHistory || []).map((value) => [value.observedAt, money(value.amount)]),
-  bills: (record.billingHistory || []).map((value) => [value.billedAt, money(value.amount)]),
+  history: (record.priceHistory || []).map((value) => [formatDate(value.observedAt) || 'Not provided', money(value.amount)]),
+  bills: (record.billingHistory || []).map((value) => [formatDate(value.billedAt) || 'Not provided', money(value.amount)]),
   pipelineRecord: record,
 })
 
