@@ -31,11 +31,11 @@ const KNOWN_SERVICES = [...new Set(SUBSCRIPTION_TEMPLATES.map(({ canonicalServic
 // consequential, form-shaped actions that benefit from a focused surface.
 export const detailMarkup = () => `<div class="main-content wrap" id="page-subscription-detail"><a class="back-link" href="#/subscriptions">${NAV_ICONS.back}Back to Subscriptions</a>
 
-<header class="detail-identity panel-card"><div class="detail-identity-top">${serviceIconMarkup('', { size: 'lg' })}<div class="detail-identity-who"><div class="id-top"><h1 id="detail-title"></h1><span class="status-pill" data-detail-status>Active</span></div><span data-detail-plan></span></div></div><p class="detail-price"><strong data-detail-cost></strong><span class="provenance-pill" data-detail-provenance hidden>${ICON_CHECK}Confirmed by you</span></p><div class="meta-rows"><div><span>Billing cadence</span><strong data-detail-cadence></strong></div><div><span>Next renewal</span><strong data-detail-next></strong></div><div><span>Annualized cost</span><strong data-detail-annual></strong></div><div><span>Status</span><strong data-detail-status-meta></strong></div></div></header>
+<header class="detail-identity panel-card"><div class="detail-identity-top">${serviceIconMarkup('', { size: 'lg' })}<div class="detail-identity-who"><div class="id-top"><h1 id="detail-title"></h1><span class="status-pill" data-detail-status>Active</span></div><span data-detail-plan></span></div></div><p class="detail-price"><strong data-detail-cost></strong><span class="provenance-pill" data-detail-provenance hidden>${ICON_CHECK}Confirmed by you</span></p><div class="meta-rows"><div><span>Billing cadence</span><strong data-detail-cadence></strong></div><div><span data-detail-next-label>Next renewal</span><strong data-detail-next></strong></div><div><span>Annualized cost</span><strong data-detail-annual></strong></div><div><span>Status</span><strong data-detail-status-meta></strong></div></div></header>
 
 <section data-notice class="panel-card" hidden><strong data-notice-title></strong><p data-notice-copy></p><p data-saving hidden><span>Potential savings</span> <strong></strong></p></section>
 
-<section class="panel-card evidence" aria-labelledby="evidence-title"><div class="panel-head"><h2 id="evidence-title">Information source</h2></div><div class="evidence-list" data-evidence-list></div><details data-evidence-more hidden><summary>Show all evidence</summary><div class="evidence-list" data-evidence-list-more></div></details><dl class="provenance-dl"><div><dt>Current cost</dt><dd data-cost-source></dd></div><div><dt>Billing cadence</dt><dd data-cadence-source></dd></div><div><dt>Next renewal</dt><dd data-renewal-source></dd></div><div><dt>Last confirmed</dt><dd data-confirmed></dd></div><div><dt>Evidence confidence</dt><dd data-confidence></dd></div></dl></section>
+<section class="panel-card evidence" aria-labelledby="evidence-title"><div class="panel-head"><h2 id="evidence-title">Information source</h2></div><div class="evidence-list" data-evidence-list></div><details data-evidence-more hidden><summary>Show all evidence</summary><div class="evidence-list" data-evidence-list-more></div></details><dl class="provenance-dl"><div><dt>Last confirmed</dt><dd data-confirmed></dd></div><div><dt>Evidence confidence</dt><dd data-confidence></dd></div></dl></section>
 
 <section class="panel-card"><details><summary>Price history</summary><div data-price-history></div></details><details><summary>Billing history</summary><div data-billing-history></div></details></section>
 
@@ -114,6 +114,17 @@ const formatDate = (value) => {
   return Number.isNaN(date.getTime()) ? null : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+// FEATURE-003: a renewal date backed by a confirmed observation or a user
+// correction is presented as fact ("Next renewal"); one only inferred from
+// weaker signals is labeled "Expected renewal" instead, so it's never shown
+// with the same certainty as a confirmed date. No label games are played
+// when there's no date at all - toDisplayItem/subscriptionMapper.js already
+// leaves item.next as "Not provided" rather than inventing one.
+export const renewalLabel = (item) => {
+  if (!item.next || item.next === 'Not provided') return 'Next renewal'
+  return fieldProvenance(item, 'nextRenewal').startsWith('Inferred from') ? 'Expected renewal' : 'Next renewal'
+}
+
 // A unified, reverse-chronological "information source" trail: every raw
 // receipt this subscription was built/updated from (from evidence, never
 // altered) plus every user correction (from corrections) - each visually
@@ -159,6 +170,7 @@ export const renderDetail = (root, item) => {
   root.querySelector('[data-detail-status-meta]').textContent = (item.status || 'active').charAt(0).toUpperCase() + (item.status || 'active').slice(1)
   root.querySelector('[data-detail-cost]').textContent = monthlyCost === null ? moneyWithCurrency(null) : `${moneyWithCurrency(monthlyCost, item.currency)} / month`
   root.querySelector('[data-detail-cadence]').textContent = item.cadence === 'yearly' ? 'Yearly' : 'Monthly'
+  root.querySelector('[data-detail-next-label]').textContent = renewalLabel(item)
   root.querySelector('[data-detail-next]').textContent = item.next
   root.querySelector('[data-detail-annual]').textContent = moneyWithCurrency(annualCost, item.currency)
   root.querySelector('[data-detail-provenance]').hidden = fieldProvenance(item, 'amount') !== 'Confirmed by you'
@@ -177,9 +189,6 @@ export const renderDetail = (root, item) => {
     if (item.comparison) saving.querySelector('strong').textContent = item.comparison.savings
   }
 
-  root.querySelector('[data-cost-source]').textContent = fieldProvenance(item, 'amount')
-  root.querySelector('[data-cadence-source]').textContent = fieldProvenance(item, 'cadence')
-  root.querySelector('[data-renewal-source]').textContent = fieldProvenance(item, 'nextRenewal')
   root.querySelector('[data-confirmed]').textContent = item.confirmed || 'Not provided'
   root.querySelector('[data-confidence]').textContent = item.confidence || 'Not provided'
 

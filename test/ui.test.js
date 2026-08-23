@@ -9,7 +9,7 @@ import { filterAndSortSubscriptions, subscriptionRow, subscriptionsPageMarkup, s
 import { actionCard, attentionPageMarkup, candidateRow } from '../src/ui/attention.js'
 import { sourcesPageMarkup } from '../src/ui/sources.js'
 import { settingsPageMarkup } from '../src/ui/settings.js'
-import { correctionDialogMarkup, detailMarkup, fieldProvenance, rejectConfirmMarkup } from '../src/ui/subscriptionDetail.js'
+import { correctionDialogMarkup, detailMarkup, fieldProvenance, rejectConfirmMarkup, renewalLabel } from '../src/ui/subscriptionDetail.js'
 import { gmailDisclosureMarkup } from '../src/ui/gmailDisclosure.js'
 import { signedOutMarkup } from '../src/ui/signedOut.js'
 import { FALLBACK_SERVICE_ICON, serviceIconFor, serviceIconMarkup } from '../src/services/serviceIcons.js'
@@ -192,6 +192,24 @@ test('Subscription Detail follows the approved hierarchy and exposes FEATURE-002
   assert.match(detail, /data-toggle-correction/)
   assert.match(detail, /data-open-reject/)
 
+  // Primary facts area: billing cadence, (expected/next) renewal, annualized
+  // cost, and status - no per-field "Confirmed from Gmail receipt" provenance
+  // text repeated under any of them (that lives in Information source now),
+  // and "Current cost" is never repeated here since price is already
+  // prominent right above under the service name.
+  assert.match(detail, /class="meta-rows"/)
+  assert.match(detail, /data-detail-next-label/)
+  assert.doesNotMatch(detail, /data-cost-source|data-cadence-source|data-renewal-source/, 'per-field provenance text no longer lives in the primary facts area')
+  const metaRowsSection = detail.slice(detail.indexOf('class="meta-rows"'), detail.indexOf('</header>'))
+  assert.doesNotMatch(metaRowsSection, /Current cost/)
+
+  // Information source keeps only the record-level provenance (when it was
+  // last confirmed, how confident the evidence is) - field-level provenance
+  // for corrected fields still comes through the evidence list itself
+  // ("You updated price ... Confirmed by you").
+  assert.match(detail, /<dt>Last confirmed<\/dt><dd data-confirmed>/)
+  assert.match(detail, /<dt>Evidence confidence<\/dt><dd data-confidence>/)
+
   // FEATURE-002 correction: one unified form with every supported field,
   // not a "pick one field, then a value" workflow.
   const correction = correctionDialogMarkup()
@@ -233,6 +251,14 @@ test('Subscription Detail follows the approved hierarchy and exposes FEATURE-002
   assert.equal(fieldProvenance({ source: 'Gmail receipt', pipelineRecord: { confidence: { state: 'inferred' } } }, 'amount'), 'Inferred from Gmail receipt')
   assert.equal(fieldProvenance({ source: 'Gmail receipt', pipelineRecord: { fieldObservations: [{ field: 'amount', provenance: 'confirmed' }] } }, 'amount'), 'Confirmed from Gmail receipt')
   assert.equal(fieldProvenance({ source: 'Manual entry' }, 'amount'), 'User provided')
+
+  // FEATURE-003: a merely-inferred renewal date is never presented with the
+  // same certainty as a confirmed one, and no date is invented when there
+  // isn't one.
+  assert.equal(renewalLabel({ next: 'Sep 12, 2026', source: 'Gmail receipt', pipelineRecord: { confidence: { state: 'inferred' } } }), 'Expected renewal')
+  assert.equal(renewalLabel({ next: 'Sep 12, 2026', source: 'Gmail receipt', pipelineRecord: { fieldObservations: [{ field: 'nextRenewal', provenance: 'confirmed' }] } }), 'Next renewal')
+  assert.equal(renewalLabel({ next: 'Sep 12, 2026', pipelineRecord: { corrections: [{ field: 'next_renewal' }] } }), 'Next renewal')
+  assert.equal(renewalLabel({ next: 'Not provided' }), 'Next renewal')
 
   const disclosure = gmailDisclosureMarkup()
   assert.match(disclosure, /Find subscriptions from receipts/)

@@ -328,7 +328,7 @@ button,a,input,select{font:inherit}
 .detail-identity h1{margin:0 0 2px;font:700 24px 'Inter',sans-serif;letter-spacing:-.01em}
 .detail-identity [data-detail-plan]{display:block;color:var(--muted);font-size:13.5px}
 .detail-identity .detail-price{display:flex;align-items:center;flex-wrap:wrap;margin:18px 0 0;font:700 30px 'Inter',sans-serif;letter-spacing:-.02em}
-.meta-rows{display:grid;grid-template-columns:repeat(2,1fr);gap:14px 20px;margin-top:18px;padding-top:16px;border-top:1px solid var(--border)}
+.meta-rows{display:grid;grid-template-columns:repeat(4,1fr);gap:14px 20px;margin-top:18px;padding-top:16px;border-top:1px solid var(--border)}
 .meta-rows div{display:flex;flex-direction:column;gap:4px;font-size:13px}
 .meta-rows span{color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.02em}
 .meta-rows strong{font-weight:600;font-size:14.5px}
