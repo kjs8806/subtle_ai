@@ -4,11 +4,17 @@ async function signIn(page) {
   await page.goto('/')
   await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible()
   await page.getByRole('button', { name: 'Continue with Google' }).click()
-  await expect(page.getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page')
+  await expect(page.locator('#page-overview')).toBeVisible()
 }
 
 async function connectAndScan(page) {
-  await page.getByRole('link', { name: 'Sources' }).click()
+  const mobileMenuButton = page.getByRole('button', { name: 'Menu' })
+  if (await mobileMenuButton.isVisible().catch(() => false)) {
+    await mobileMenuButton.click()
+    await page.locator('#mobile-menu').getByRole('link', { name: 'Sources' }).click()
+  } else {
+    await page.getByRole('link', { name: 'Sources' }).click()
+  }
   const action = page.locator('[data-gmail-action]')
   await expect(action).toHaveText(/Find subscriptions from receipts/)
   await action.click()
@@ -18,10 +24,20 @@ async function connectAndScan(page) {
   await expect(page.locator('[data-last-scan-results]')).toContainText('subscription')
 }
 
+async function navigateTo(page, name) {
+  const mobileMenuButton = page.getByRole('button', { name: 'Menu' })
+  if (await mobileMenuButton.isVisible().catch(() => false)) {
+    await mobileMenuButton.click()
+    await page.locator('#mobile-menu').getByRole('link', { name }).click()
+  } else {
+    await page.getByRole('link', { name }).click()
+  }
+}
+
 test('@critical sign in → Connect Gmail → Scan → subscription appears', async ({ page }) => {
   await signIn(page)
   await connectAndScan(page)
-  await page.getByRole('link', { name: 'Subscriptions' }).click()
+  await navigateTo(page, 'Subscriptions')
   await expect(page.locator('[data-subscription-rows] [data-subscription-id]')).toHaveCount(6)
   await expect(page.getByText('Netflix', { exact: true })).toBeVisible()
 })
@@ -29,7 +45,7 @@ test('@critical sign in → Connect Gmail → Scan → subscription appears', as
 test('@critical subscription detail → correction → corrected provenance visible', async ({ page }) => {
   await signIn(page)
   await connectAndScan(page)
-  await page.getByRole('link', { name: 'Subscriptions' }).click()
+  await navigateTo(page, 'Subscriptions')
   await page.getByRole('link', { name: /Review Netflix/ }).click()
   await expect(page.getByRole('heading', { name: 'Netflix' })).toBeVisible()
 
@@ -46,7 +62,7 @@ test('@critical subscription detail → correction → corrected provenance visi
 test('@critical reject subscription → confirm dialog → removed from active list', async ({ page }) => {
   await signIn(page)
   await connectAndScan(page)
-  await page.getByRole('link', { name: 'Subscriptions' }).click()
+  await navigateTo(page, 'Subscriptions')
   await page.getByRole('link', { name: /Review Spotify/ }).click()
   await page.getByRole('button', { name: 'Not a subscription' }).click()
   const dialog = page.getByRole('dialog', { name: 'Not a subscription?' })
@@ -59,7 +75,7 @@ test('@critical reject subscription → confirm dialog → removed from active l
 test('ambiguous candidate can be confirmed and rejected', async ({ page }) => {
   await signIn(page)
   await connectAndScan(page)
-  await page.getByRole('link', { name: 'Worth your attention' }).click()
+  await navigateTo(page, 'Worth your attention')
 
   const candidates = page.locator('[data-candidate-id]')
   await expect(candidates).toHaveCount(2)
@@ -94,7 +110,7 @@ test('@mobile mobile navigation opens, routes, and closes with Escape', async ({
 
 test('empty state is honest before first scan', async ({ page }) => {
   await signIn(page)
-  await page.getByRole('link', { name: 'Subscriptions' }).click()
+  await navigateTo(page, 'Subscriptions')
   await expect(page.getByRole('heading', { name: 'No subscriptions yet' })).toBeVisible()
   await expect(page.getByText(/haven't found any subscriptions/i)).toBeVisible()
 })
@@ -111,7 +127,7 @@ test('session API failure shows retryable error state', async ({ page }) => {
 test('@mobile consequential dialogs are keyboard-operable and return focus', async ({ page }) => {
   await signIn(page)
   await connectAndScan(page)
-  await page.getByRole('link', { name: 'Subscriptions' }).click()
+  await navigateTo(page, 'Subscriptions')
   await page.getByRole('link', { name: /Review Netflix/ }).click()
 
   const trigger = page.getByRole('button', { name: 'This looks wrong' })
