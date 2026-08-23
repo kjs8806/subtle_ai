@@ -103,7 +103,9 @@ button,a,input,select{font:inherit}
 .sidebar-user-menu button:hover{background:var(--paper);color:var(--ink)}
 
 .mobile-topbar{display:none}
-.menu-button{display:grid;place-items:center;width:44px;height:44px;padding:0;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--ink)}
+.menu-button{display:grid;flex-shrink:0;place-items:center;width:44px;height:44px;padding:0;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--ink-soft);cursor:pointer}
+.menu-button:hover{border-color:var(--purple);color:var(--purple-ink)}
+.menu-button[aria-expanded="true"]{border-color:var(--purple);background:var(--purple-soft);color:var(--purple-ink)}
 .mobile-menu{display:none}
 
 /* ---------- Main content ---------- */
