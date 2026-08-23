@@ -116,7 +116,7 @@ const renderAuthenticated = async (user, gmailError) => {
   const findSubscription = id => allItems().find(item => String(item.id) === String(id))
 
   // ---- persistent shell (sidebar, dialogs, footer) -----------------------
-  app.innerHTML = `<div class="app-shell">${navigationMarkup(brand, { activeRoute: currentRoute().name, attentionCount: candidates.length })}<div class="main-col"><div data-page-root></div><footer class="app-footer wrap">${brand}<span>Private by design</span></footer></div></div>${gmailDisclosureMarkup()}${correctionDialogMarkup()}${rejectConfirmMarkup()}${addDialogMarkup}`
+  app.innerHTML = `<div class="app-shell">${navigationMarkup(brand, { activeRoute: currentRoute().name, attentionCount: candidates.length })}<div class="main-col"><div data-page-root></div></div></div>${gmailDisclosureMarkup()}${correctionDialogMarkup()}${rejectConfirmMarkup()}${addDialogMarkup}`
   initializeNavigation(app)
 
   const pageRoot = document.querySelector('[data-page-root]')
