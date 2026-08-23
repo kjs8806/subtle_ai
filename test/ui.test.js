@@ -333,15 +333,15 @@ test('the landing page offers only the real Google sign-in control and no fabric
   assert.match(page, /Trusted by people who want clarity and control/)
 
   // The product-preview panel is illustrative, not live data, and is marked
-  // aria-hidden - the only real interactive elements on the whole page are
-  // the Google button and the one "Learn how it works" anchor (the preview
-  // itself is built entirely from div/span/strong/em/small, never <a> or
-  // <button>, so nothing in it reads as a control that happens to do nothing).
+  // aria-hidden - the only real interactive element on the whole page is the
+  // Google button (the preview itself is built entirely from
+  // div/span/strong/em/small, never <a> or <button>, so nothing in it reads
+  // as a control that happens to do nothing).
   assert.match(page, /class="landing-preview" aria-hidden="true"/)
   assert.equal((page.match(/<button/g) || []).length, 1)
-  assert.equal((page.match(/<a /g) || []).length, 1)
+  assert.equal((page.match(/<a /g) || []).length, 0)
 
-  // "Learn more" is a real in-page anchor to the feature section, not a link
-  // to a marketing page that doesn't exist.
+  // The feature section keeps its id as the target of the header's
+  // "Learn more" anchor (added in main.js, outside signedOutMarkup).
   assert.match(page, /id="learn-more"/)
 })
