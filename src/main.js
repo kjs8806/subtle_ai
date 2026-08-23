@@ -17,7 +17,8 @@ import { loadingMarkup, sessionErrorMarkup, signedOutMarkup } from './ui/signedO
 
 const APP_CONFIG = { name: 'Subtle AI', tagline: 'Your AI subscription optimizer' }
 const brandMark = `<img class="brand-mark" src="/icon.png" width="32" height="32" alt="" aria-hidden="true">`
-const brand = `<a class="brand" href="#${routePath('overview')}" aria-label="${APP_CONFIG.name} home">${brandMark}<span class="brand-text"><span class="brand-name">${APP_CONFIG.name}</span><span class="brand-tagline">${APP_CONFIG.tagline}</span></span></a>`
+const brandWordmark = `<img class="brand-wordmark" src="/wordmark.png" width="97" height="20" alt="${APP_CONFIG.name}">`
+const brand = `<a class="brand" href="#${routePath('overview')}" aria-label="${APP_CONFIG.name} home">${brandMark}<span class="brand-text">${brandWordmark}<span class="brand-tagline">${APP_CONFIG.tagline}</span></span></a>`
 const shellHeader = `<header class="pre-auth-header wrap">${brand}</header>`
 const addDialogMarkup = `<div class="dialog-backdrop" data-add-dialog hidden><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="add-title"><button class="dialog-close" data-close-dialog aria-label="Close">×</button><p class="eyebrow">Manual entry</p><h2 id="add-title">Add a subscription</h2><form class="subscription-form"><label>Service name<input name="name" placeholder="e.g. Netflix" required></label><div class="form-row"><label>Cost<input name="cost" type="number" min="0" step="0.01" inputmode="decimal" placeholder="22.99" required></label><label>Billing cadence<select name="cadence"><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></label></div><button class="primary-button form-submit" type="submit">Add to overview</button></form></section></div>`
 

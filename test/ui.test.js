@@ -263,7 +263,7 @@ test('known canonical services get a distinct icon; unmapped merchants get the n
 test('the product is branded "Subtle AI" throughout, not "Subtle"', () => {
   const main = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8')
   assert.match(main, /name:\s*'Subtle AI'/)
-  assert.match(main, /brand-name">\$\{APP_CONFIG\.name\}/)
+  assert.match(main, /brand-wordmark" src="\/wordmark\.png"[\s\S]{0,40}alt="\$\{APP_CONFIG\.name\}"/)
   assert.match(main, /document\.title = APP_CONFIG\.name/)
 })
 

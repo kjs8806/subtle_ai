@@ -70,8 +70,8 @@ button,a,input,select{font:inherit}
 .sidebar{display:flex;flex-direction:column;flex-shrink:0;width:var(--sidebar-w);height:100vh;position:sticky;top:0;padding:24px 16px;border-right:1px solid var(--border);background:var(--surface);overflow:hidden}
 .brand{display:flex;align-items:center;gap:10px;color:inherit;text-decoration:none}
 .sidebar-brand{padding:6px 10px 8px}
-.brand .brand-name{display:block;font-weight:800;font-size:17px;letter-spacing:-.01em}
-.brand .brand-tagline{display:block;margin-top:1px;color:var(--muted-soft);font-size:11px}
+.brand .brand-wordmark{display:block;height:20px;width:auto}
+.brand .brand-tagline{display:block;margin-top:3px;color:var(--muted-soft);font-size:11px}
 .brand-mark{display:block;flex-shrink:0}
 .pre-auth-header .brand .brand-tagline{display:none}
 
