@@ -15,11 +15,11 @@ export default defineConfig({
   webServer: [
     {
       command: 'node server/app.js',
-      url: 'http://127.0.0.1:5174/api/v1/health',
+      url: 'http://127.0.0.1:8787/api/v1/health',
       env: {
         ...process.env,
         HOST: '127.0.0.1',
-        PORT: '5174',
+        PORT: '8787',
         GMAIL_PROVIDER: 'mock',
         PERSISTENCE_PROVIDER: 'memory',
       },
@@ -28,10 +28,6 @@ export default defineConfig({
     {
       command: 'vite --host 127.0.0.1 --port 4173',
       url: 'http://127.0.0.1:4173',
-      env: {
-        ...process.env,
-        VITE_API_TARGET: 'http://127.0.0.1:5174',
-      },
       reuseExistingServer: !process.env.CI,
     },
   ],
