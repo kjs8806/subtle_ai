@@ -159,10 +159,35 @@ test('Subscription Detail follows the approved hierarchy and exposes FEATURE-002
   assert.match(detail, /data-toggle-correction/)
   assert.match(detail, /data-open-reject/)
 
+  // FEATURE-002 correction: one unified form with every supported field,
+  // not a "pick one field, then a value" workflow.
   const correction = correctionDialogMarkup()
+  assert.doesNotMatch(correction, /data-correction-field/, 'the single-field selector must be gone')
+  assert.match(correction, />Service</)
+  assert.match(correction, />Plan</)
+  assert.match(correction, />Price</)
+  assert.match(correction, />Billing cadence</)
+  assert.match(correction, />Next renewal date</)
+  assert.match(correction, /data-correction-service>/)
+  assert.match(correction, /data-correction-service-icon/)
+  assert.match(correction, /data-correction-plan/)
+  assert.match(correction, /data-correction-price/)
+  assert.match(correction, /data-correction-currency/)
+  assert.match(correction, /<option value="USD">USD<\/option>/)
+  assert.match(correction, /<option value="CAD">CAD<\/option>/)
+  assert.match(correction, /data-correction-cadence/)
+  assert.match(correction, /data-correction-renewal/)
+  assert.match(correction, /type="date"/)
+  // Save starts disabled - nothing has changed yet (populated by
+  // renderCorrectionDialog/wireCorrectionDialogInteractions at open time).
+  assert.match(correction, /data-correction-submit disabled/)
   assert.match(correction, /We'll keep the original receipt evidence so you can always see where this came from\./)
   assert.match(correction, /Cancel/)
   assert.match(correction, /Save changes/)
+  // Every known canonical service is offered by name (Netflix used only as
+  // one representative check - the option list itself is data-driven from
+  // SUBSCRIPTION_TEMPLATES, not hardcoded per service).
+  assert.match(correction, />Netflix</)
 
   const reject = rejectConfirmMarkup()
   assert.match(reject, /Not a subscription\?/)

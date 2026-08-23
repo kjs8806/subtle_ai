@@ -11,7 +11,7 @@ import { subscriptionsPageMarkup } from './ui/subscriptions.js'
 import { attentionPageMarkup } from './ui/attention.js'
 import { sourcesPageMarkup } from './ui/sources.js'
 import { settingsPageMarkup } from './ui/settings.js'
-import { correctionDialogMarkup, detailMarkup, rejectConfirmMarkup, renderCorrectionDialog, renderDetail } from './ui/subscriptionDetail.js'
+import { collectChangedCorrections, correctionDialogMarkup, detailMarkup, rejectConfirmMarkup, renderCorrectionDialog, renderDetail, wireCorrectionDialogInteractions } from './ui/subscriptionDetail.js'
 import { loadingMarkup, sessionErrorMarkup, signedOutMarkup } from './ui/signedOut.js'
 
 const APP_CONFIG = { name: 'Subtle AI', tagline: 'Your AI subscription optimizer' }
@@ -123,6 +123,7 @@ const renderAuthenticated = async (user, gmailError) => {
   const gmailRoot = document.querySelector('[data-gmail-dialog]'); const gmailDialog = createDialogController(gmailRoot)
   const addRoot = document.querySelector('[data-add-dialog]'); const addDialog = createDialogController(addRoot)
   const correctionRoot = document.querySelector('[data-correction-dialog]'); const correctionDialog = createDialogController(correctionRoot)
+  wireCorrectionDialogInteractions(correctionRoot)
   const rejectRoot = document.querySelector('[data-reject-dialog]'); const rejectDialog = createDialogController(rejectRoot)
 
   const renderSidebarFooter = () => { const slot = document.querySelector('[data-sidebar-footer]'); if (slot) slot.innerHTML = sidebarFooterMarkup(user, gmailSourceUnavailable ? null : gmailSource) }
@@ -271,29 +272,31 @@ const renderAuthenticated = async (user, gmailError) => {
   // ---- FEATURE-002: corrections ("This looks wrong") and "Not a
   // subscription" rejection, both scoped to `currentSubscriptionId`
   // (stamped by renderSubscriptionDetailRoute whenever that route renders).
-  const coerceCorrectionValue = (field, raw) => {
-    const trimmed = typeof raw === 'string' ? raw.trim() : raw
-    if (field === 'currentPrice') { const parsed = Number(trimmed); return Number.isFinite(parsed) ? parsed : trimmed }
-    if (field === 'currency') return typeof trimmed === 'string' ? trimmed.toUpperCase() : trimmed
-    return trimmed
-  }
+  // The correction form gathers every changed field, then submits them as
+  // separate PATCHes (the API is single-field, per FEATURE-002's existing
+  // per-field provenance/conflict handling) - one user "Save changes" click,
+  // sequential requests underneath so an untouched field is never touched.
   correctionRoot.querySelector('[data-correction-form]').addEventListener('submit', async (event) => {
     event.preventDefault()
     const errorEl = correctionRoot.querySelector('[data-correction-error]')
     errorEl.hidden = true
     if (!currentSubscriptionId) return
-    const field = correctionRoot.querySelector('[data-correction-field]').value
-    const rawValue = correctionRoot.querySelector('[data-correction-value]').value
-    if (!rawValue.trim()) { errorEl.hidden = false; errorEl.textContent = 'Enter a corrected value.'; return }
-    const submitButton = event.currentTarget.querySelector('button[type="submit"]')
+    const changes = collectChangedCorrections(correctionRoot)
+    if (!changes.length) { correctionDialog.close(); return }
+    const submitButton = correctionRoot.querySelector('[data-correction-submit]')
     submitButton.disabled = true
+    let updated = null
     try {
-      const updated = await feature001Api.correctSubscription(currentSubscriptionId, field, coerceCorrectionValue(field, rawValue))
+      for (const change of changes) updated = await feature001Api.correctSubscription(currentSubscriptionId, change.field, change.value)
       backendItems = backendItems.map(item => item.remoteId === updated.id ? toDisplayItem(updated) : item)
       correctionDialog.close()
       await renderRoute()
-      live.announce('Correction saved.')
+      live.announce(changes.length === 1 ? 'Correction saved.' : 'Corrections saved.')
     } catch (error) {
+      // Whatever succeeded before the failure is already applied server-side -
+      // refresh so Subscription Detail reflects that partial progress
+      // honestly instead of silently hiding it or claiming nothing saved.
+      if (updated) { backendItems = backendItems.map(item => item.remoteId === updated.id ? toDisplayItem(updated) : item); await renderRoute() }
       errorEl.hidden = false
       errorEl.textContent = error.message || "That value couldn't be saved. Please try again."
     } finally {

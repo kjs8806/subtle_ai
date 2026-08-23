@@ -265,13 +265,18 @@ button,a,input,select{font:inherit}
 .dialog-backdrop{position:fixed;z-index:20;inset:0;display:grid;place-items:center;padding:20px;background:#14132899;opacity:0;transition:opacity .15s var(--ease)}
 .dialog-backdrop[hidden]{display:none}
 .dialog-backdrop.is-open{opacity:1}
-.dialog{position:relative;width:min(560px,100%);max-height:calc(100vh - 40px);overflow:auto;padding:30px;border-radius:var(--radius-xl);background:var(--surface);box-shadow:var(--shadow-lg);transform:translateY(6px) scale(.99);transition:transform .18s var(--ease)}
+.dialog{position:relative;width:min(560px,100%);max-height:calc(100vh - 40px);overflow:auto;padding:28px;border-radius:var(--radius-xl);background:var(--surface);box-shadow:var(--shadow-lg);transform:translateY(6px) scale(.99);transition:transform .18s var(--ease)}
 .dialog-backdrop.is-open .dialog{transform:translateY(0) scale(1)}
-.dialog h2{margin:2px 0 4px;font:700 22px 'Inter',sans-serif}
-.dialog-close{position:absolute;top:10px;right:10px;display:grid;width:40px;height:40px;place-items:center;border:0;border-radius:50%;background:transparent;color:var(--muted);font-size:22px;cursor:pointer}
-.dialog-close:hover{background:var(--paper);color:var(--ink)}
+.dialog h2{margin:2px 0 4px;font:700 19px 'Inter',sans-serif;color:var(--ink)}
+.dialog-subtitle{margin:0 0 18px;color:var(--muted);font-size:13px;line-height:1.5}
+/* Conventional, restrained × - not an oversized focal point; the form is
+   the primary visual weight in this dialog, not the close control. The hit
+   area stays >=40px (touch-target minimum) even though the glyph itself
+   reads smaller and quieter. */
+.dialog-close{position:absolute;top:12px;right:12px;display:grid;width:40px;height:40px;place-items:center;border:0;border-radius:50%;background:transparent;color:var(--muted-soft);font-size:18px;line-height:1;cursor:pointer}
+.dialog-close:hover{background:var(--paper);color:var(--ink-soft)}
 .dialog li{margin:8px 0;color:var(--ink-soft);font-size:13.5px}
-.dialog-actions{display:flex;gap:8px;margin-top:24px}
+.dialog-actions{display:flex;gap:8px;margin-top:22px}
 
 /* ---------- Subscription Detail (full page) ---------- */
 .status-pill{display:inline-flex;align-items:center;padding:4px 11px;border-radius:var(--radius-pill);background:var(--success-soft);color:var(--success);font:700 11px 'DM Mono',monospace;text-transform:uppercase}
@@ -328,10 +333,17 @@ details p{display:flex;justify-content:space-between;margin:0;padding:8px 0;colo
 .detail-corrections-actions{display:flex;flex-wrap:wrap;gap:10px}
 .danger-text{color:var(--danger)}
 .danger-text:hover{background:var(--danger-soft);color:var(--danger)}
-.correction-form label{display:block;margin-top:12px;color:var(--muted);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.02em}
-.correction-form input,.correction-form select{display:block;width:100%;min-height:42px;margin-top:6px;padding:9px 11px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--ink)}
-.correction-form .current-value{margin:12px 0 0;color:var(--muted);font-size:12.5px}
-.correction-hint{display:flex;gap:8px;margin-top:14px;padding:10px 12px;border-radius:var(--radius-sm);background:var(--purple-soft);color:var(--purple-ink);font-size:12px;line-height:1.5}
+/* ---------- Correct subscription information (unified form) ---------- */
+.correction-form .field-label{display:block;margin:16px 0 6px;color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+.correction-form .field-label:first-child{margin-top:0}
+.correction-form input,.correction-form select{display:block;width:100%;min-height:42px;padding:9px 11px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--ink);font-size:13.5px}
+.correction-form input:focus-visible,.correction-form select:focus-visible{outline-offset:0}
+.service-field{display:flex;align-items:center;gap:10px}
+.service-field select{flex:1;min-width:0}
+.price-field-row{display:flex;gap:10px}
+.price-field-row input{flex:1;min-width:0}
+.price-field-row select{flex-shrink:0;width:104px}
+.correction-hint{display:flex;gap:8px;margin-top:16px;padding:10px 12px;border-radius:var(--radius-sm);background:var(--purple-soft);color:var(--purple-ink);font-size:12px;line-height:1.5}
 .correction-hint svg{flex-shrink:0;margin-top:1px}
 .form-error{margin:10px 0 0;color:var(--danger);font-size:12.5px}
 .conflict-notice{margin:0 0 12px;padding:10px 12px;border-radius:var(--radius-sm);background:var(--warning-soft);color:var(--warning);font-size:12.5px}
@@ -401,6 +413,11 @@ details p{display:flex;justify-content:space-between;margin:0;padding:8px 0;colo
   .detail-identity-top{align-items:flex-start}
   .evidence,details,.detail-corrections{padding-left:18px;padding-right:18px}
   .detail-corrections-actions{flex-direction:column;align-items:stretch}
+  /* The correction form has six fields - on a small screen it becomes a
+     near-full-screen sheet instead of a small floating card, so there's
+     room to see the whole form without it feeling cramped. */
+  .correction-backdrop{padding:0;align-items:stretch}
+  .correction-backdrop .dialog{width:100%;max-width:none;height:100%;max-height:none;border-radius:0}
 }
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}

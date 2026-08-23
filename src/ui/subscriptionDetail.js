@@ -1,7 +1,12 @@
-import { serviceIconMarkup } from '../services/serviceIcons.js'
+import { serviceIconFor, serviceIconMarkup } from '../services/serviceIcons.js'
+import { SUBSCRIPTION_TEMPLATES } from '../services/subscriptionTemplates.js'
 import { NAV_ICONS } from './navigation.js'
 
 const money = value => typeof value === 'number' ? `$${value.toFixed(2)}` : 'Price not provided'
+// Currency is shown explicitly whenever it's known (FEATURE-001/002 supports
+// USD and CAD, and a bare "$" doesn't distinguish them) - "$" is only used
+// as the currency-neutral fallback for amounts with no resolved currency.
+const moneyWithCurrency = (amount, currency) => typeof amount !== 'number' ? 'Price not provided' : currency ? `${currency} ${amount.toFixed(2)}` : `$${amount.toFixed(2)}`
 const escapeHtml = value => String(value ?? '').replace(/[&<>"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[character])
 const svg = (paths) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`
 const ICON_INFO = svg('<circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/>')
@@ -16,18 +21,8 @@ const ICON_PERSON = svg('<circle cx="12" cy="8" r="3.5"/><path d="M5 20c1.2-3.5 
 // migrations/008_feature_002_corrections.sql and server/app.js's
 // CORRECTION_FIELD_MAP).
 export const CORRECTION_FIELD_FOR = { canonicalService: 'canonical_service', plan: 'plan', amount: 'current_price', currency: 'currency', cadence: 'billing_cycle', nextRenewal: 'next_renewal' }
-// The reverse of the API's CORRECTION_FIELD_MAP - the field select below
-// submits these camelCase keys directly to PATCH /api/v1/subscriptions/:id.
-export const CORRECTABLE_FIELDS = [
-  { value: 'canonicalService', label: 'Service' },
-  { value: 'plan', label: 'Plan' },
-  { value: 'currentPrice', label: 'Price' },
-  { value: 'currency', label: 'Currency (USD or CAD)' },
-  { value: 'billingCycle', label: 'Billing cadence (monthly or yearly)' },
-  { value: 'nextRenewal', label: 'Next renewal date' },
-]
 const FRIENDLY_FIELD_LABEL = { canonical_service: 'service', plan: 'plan', current_price: 'price', currency: 'currency', billing_cycle: 'billing cadence', next_renewal: 'next renewal' }
-const correctionDisplayValue = (field, value) => field === 'current_price' && typeof value === 'number' ? money(value) : String(value)
+const KNOWN_SERVICES = [...new Set(SUBSCRIPTION_TEMPLATES.map(({ canonicalService }) => canonicalService))].sort((a, b) => a.localeCompare(b))
 
 // The Subscription Detail *page* - a dedicated destination at
 // #/subscriptions/:id, not a modal over Overview. "This looks wrong" and
@@ -47,28 +42,59 @@ export const detailMarkup = () => `<div class="main-content wrap" id="page-subsc
 <section class="panel-card detail-corrections" data-detail-corrections aria-label="Correct or remove this subscription"><p class="conflict-notice" data-conflict-notice hidden></p><div class="detail-corrections-actions"><button class="secondary-button" type="button" data-toggle-correction>This looks wrong</button><button class="quiet-button danger-text" data-open-reject type="button">Not a subscription</button></div></section>
 </div>`
 
-// FEATURE-002 correction entry point. Opened from "This looks wrong" on the
-// detail page; explicitly never overwrites receipt evidence - it only writes
-// a new subscription_corrections row (see server/app.js), which is why the
-// copy below promises the original evidence stays visible.
-export const correctionDialogMarkup = () => `<div class="dialog-backdrop" data-correction-dialog hidden><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="correction-title"><button class="dialog-close" data-close-dialog aria-label="Close">×</button><p class="eyebrow">Correct subscription information</p><h2 id="correction-title">Update the details below</h2><p>Your changes will be saved.</p><form class="correction-form" data-correction-form><label>Field<select name="field" data-correction-field>${CORRECTABLE_FIELDS.map(({ value, label }) => `<option value="${value}">${label}</option>`).join('')}</select></label><p class="current-value">Current value: <strong data-correction-current></strong></p><label>Corrected value<input name="value" data-correction-value required autocomplete="off"></label><p class="form-error" data-correction-error hidden role="alert"></p><div class="correction-hint">${ICON_INFO}<span>We'll keep the original receipt evidence so you can always see where this came from.</span></div><div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>Cancel</button><button class="primary-button" type="submit">Save changes</button></div></form></section></div>`
+// FEATURE-002 correction entry point. One form with every supported field,
+// not a "pick a field, then a value" workflow - the user inspects the whole
+// subscription and can change one or several fields before a single Save.
+// Only fields that actually change end up submitted (see
+// collectChangedCorrections), so an untouched field never becomes
+// "Confirmed by you" merely because the form was submitted.
+export const correctionDialogMarkup = () => `<div class="dialog-backdrop correction-backdrop" data-correction-dialog hidden><section class="dialog correction-dialog" role="dialog" aria-modal="true" aria-labelledby="correction-title"><button class="dialog-close" data-close-dialog aria-label="Close">×</button><p class="eyebrow">Correct subscription information</p><h2 id="correction-title">Update the details below</h2><p class="dialog-subtitle">Your changes will be saved.</p><form class="correction-form" data-correction-form>
+
+<label class="field-label" for="corr-service">Service</label>
+<div class="service-field"><span class="service-icon icon-sm" data-correction-service-icon aria-hidden="true"></span><select id="corr-service" data-correction-service>${KNOWN_SERVICES.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}</select></div>
+
+<label class="field-label" for="corr-plan">Plan</label>
+<input id="corr-plan" type="text" data-correction-plan placeholder="Plan not provided" autocomplete="off">
+
+<label class="field-label" for="corr-price">Price</label>
+<div class="price-field-row"><input id="corr-price" type="number" min="0" step="0.01" inputmode="decimal" data-correction-price placeholder="0.00"><select data-correction-currency aria-label="Currency"><option value="">Currency</option><option value="USD">USD</option><option value="CAD">CAD</option></select></div>
+
+<label class="field-label" for="corr-cadence">Billing cadence</label>
+<select id="corr-cadence" data-correction-cadence><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select>
+
+<label class="field-label" for="corr-renewal">Next renewal date</label>
+<input id="corr-renewal" type="date" data-correction-renewal>
+
+<p class="form-error" data-correction-error hidden role="alert"></p>
+
+<div class="correction-hint">${ICON_INFO}<span>We'll keep the original receipt evidence so you can always see where this came from.</span></div>
+
+<div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>Cancel</button><button class="primary-button" type="submit" data-correction-submit disabled>Save changes</button></div>
+</form></section></div>`
 
 // A dedicated confirmation dialog for "Not a subscription" - consequential
 // (it stops the item counting as active spend) but not destructive (evidence
 // is preserved), so it gets a clear explanatory step rather than a native
-// confirm() or an instant action.
+// confirm() or an instant action. Kept entirely separate from the correction
+// dialog above - this is a classification action, not a field edit.
 export const rejectConfirmMarkup = () => `<div class="dialog-backdrop" data-reject-dialog hidden><section class="dialog reject-dialog" role="dialog" aria-modal="true" aria-labelledby="reject-title"><button class="dialog-close" data-close-dialog aria-label="Close">×</button><div class="reject-icon-wrap">${ICON_TRASH}</div><h2 id="reject-title">Not a subscription?</h2><p>This will remove <strong data-reject-name></strong> from your active subscriptions and recurring spend. You can change this later if needed.</p><div class="reject-whatnext"><strong>What will happen</strong><ul><li>${ICON_CHECK}It won't appear in your active subscriptions</li><li>${ICON_CHECK}It won't be counted in recurring spend</li><li>${ICON_CHECK}We'll remember your decision</li></ul></div><div class="dialog-actions"><button class="danger-button" data-confirm-reject type="button">Mark as not a subscription</button><button class="quiet-button" data-close-dialog type="button">Cancel</button></div></section></div>`
 
-const correctionFieldValue = (item, apiField) => {
-  switch (apiField) {
-    case 'canonicalService': return item.name
-    case 'plan': return item.plan
-    case 'currentPrice': return typeof item.cost === 'number' ? item.cost : ''
-    case 'currency': return item.currency || ''
-    case 'billingCycle': return item.cadence || ''
-    case 'nextRenewal': return item.next && item.next !== 'Not provided' ? item.next : ''
-    default: return ''
-  }
+const applyServiceIcon = (el, name) => {
+  const icon = serviceIconFor(name)
+  el.style.background = icon.bg
+  el.style.color = icon.fg
+  el.innerHTML = icon.svg
+  el.setAttribute('aria-label', name ? `${name} logo` : 'Unknown service')
+}
+
+// Local calendar-date components, not toISOString() - the latter converts
+// through UTC and can shift the displayed day depending on the viewer's
+// timezone, which is exactly wrong for a "which day does this renew" field.
+const toIsoDate = (value) => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 }
 
 export const fieldProvenance = (item, field) => {
@@ -98,7 +124,7 @@ const evidenceRows = (item) => {
   const receipts = (item.pipelineRecord?.evidence || []).map((entry) => ({
     icon: ICON_RECEIPT,
     label: `Receipt from ${entry.canonicalService || entry.rawMerchant || item.name}`,
-    value: typeof entry.amount === 'number' ? money(entry.amount) : '—',
+    value: moneyWithCurrency(entry.amount, entry.currency),
     date: formatDate(entry.receivedAt),
     tagClass: '',
     tagText: 'From receipt',
@@ -107,7 +133,9 @@ const evidenceRows = (item) => {
   const corrections = (item.pipelineRecord?.corrections || []).map((correction) => ({
     icon: ICON_PERSON,
     label: `You updated ${FRIENDLY_FIELD_LABEL[correction.field] || correction.field}`,
-    value: correctionDisplayValue(correction.field, correction.value),
+    // A price correction has no currency of its own - it's paired with the
+    // subscription's current currency, the same way the header price is.
+    value: correction.field === 'current_price' ? moneyWithCurrency(correction.value, item.currency) : String(correction.value),
     date: formatDate(correction.createdAt),
     tagClass: 'tag-you',
     tagText: 'Confirmed by you',
@@ -126,10 +154,10 @@ export const renderDetail = (root, item) => {
   root.querySelector('#detail-title').textContent = item.name
   root.querySelector('[data-detail-plan]').textContent = item.plan
   root.querySelector('[data-detail-status]').textContent = (item.status || 'active').toUpperCase()
-  root.querySelector('[data-detail-cost]').textContent = monthlyCost === null ? money(null) : `${money(monthlyCost)} / month`
+  root.querySelector('[data-detail-cost]').textContent = monthlyCost === null ? moneyWithCurrency(null) : `${moneyWithCurrency(monthlyCost, item.currency)} / month`
   root.querySelector('[data-detail-cadence]').textContent = item.cadence === 'yearly' ? 'Yearly' : 'Monthly'
   root.querySelector('[data-detail-next]').textContent = item.next
-  root.querySelector('[data-detail-annual]').textContent = money(annualCost)
+  root.querySelector('[data-detail-annual]').textContent = moneyWithCurrency(annualCost, item.currency)
   root.querySelector('[data-detail-provenance]').hidden = fieldProvenance(item, 'amount') !== 'Confirmed by you'
 
   // A real, specific signal only - never the constant placeholder every
@@ -185,17 +213,92 @@ export const renderDetail = (root, item) => {
   }
 }
 
+// Populates every field with Subtle AI's current value and stamps each
+// control with its starting value (data-initial) so collectChangedCorrections
+// can tell a genuine edit from an untouched field later.
 export const renderCorrectionDialog = (root, item) => {
-  const fieldSelect = root.querySelector('[data-correction-field]')
-  const currentValueEl = root.querySelector('[data-correction-current]')
-  const valueInput = root.querySelector('[data-correction-value]')
-  const updateCurrentValue = () => {
-    const value = correctionFieldValue(item, fieldSelect.value)
-    currentValueEl.textContent = value === '' || value === null || value === undefined ? 'Not provided' : String(value)
-    valueInput.value = ''
+  const serviceSelect = root.querySelector('[data-correction-service]')
+  const serviceIconEl = root.querySelector('[data-correction-service-icon]')
+  const planInput = root.querySelector('[data-correction-plan]')
+  const priceInput = root.querySelector('[data-correction-price]')
+  const currencySelect = root.querySelector('[data-correction-currency]')
+  const cadenceSelect = root.querySelector('[data-correction-cadence]')
+  const renewalInput = root.querySelector('[data-correction-renewal]')
+
+  const currentService = item.name || ''
+  serviceSelect.querySelector('[data-custom-service]')?.remove()
+  if (currentService && !KNOWN_SERVICES.includes(currentService)) {
+    const customOption = document.createElement('option')
+    customOption.value = currentService
+    customOption.textContent = currentService
+    customOption.dataset.customService = 'true'
+    serviceSelect.prepend(customOption)
   }
-  fieldSelect.value = 'currentPrice'
-  fieldSelect.onchange = updateCurrentValue
-  updateCurrentValue()
+  serviceSelect.value = currentService
+  serviceSelect.dataset.initial = currentService
+  applyServiceIcon(serviceIconEl, currentService)
+
+  const planValue = item.plan && item.plan !== 'Plan not provided' ? item.plan : ''
+  planInput.value = planValue
+  planInput.dataset.initial = planValue
+
+  const priceValue = typeof item.cost === 'number' ? String(item.cost) : ''
+  priceInput.value = priceValue
+  priceInput.dataset.initial = priceValue
+
+  const currencyValue = item.currency || ''
+  currencySelect.value = currencyValue
+  currencySelect.dataset.initial = currencyValue
+
+  const cadenceValue = item.cadence === 'yearly' ? 'yearly' : 'monthly'
+  cadenceSelect.value = cadenceValue
+  cadenceSelect.dataset.initial = cadenceValue
+
+  const renewalIso = item.next && item.next !== 'Not provided' ? toIsoDate(item.next) : ''
+  renewalInput.value = renewalIso
+  renewalInput.dataset.initial = renewalIso
+
   root.querySelector('[data-correction-error]').hidden = true
+  root.querySelector('[data-correction-submit]').disabled = true
+}
+
+// Wired once (the dialog is persistent shell, not re-created per subscription):
+// keeps the service icon in sync with the select, and Save disabled until at
+// least one field actually differs from where it started.
+export const wireCorrectionDialogInteractions = (root) => {
+  const serviceSelect = root.querySelector('[data-correction-service]')
+  const serviceIconEl = root.querySelector('[data-correction-service-icon]')
+  serviceSelect.addEventListener('change', () => applyServiceIcon(serviceIconEl, serviceSelect.value))
+
+  const submitButton = root.querySelector('[data-correction-submit]')
+  const fields = ['[data-correction-service]', '[data-correction-plan]', '[data-correction-price]', '[data-correction-currency]', '[data-correction-cadence]', '[data-correction-renewal]'].map(selector => root.querySelector(selector))
+  const updateSaveState = () => { submitButton.disabled = fields.every(field => field.value === field.dataset.initial) }
+  fields.forEach(field => { field.addEventListener('input', updateSaveState); field.addEventListener('change', updateSaveState) })
+}
+
+// Diffs the form against the values renderCorrectionDialog stamped in, and
+// returns only the fields that actually changed, each already coerced to the
+// shape PATCH /api/v1/subscriptions/:id expects. An untouched field is never
+// included, so it never becomes "Confirmed by you" just because the form was
+// submitted (FEATURE-002).
+export const collectChangedCorrections = (root) => {
+  const serviceSelect = root.querySelector('[data-correction-service]')
+  const planInput = root.querySelector('[data-correction-plan]')
+  const priceInput = root.querySelector('[data-correction-price]')
+  const currencySelect = root.querySelector('[data-correction-currency]')
+  const cadenceSelect = root.querySelector('[data-correction-cadence]')
+  const renewalInput = root.querySelector('[data-correction-renewal]')
+
+  const changes = []
+  if (serviceSelect.value && serviceSelect.value !== serviceSelect.dataset.initial) changes.push({ field: 'canonicalService', value: serviceSelect.value })
+  const plan = planInput.value.trim()
+  if (plan && plan !== planInput.dataset.initial) changes.push({ field: 'plan', value: plan })
+  if (priceInput.value !== '' && priceInput.value !== priceInput.dataset.initial) {
+    const parsed = Number(priceInput.value)
+    if (Number.isFinite(parsed)) changes.push({ field: 'currentPrice', value: parsed })
+  }
+  if (currencySelect.value && currencySelect.value !== currencySelect.dataset.initial) changes.push({ field: 'currency', value: currencySelect.value })
+  if (cadenceSelect.value !== cadenceSelect.dataset.initial) changes.push({ field: 'billingCycle', value: cadenceSelect.value })
+  if (renewalInput.value && renewalInput.value !== renewalInput.dataset.initial) changes.push({ field: 'nextRenewal', value: renewalInput.value })
+  return changes
 }
