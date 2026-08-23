@@ -5,7 +5,7 @@ import { demoSubscriptions } from '../src/data/demoSubscriptions.js'
 import { currentRoute, routePath } from '../src/ui/router.js'
 import { navigationMarkup } from '../src/ui/navigation.js'
 import { overviewMarkup } from '../src/ui/overview.js'
-import { subscriptionRow, subscriptionsPageMarkup } from '../src/ui/subscriptions.js'
+import { filterAndSortSubscriptions, subscriptionRow, subscriptionsPageMarkup, subscriptionTableRow } from '../src/ui/subscriptions.js'
 import { actionCard, attentionPageMarkup, candidateRow } from '../src/ui/attention.js'
 import { sourcesPageMarkup } from '../src/ui/sources.js'
 import { settingsPageMarkup } from '../src/ui/settings.js'
@@ -97,15 +97,47 @@ test('Overview shows previews and links onward, and never contains full manageme
 })
 
 // ---- Subscriptions: the full list, each row a real link to its own detail route.
-test('the Subscriptions page lists every subscription as a link to its own Subscription Detail route', () => {
+test('the Subscriptions page renders search/filter/sort controls and a table shell; rows come from subscriptionTableRow', () => {
   const items = demoSubscriptions
   const page = subscriptionsPageMarkup({ subscriptions: items })
-  const rowCount = (page.match(/class="subscription-row/g) || []).length
-  assert.equal(rowCount, items.length, 'the full list renders every subscription, unlike the Overview preview')
-  const row = subscriptionRow(items[0])
-  assert.match(row, /<a class="subscription-row/)
+  // The static shell has the toolbar and an empty rows container - actual
+  // rows are rendered client-side (wireSubscriptionsPage in main.js) so
+  // search/sort/filter can re-render just the list without losing focus in
+  // the search field.
+  assert.match(page, /data-subscription-search/)
+  assert.match(page, /data-open-filter/)
+  assert.match(page, /data-subscription-sort/)
+  assert.match(page, /data-subscription-rows/)
+  assert.match(page, /data-subscription-table-head/)
+  assert.match(page, />Subscription<\/span><span>Price<\/span><span>Billing<\/span><span>Next renewal<\/span><span>Status</)
+  assert.match(page, new RegExp(`${items.filter(item => (item.status || 'active') === 'active').length} active`))
+
+  const row = subscriptionTableRow(items[0])
+  assert.match(row, /<a class="subscription-table-row"/)
   assert.match(row, new RegExp(`href="#/subscriptions/${items[0].id}"`))
-  assert.doesNotMatch(subscriptionRow(items[0]), /Steady|Active|category|source/i, 'a neutral row stays quiet - no redundant status/category noise')
+  assert.match(row, /class="status-pill">ACTIVE</)
+
+  const compactRow = subscriptionRow(items[0])
+  assert.match(compactRow, /<a class="subscription-row/)
+  assert.doesNotMatch(compactRow, /Steady|Active|category|source/i, 'the compact Overview-preview row stays quiet - no redundant status/category noise')
+})
+
+// ---- Subscriptions: pure search/filter/sort so it's testable without a DOM.
+test('filterAndSortSubscriptions searches by name/plan, filters by billing cadence, and sorts without fabricating data', () => {
+  const netflix = { id: 'a', name: 'Netflix', plan: 'Premium Plan', cost: 22.99, cadence: 'monthly', next: 'Sep 12, 2026' }
+  const nordvpn = { id: 'b', name: 'NordVPN', plan: '2-Year Plan', cost: 99.48, cadence: 'yearly', next: 'Nov 15, 2026' }
+  const spotify = { id: 'c', name: 'Spotify', plan: 'Premium Individual', cost: 10.99, cadence: 'monthly', next: 'Sep 24, 2026' }
+  const all = [netflix, nordvpn, spotify]
+
+  assert.deepEqual(filterAndSortSubscriptions(all, { query: 'netflix' }).map(item => item.id), ['a'])
+  assert.deepEqual(filterAndSortSubscriptions(all, { query: 'premium' }).map(item => item.id).sort(), ['a', 'c'])
+  assert.deepEqual(filterAndSortSubscriptions(all, { cadence: 'yearly' }).map(item => item.id), ['b'])
+  assert.deepEqual(filterAndSortSubscriptions(all, { sort: 'next-renewal' }).map(item => item.id), ['a', 'c', 'b'])
+  assert.deepEqual(filterAndSortSubscriptions(all, { sort: 'name' }).map(item => item.id), ['a', 'b', 'c'])
+  // Highest monthly-equivalent cost first: NordVPN's $99.48/2yr (~$4.15/mo)
+  // ranks below Netflix and Spotify once annualized-to-monthly, not above
+  // them by its sticker price alone.
+  assert.deepEqual(filterAndSortSubscriptions(all, { sort: 'price-desc' }).map(item => item.id), ['a', 'c', 'b'])
 })
 
 // ---- Worth your attention: its own destination, not a dashboard widget -

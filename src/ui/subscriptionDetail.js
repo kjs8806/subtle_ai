@@ -31,7 +31,7 @@ const KNOWN_SERVICES = [...new Set(SUBSCRIPTION_TEMPLATES.map(({ canonicalServic
 // consequential, form-shaped actions that benefit from a focused surface.
 export const detailMarkup = () => `<div class="main-content wrap" id="page-subscription-detail"><a class="back-link" href="#/subscriptions">${NAV_ICONS.back}Back to Subscriptions</a>
 
-<header class="detail-identity panel-card"><div class="detail-identity-top">${serviceIconMarkup('', { size: 'lg' })}<div class="detail-identity-who"><div class="id-top"><h1 id="detail-title"></h1><span class="status-pill" data-detail-status>Active</span></div><span data-detail-plan></span></div></div><p class="detail-price"><strong data-detail-cost></strong><span class="provenance-pill" data-detail-provenance hidden>${ICON_CHECK}Confirmed by you</span></p><div class="meta-rows"><div><span>Billing cadence</span><strong data-detail-cadence></strong></div><div><span>Next renewal</span><strong data-detail-next></strong></div><div><span>Annualized cost</span><strong data-detail-annual></strong></div></div></header>
+<header class="detail-identity panel-card"><div class="detail-identity-top">${serviceIconMarkup('', { size: 'lg' })}<div class="detail-identity-who"><div class="id-top"><h1 id="detail-title"></h1><span class="status-pill" data-detail-status>Active</span></div><span data-detail-plan></span></div></div><p class="detail-price"><strong data-detail-cost></strong><span class="provenance-pill" data-detail-provenance hidden>${ICON_CHECK}Confirmed by you</span></p><div class="meta-rows"><div><span>Billing cadence</span><strong data-detail-cadence></strong></div><div><span>Next renewal</span><strong data-detail-next></strong></div><div><span>Annualized cost</span><strong data-detail-annual></strong></div><div><span>Status</span><strong data-detail-status-meta></strong></div></div></header>
 
 <section data-notice class="panel-card" hidden><strong data-notice-title></strong><p data-notice-copy></p><p data-saving hidden><span>Potential savings</span> <strong></strong></p></section>
 
@@ -123,15 +123,17 @@ const formatDate = (value) => {
 const evidenceRows = (item) => {
   const receipts = (item.pipelineRecord?.evidence || []).map((entry) => ({
     icon: ICON_RECEIPT,
+    tone: 'coral',
     label: `Receipt from ${entry.canonicalService || entry.rawMerchant || item.name}`,
     value: moneyWithCurrency(entry.amount, entry.currency),
     date: formatDate(entry.receivedAt),
-    tagClass: '',
+    tagClass: 'tag-receipt',
     tagText: 'From receipt',
     sortKey: entry.receivedAt || '',
   }))
   const corrections = (item.pipelineRecord?.corrections || []).map((correction) => ({
     icon: ICON_PERSON,
+    tone: 'purple',
     label: `You updated ${FRIENDLY_FIELD_LABEL[correction.field] || correction.field}`,
     // A price correction has no currency of its own - it's paired with the
     // subscription's current currency, the same way the header price is.
@@ -144,7 +146,7 @@ const evidenceRows = (item) => {
   return [...corrections, ...receipts].sort((a, b) => String(b.sortKey).localeCompare(String(a.sortKey)))
 }
 
-const evidenceRowMarkup = (row) => `<div class="evidence-item"><span class="evidence-icon">${row.icon}</span><div class="who"><strong>${escapeHtml(row.label)}</strong><span>${row.date ? escapeHtml(row.date) : 'Date not provided'}</span></div><span class="amount">${escapeHtml(row.value)}</span><span class="tag ${row.tagClass}">${row.tagText}</span></div>`
+const evidenceRowMarkup = (row) => `<div class="evidence-item"><span class="evidence-icon evidence-icon-${row.tone}">${row.icon}</span><div class="who"><strong>${escapeHtml(row.label)}</strong><span>${row.date ? escapeHtml(row.date) : 'Date not provided'}</span></div><div class="evidence-right"><span class="amount">${escapeHtml(row.value)}</span><span class="tag ${row.tagClass}">${row.tagText}</span></div></div>`
 
 export const renderDetail = (root, item) => {
   const monthlyCost = typeof item.cost === 'number' ? (item.cadence === 'yearly' ? item.cost / 12 : item.cost) : null
@@ -154,6 +156,7 @@ export const renderDetail = (root, item) => {
   root.querySelector('#detail-title').textContent = item.name
   root.querySelector('[data-detail-plan]').textContent = item.plan
   root.querySelector('[data-detail-status]').textContent = (item.status || 'active').toUpperCase()
+  root.querySelector('[data-detail-status-meta]').textContent = (item.status || 'active').charAt(0).toUpperCase() + (item.status || 'active').slice(1)
   root.querySelector('[data-detail-cost]').textContent = monthlyCost === null ? moneyWithCurrency(null) : `${moneyWithCurrency(monthlyCost, item.currency)} / month`
   root.querySelector('[data-detail-cadence]').textContent = item.cadence === 'yearly' ? 'Yearly' : 'Monthly'
   root.querySelector('[data-detail-next]').textContent = item.next

@@ -7,7 +7,7 @@ import { gmailDisclosureMarkup } from './ui/gmailDisclosure.js'
 import { initializeNavigation, NAV_ICONS, navigationMarkup } from './ui/navigation.js'
 import { currentRoute, navigate, onRouteChange, routePath } from './ui/router.js'
 import { overviewMarkup } from './ui/overview.js'
-import { subscriptionsPageMarkup } from './ui/subscriptions.js'
+import { filterAndSortSubscriptions, renderSubscriptionRows, subscriptionsPageMarkup } from './ui/subscriptions.js'
 import { attentionPageMarkup } from './ui/attention.js'
 import { sourcesPageMarkup } from './ui/sources.js'
 import { settingsPageMarkup } from './ui/settings.js'
@@ -213,7 +213,7 @@ const renderAuthenticated = async (user, gmailError) => {
     switch (route.name) {
       case 'subscriptions':
         pageRoot.innerHTML = subscriptionsPageMarkup({ subscriptions: items })
-        pageRoot.querySelector('[data-open-add]')?.addEventListener('click', event => addDialog.open(event.currentTarget))
+        wireSubscriptionsPage(pageRoot, items)
         break
       case 'subscription-detail':
         await renderSubscriptionDetailRoute(route.params.id)
@@ -242,6 +242,49 @@ const renderAuthenticated = async (user, gmailError) => {
   onRouteChange(renderRoute)
   await renderRoute()
   renderSidebarFooter()
+
+  // ---- Subscriptions page: client-side search/sort/billing-cadence filter
+  // over the already-loaded list (no new endpoint - everything filtered here
+  // is already on the page). Only the row list re-renders on each change;
+  // the toolbar itself is left alone so typing in the search field never
+  // loses focus or cursor position.
+  const wireSubscriptionsPage = (root, subscriptions) => {
+    const state = { query: '', cadence: 'all', sort: 'next-renewal' }
+    const apply = () => {
+      const filtered = filterAndSortSubscriptions(subscriptions, state)
+      renderSubscriptionRows(root, filtered, subscriptions.length > 0)
+      const filterCount = root.querySelector('[data-filter-count]')
+      filterCount.hidden = state.cadence === 'all'
+      filterCount.textContent = '1'
+    }
+    apply()
+
+    root.querySelector('[data-subscription-search]').addEventListener('input', (event) => { state.query = event.currentTarget.value; apply() })
+    root.querySelector('[data-subscription-sort]').addEventListener('change', (event) => { state.sort = event.currentTarget.value; apply() })
+    root.querySelectorAll('[data-filter-cadence]').forEach(input => input.addEventListener('change', (event) => { state.cadence = event.currentTarget.value; apply() }))
+
+    const filterButton = root.querySelector('[data-open-filter]')
+    const filterPanel = root.querySelector('[data-filter-panel]')
+    const closeFilterPanel = () => { filterPanel.hidden = true; filterButton.setAttribute('aria-expanded', 'false') }
+    filterButton.addEventListener('click', () => {
+      const opening = filterPanel.hidden
+      filterPanel.hidden = !opening
+      filterButton.setAttribute('aria-expanded', String(opening))
+    })
+    document.addEventListener('click', (event) => { if (!filterPanel.hidden && !filterPanel.contains(event.target) && event.target !== filterButton && !filterButton.contains(event.target)) closeFilterPanel() })
+    document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !filterPanel.hidden) { closeFilterPanel(); filterButton.focus() } })
+
+    root.querySelectorAll('[data-clear-filters]').forEach(button => button.addEventListener('click', () => {
+      state.query = ''; state.cadence = 'all'; state.sort = 'next-renewal'
+      root.querySelector('[data-subscription-search]').value = ''
+      root.querySelector('[data-subscription-sort]').value = 'next-renewal'
+      root.querySelector('[data-filter-cadence][value="all"]').checked = true
+      closeFilterPanel()
+      apply()
+    }))
+
+    root.querySelectorAll('[data-open-add]').forEach(button => button.addEventListener('click', event => addDialog.open(event.currentTarget)))
+  }
 
   // ---- FEATURE-002: ambiguous-candidate review. Confirm/reject act on the
   // whole pending candidate, not a subscription (there is no subscription
