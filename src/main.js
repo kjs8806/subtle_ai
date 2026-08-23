@@ -9,6 +9,7 @@ import { currentRoute, navigate, onRouteChange, routePath } from './ui/router.js
 import { overviewMarkup } from './ui/overview.js'
 import { subscriptionsPageMarkup } from './ui/subscriptions.js'
 import { attentionPageMarkup } from './ui/attention.js'
+import { buildActionItems } from './services/recommendationEngine.js'
 import { sourcesPageMarkup } from './ui/sources.js'
 import { settingsPageMarkup } from './ui/settings.js'
 import { collectChangedCorrections, correctionDialogMarkup, detailMarkup, rejectConfirmMarkup, renderCorrectionDialog, renderDetail, wireCorrectionDialogInteractions } from './ui/subscriptionDetail.js'
@@ -96,9 +97,14 @@ const renderAuthenticated = async (user, gmailError) => {
   let candidates = []
   let gmailSource = { status: 'not_connected', scanStatus: 'idle' }
   let gmailSourceUnavailable = false
-  const actions = [] // no live recommendation engine yet - kept as an empty,
-  // always-defined list so Worth your attention's "needs a decision" section
-  // and Subscription Detail's notice both already support real entries.
+  // Derived from backendItems' retained raw records (toDisplayItem stashes
+  // the full backend subscription as item.pipelineRecord) via the same
+  // price-increase/overlap engine FEATURE-001 already built in
+  // receiptPipeline.js - see recommendationEngine.js. Recomputed via
+  // refreshActions() wherever backendItems changes below, so it never
+  // reflects a stale subscription list.
+  let actions = []
+  const refreshActions = () => { actions = buildActionItems(backendItems.map(item => item.pipelineRecord).filter(Boolean)) }
 
   const [subsResult, sourceResult, candidatesResult] = await Promise.allSettled([
     feature001Api.listSubscriptions(),
@@ -109,6 +115,7 @@ const renderAuthenticated = async (user, gmailError) => {
   if (sourceResult.status === 'fulfilled') gmailSource = sourceResult.value
   else gmailSourceUnavailable = true
   if (candidatesResult.status === 'fulfilled') candidates = candidatesResult.value.candidates || []
+  refreshActions()
 
   const greeting = user?.name ? `Good morning, ${user.name.split(' ')[0]}.` : 'Good morning.'
   const dateLabel = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
@@ -261,6 +268,7 @@ const renderAuthenticated = async (user, gmailError) => {
         candidates = candidates.filter(candidate => candidate.id !== candidateId)
         const { subscriptions: rawList } = await feature001Api.listSubscriptions()
         backendItems = (rawList || []).map(toDisplayItem)
+        refreshActions()
         await renderRoute()
       } catch {
         button.disabled = false
@@ -289,6 +297,7 @@ const renderAuthenticated = async (user, gmailError) => {
     try {
       for (const change of changes) updated = await feature001Api.correctSubscription(currentSubscriptionId, change.field, change.value)
       backendItems = backendItems.map(item => item.remoteId === updated.id ? toDisplayItem(updated) : item)
+      refreshActions()
       correctionDialog.close()
       await renderRoute()
       live.announce(changes.length === 1 ? 'Correction saved.' : 'Corrections saved.')
@@ -296,7 +305,7 @@ const renderAuthenticated = async (user, gmailError) => {
       // Whatever succeeded before the failure is already applied server-side -
       // refresh so Subscription Detail reflects that partial progress
       // honestly instead of silently hiding it or claiming nothing saved.
-      if (updated) { backendItems = backendItems.map(item => item.remoteId === updated.id ? toDisplayItem(updated) : item); await renderRoute() }
+      if (updated) { backendItems = backendItems.map(item => item.remoteId === updated.id ? toDisplayItem(updated) : item); refreshActions(); await renderRoute() }
       errorEl.hidden = false
       errorEl.textContent = error.message || "That value couldn't be saved. Please try again."
     } finally {
@@ -309,6 +318,7 @@ const renderAuthenticated = async (user, gmailError) => {
     try {
       await feature001Api.rejectSubscription(currentSubscriptionId)
       backendItems = backendItems.filter(item => item.remoteId !== currentSubscriptionId)
+      refreshActions()
       rejectDialog.close()
       live.announce('No longer counted as an active subscription.')
       navigate('subscriptions')
@@ -350,6 +360,7 @@ const renderAuthenticated = async (user, gmailError) => {
       const previousIds = new Set(allItems().map(item => item.id))
       const { subscriptions: rawList } = await feature001Api.listSubscriptions()
       backendItems = (rawList || []).map(toDisplayItem)
+      refreshActions()
       const newIds = new Set(allItems().filter(item => !previousIds.has(item.id)).map(item => item.id))
       try { candidates = (await feature001Api.listCandidates()).candidates || [] } catch { /* the review page just keeps showing its last known state */ }
       await refreshGmailSource()

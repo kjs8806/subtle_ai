@@ -3,6 +3,7 @@ import { findSubscriptionTemplate } from './subscriptionTemplates.js'
 
 const OVERLAP_PAIRS = new Set([
   ['Dropbox', 'Google One'].sort().join('|'),
+  ['Disney+', 'YouTube Premium'].sort().join('|'),
 ])
 
 // Deliberately broader than just "receipt/invoice/payment": a one-time

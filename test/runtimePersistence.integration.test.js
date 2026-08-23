@@ -104,9 +104,11 @@ integration('server runtime persists through restart, isolates accounts, purges 
     const scan = await runtimeA.app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
     assert.equal(scan.statusCode, 200)
     // The default mock scan scenario (server/gmail/fakeProvider.js) produces
-    // six receipts (Netflix, Spotify, Dropbox, Disney+, YouTube Premium,
-    // ChatGPT Plus), not one.
-    assert.equal(scan.json().found, 6)
+    // seven evidence-backed receipts across six distinct subscriptions
+    // (Netflix, Spotify, Dropbox, Disney+, YouTube Premium, and ChatGPT Plus
+    // - which has two receipts at different prices), plus two ambiguous
+    // receipts that don't count toward `found`.
+    assert.equal(scan.json().found, 7)
 
     const subs = await runtimeA.app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })
     assert.equal(subs.json().subscriptions.length, 6)
@@ -177,7 +179,7 @@ integration('server runtime persists through restart, isolates accounts, purges 
     const { headers: headersD } = await authenticate(runtimeD.app, testUsers.idempotency)
     await runtimeD.app.inject({ method: 'POST', url: '/api/v1/sources/gmail/authorize', headers: headersD })
     const firstScan = await runtimeD.app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers: headersD })
-    assert.equal(firstScan.json().found, 6)
+    assert.equal(firstScan.json().found, 7)
     await runtimeD.close()
 
     const runtimeE = await createRuntime(buildApp, settings, { provider: createTestProvider() })

@@ -1,12 +1,12 @@
 {
-  "name": "subscription-app",
+  "name": "subtle-ai",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:client\"",
     "dev:client": "vite",
-    "dev:server": "node server/app.js",
+    "dev:server": "node --watch server/app.js",
     "build": "vite build",
     "preview": "vite preview",
     "test": "node --test",
