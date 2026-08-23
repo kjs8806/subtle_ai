@@ -12,14 +12,27 @@ export const RENEWAL_TIMING = { NONE: 'none', UPCOMING: 'upcoming', SOON: 'soon'
 // 'unknown' (no reliable date at all - never fabricated).
 export const RENEWAL_CERTAINTY = { CONFIRMED: 'confirmed', INFERRED: 'inferred', UNKNOWN: 'unknown' }
 
+// Tech Lead remediation (GitHub PR #37, timezone hardening): normalizes to a
+// UTC calendar day rather than local midnight. `date.setHours(0,0,0,0)`
+// operates in the *runtime's local* timezone, but a date-only value (e.g.
+// "2026-09-12", or a Postgres `date` column) is already anchored to UTC
+// midnight by `new Date(...)` - recomputing "midnight" in local time can
+// silently shift it onto the wrong calendar day depending on the server's
+// timezone (and, near a DST transition, even the wrong day by a few hours
+// either way). UTC has no DST and is the same everywhere, so anchoring both
+// sides of the comparison to their UTC calendar day makes the day-count
+// deterministic regardless of the runtime's TZ.
+const toUtcMidnight = (dateValue) => {
+  const date = new Date(dateValue)
+  if (Number.isNaN(date.getTime())) return null
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
+}
+
 const daysUntil = (dateValue, now) => {
-  const target = new Date(dateValue)
-  if (Number.isNaN(target.getTime())) return null
-  const startOfNow = new Date(now)
-  startOfNow.setHours(0, 0, 0, 0)
-  const startOfTarget = new Date(target)
-  startOfTarget.setHours(0, 0, 0, 0)
-  return Math.round((startOfTarget - startOfNow) / 86400000)
+  const target = toUtcMidnight(dateValue)
+  const today = toUtcMidnight(now)
+  if (target === null || today === null) return null
+  return Math.round((target - today) / 86400000)
 }
 
 const timingFor = (days) => {

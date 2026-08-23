@@ -1,4 +1,3 @@
-import { detectPriceChange } from './priceChangeService.js'
 import { deriveRenewal, renewalCertaintyFor, RENEWAL_TIMING } from './renewalDerivationService.js'
 
 // FEATURE-003 rule version, persisted on every derived price-change fact so
@@ -30,14 +29,17 @@ const priorityFor = (kind) => {
   return 'low'
 }
 
+// Tech Lead remediation (GitHub PR #37, BLOCKER 1): `change.eventKey` is the
+// one canonical, durable identity for this occurrence - derived from source
+// observation provenance (see detectPriceChangeEvents in
+// priceChangeService.js), not from price values. It is exactly what the
+// persisted price_change_events row uses as its own identity (event_key
+// column) and what attention_item_dismissals.item_key stores, so a
+// persisted event, its attention item, and its dismissal always agree.
 const priceChangeItem = (subscription, change) => {
   const kind = 'price_change'
   return {
-    // Stable per (subscription, transition) - matches
-    // price_change_events(subscription_id, previous_price, current_price,
-    // currency)'s unique key, so this id is also usable as the durable
-    // event's natural key and as an attention_item_dismissals item_key.
-    id: `price-change:${subscription.id}:${change.previousPrice}:${change.currentPrice}:${change.currency}`,
+    id: `price-change:${change.eventKey}`,
     type: 'price_change',
     subscriptionId: subscription.id,
     canonicalService: subscription.canonicalService,
@@ -77,16 +79,31 @@ const needsReviewItem = (candidate) => ({
 })
 
 // Pure orchestration: given already-hydrated subscriptions (each carrying
-// priceHistory/fieldObservations/corrections, i.e. the same shape
-// listSubscriptions/getSubscription already return) and pending FEATURE-002
-// candidates, derives the full Worth-your-attention list. `isDismissed(id)`
-// lets the caller (a repository) supply persisted per-user dismissal state
-// without this function knowing anything about how that's stored.
+// fieldObservations/corrections, i.e. the same shape listSubscriptions/
+// getSubscription already return), pending FEATURE-002 candidates, and the
+// already-detected price-change occurrence per subscription (if any -
+// `priceChangeEvents`), derives the full Worth-your-attention list.
+//
+// Tech Lead remediation (GitHub PR #37, "Recommended architectural
+// cleanup"): this function no longer computes price-change detection
+// itself (that was priceChangeService.detectPriceChange, called with the
+// live subscription's priceHistory on every read) - it now only *presents*
+// whatever occurrence the caller already detected/persisted. For Postgres,
+// that means GET /api/v1/attention reads price_change_events rather than
+// recomputing and upserting into it on every request; the actual detection
+// and persistence happens where the underlying evidence changes (a new
+// Gmail receipt, a FEATURE-002 correction - see postgresRepository.js).
+// `priceChangeEvents` is keyed by subscriptionId, one entry each (the
+// subscription's current/latest occurrence).
+//
+// `isDismissed(id)` lets the caller supply persisted per-user dismissal
+// state without this function knowing anything about how that's stored.
 // `now` is injectable for deterministic testing.
-export const buildAttentionItems = ({ subscriptions = [], candidates = [], isDismissed = () => false, now = new Date() }) => {
+export const buildAttentionItems = ({ subscriptions = [], priceChangeEvents = [], candidates = [], isDismissed = () => false, now = new Date() }) => {
   const items = []
+  const priceChangeBySubscriptionId = new Map(priceChangeEvents.map((change) => [change.subscriptionId, change]))
   for (const subscription of subscriptions) {
-    const change = detectPriceChange({ currentPrice: subscription.currentPrice, currency: subscription.currency, cadence: subscription.billingCycle, priceHistory: subscription.priceHistory || [] })
+    const change = priceChangeBySubscriptionId.get(subscription.id)
     if (change?.isAttentionWorthy) items.push(priceChangeItem(subscription, change))
 
     const certainty = renewalCertaintyFor(subscription, subscription.source)
