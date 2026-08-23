@@ -8,7 +8,7 @@ import { initializeNavigation, NAV_ICONS, navigationMarkup } from './ui/navigati
 import { currentRoute, navigate, onRouteChange, routePath } from './ui/router.js'
 import { overviewMarkup } from './ui/overview.js'
 import { filterAndSortSubscriptions, renderSubscriptionRows, subscriptionsPageMarkup } from './ui/subscriptions.js'
-import { attentionPageMarkup } from './ui/attention.js'
+import { attentionDetailDialogMarkup, attentionPageMarkup, filterAttentionItems, renderAttentionDetail, renderAttentionList, sortAttentionItems } from './ui/attention.js'
 import { buildActionItems } from './services/recommendationEngine.js'
 import { sourcesPageMarkup } from './ui/sources.js'
 import { settingsPageMarkup } from './ui/settings.js'
@@ -105,32 +105,45 @@ const renderAuthenticated = async (user, gmailError) => {
   let gmailSource = { status: 'not_connected', scanStatus: 'idle' }
   let gmailSourceUnavailable = false
   // Derived from backendItems' retained raw records (toDisplayItem stashes
-  // the full backend subscription as item.pipelineRecord) via the same
-  // price-increase/overlap engine FEATURE-001 already built in
-  // receiptPipeline.js - see recommendationEngine.js. Recomputed via
-  // refreshActions() wherever backendItems changes below, so it never
-  // reflects a stale subscription list.
-  let actions = []
-  const refreshActions = () => { actions = buildActionItems(backendItems.map(item => item.pipelineRecord).filter(Boolean)) }
+  // the full backend subscription as item.pipelineRecord) via the overlap-
+  // detection engine (src/services/recommendationEngine.js). Price-change
+  // detection now lives server-side (FEATURE-003, see attentionItems below) -
+  // this only covers overlap, which predates it and isn't part of its scope.
+  // Recomputed via refreshOverlapActions() wherever backendItems changes.
+  let overlapActions = []
+  const refreshOverlapActions = () => { overlapActions = buildActionItems(backendItems.map(item => item.pipelineRecord).filter(Boolean)) }
 
-  const [subsResult, sourceResult, candidatesResult] = await Promise.allSettled([
+  // FEATURE-003: the unified, server-computed "Worth your attention" list
+  // (price changes, renewals, and FEATURE-002's ambiguous-candidate review,
+  // already sorted and durable - see GET /api/v1/attention). `candidates`
+  // above is still fetched separately because a needs_review attention item
+  // only carries a candidateId; rendering its full card (evidence count,
+  // raw merchant) needs the full candidate record, looked up by that id.
+  let attentionItems = []
+  const candidatesById = () => new Map(candidates.map(candidate => [candidate.id, candidate]))
+  const refreshAttentionItems = async () => { try { attentionItems = (await feature001Api.getAttentionItems()).items || [] } catch { /* the page just keeps showing its last known state */ } }
+
+  const [subsResult, sourceResult, candidatesResult, attentionResult] = await Promise.allSettled([
     feature001Api.listSubscriptions(),
     feature001Api.getGmailSource(),
     feature001Api.listCandidates(),
+    feature001Api.getAttentionItems(),
   ])
   if (subsResult.status === 'fulfilled') backendItems = (subsResult.value.subscriptions || []).map(toDisplayItem)
   if (sourceResult.status === 'fulfilled') gmailSource = sourceResult.value
   else gmailSourceUnavailable = true
   if (candidatesResult.status === 'fulfilled') candidates = candidatesResult.value.candidates || []
-  refreshActions()
+  if (attentionResult.status === 'fulfilled') attentionItems = attentionResult.value.items || []
+  refreshOverlapActions()
 
   const greeting = user?.name ? `Good morning, ${user.name.split(' ')[0]}.` : 'Good morning.'
   const dateLabel = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
   const allItems = () => [...manualSubscriptions, ...backendItems]
   const findSubscription = id => allItems().find(item => String(item.id) === String(id))
+  const attentionTotal = () => attentionItems.length + overlapActions.length
 
   // ---- persistent shell (sidebar, dialogs, footer) -----------------------
-  app.innerHTML = `<div class="app-shell">${navigationMarkup(brand, { activeRoute: currentRoute().name, attentionCount: candidates.length })}<div class="main-col"><div data-page-root></div></div></div>${gmailDisclosureMarkup()}${correctionDialogMarkup()}${rejectConfirmMarkup()}${addDialogMarkup}`
+  app.innerHTML = `<div class="app-shell">${navigationMarkup(brand, { activeRoute: currentRoute().name, attentionCount: attentionTotal() })}<div class="main-col"><div data-page-root></div></div></div>${gmailDisclosureMarkup()}${correctionDialogMarkup()}${rejectConfirmMarkup()}${addDialogMarkup}${attentionDetailDialogMarkup()}`
   initializeNavigation(app)
 
   const pageRoot = document.querySelector('[data-page-root]')
@@ -139,6 +152,7 @@ const renderAuthenticated = async (user, gmailError) => {
   const correctionRoot = document.querySelector('[data-correction-dialog]'); const correctionDialog = createDialogController(correctionRoot)
   wireCorrectionDialogInteractions(correctionRoot)
   const rejectRoot = document.querySelector('[data-reject-dialog]'); const rejectDialog = createDialogController(rejectRoot)
+  const attentionRoot = document.querySelector('[data-attention-dialog]'); const attentionDialog = createDialogController(attentionRoot)
 
   const renderSidebarFooter = () => { const slot = document.querySelector('[data-sidebar-footer]'); if (slot) slot.innerHTML = sidebarFooterMarkup(user, gmailSourceUnavailable ? null : gmailSource) }
   const updateNavActive = (routeName) => {
@@ -149,9 +163,10 @@ const renderAuthenticated = async (user, gmailError) => {
     })
   }
   const updateAttentionBadge = () => {
+    const total = attentionTotal()
     document.querySelectorAll('[data-route-link="attention"]').forEach(link => {
       link.querySelector('.nav-badge')?.remove()
-      if (candidates.length) link.insertAdjacentHTML('beforeend', `<span class="nav-badge">${candidates.length}</span>`)
+      if (total) link.insertAdjacentHTML('beforeend', `<span class="nav-badge">${total}</span>`)
     })
   }
 
@@ -233,8 +248,8 @@ const renderAuthenticated = async (user, gmailError) => {
         await renderSubscriptionDetailRoute(route.params.id)
         break
       case 'attention':
-        pageRoot.innerHTML = attentionPageMarkup({ actions, candidates })
-        wireCandidateList(pageRoot)
+        pageRoot.innerHTML = attentionPageMarkup({ items: attentionItems, overlapActions })
+        wireAttentionPage(pageRoot)
         break
       case 'sources':
         pageRoot.innerHTML = sourcesPageMarkup()
@@ -247,15 +262,11 @@ const renderAuthenticated = async (user, gmailError) => {
         pageRoot.querySelector('[data-sign-out]').addEventListener('click', signOut)
         break
       default:
-        pageRoot.innerHTML = overviewMarkup({ subscriptions: items, actions, monthlySpend: monthlySpendFor(items), candidates, greeting, dateLabel, gmailSource, gmailSourceUnavailable })
+        pageRoot.innerHTML = overviewMarkup({ subscriptions: items, attentionItems, overlapActions, monthlySpend: monthlySpendFor(items), greeting, dateLabel, gmailSource, gmailSourceUnavailable })
     }
     updateAttentionBadge()
     window.scrollTo(0, 0)
   }
-
-  onRouteChange(renderRoute)
-  await renderRoute()
-  renderSidebarFooter()
 
   // ---- Subscriptions page: client-side search/sort/billing-cadence filter
   // over the already-loaded list (no new endpoint - everything filtered here
@@ -300,32 +311,83 @@ const renderAuthenticated = async (user, gmailError) => {
     root.querySelectorAll('[data-open-add]').forEach(button => button.addEventListener('click', event => addDialog.open(event.currentTarget)))
   }
 
-  // ---- FEATURE-002: ambiguous-candidate review. Confirm/reject act on the
-  // whole pending candidate, not a subscription (there is no subscription
-  // yet), and both remove the candidate from the pending list either way. --
-  const wireCandidateList = (root) => {
-    root.querySelector('.candidate-list')?.addEventListener('click', async (event) => {
+  // ---- FEATURE-003: Worth your attention - filter tabs/sort over the
+  // already-loaded, server-prioritized list (same split-toolbar-from-list
+  // pattern as wireSubscriptionsPage), a price-change/renewal card opening
+  // the detail dialog, and FEATURE-002's ambiguous-candidate confirm/reject
+  // inline on its own card (there is no subscription yet to "review").
+  const wireAttentionPage = (root) => {
+    const state = { filter: 'all', sort: 'priority' }
+    const apply = () => {
+      const filtered = sortAttentionItems(filterAttentionItems(attentionItems, state.filter), state.sort)
+      renderAttentionList(root, { items: filtered, candidatesById: candidatesById(), hasAnyItems: attentionItems.length > 0 })
+      root.querySelectorAll('[data-attention-filter]').forEach(tab => {
+        const active = tab.dataset.attentionFilter === state.filter
+        tab.classList.toggle('is-active', active)
+        tab.setAttribute('aria-selected', String(active))
+      })
+    }
+    apply()
+
+    root.querySelector('[data-attention-tabs]')?.addEventListener('click', (event) => {
+      const tab = event.target.closest('[data-attention-filter]')
+      if (!tab) return
+      state.filter = tab.dataset.attentionFilter
+      apply()
+    })
+    root.querySelector('[data-attention-sort]')?.addEventListener('change', (event) => { state.sort = event.currentTarget.value; apply() })
+
+    root.querySelector('[data-attention-list]')?.addEventListener('click', async (event) => {
       const confirmButton = event.target.closest('[data-confirm-candidate]')
       const rejectButton = event.target.closest('[data-reject-candidate]')
-      const button = confirmButton || rejectButton
-      if (!button) return
-      const candidateId = event.target.closest('[data-candidate-id]')?.dataset.candidateId
-      if (!candidateId) return
-      button.disabled = true
-      try {
-        if (confirmButton) { await feature001Api.confirmCandidate(candidateId); live.announce('Subscription confirmed.') }
-        else { await feature001Api.rejectCandidate(candidateId); live.announce('Marked as not a subscription.') }
-        candidates = candidates.filter(candidate => candidate.id !== candidateId)
-        const { subscriptions: rawList } = await feature001Api.listSubscriptions()
-        backendItems = (rawList || []).map(toDisplayItem)
-        refreshActions()
-        await renderRoute()
-      } catch {
-        button.disabled = false
-        live.announce("That couldn't be completed. Please try again.")
+      if (confirmButton || rejectButton) {
+        const button = confirmButton || rejectButton
+        const candidateId = event.target.closest('[data-candidate-id]')?.dataset.candidateId
+        if (!candidateId) return
+        button.disabled = true
+        try {
+          if (confirmButton) { await feature001Api.confirmCandidate(candidateId); live.announce('Subscription confirmed.') }
+          else { await feature001Api.rejectCandidate(candidateId); live.announce('Marked as not a subscription.') }
+          candidates = candidates.filter(candidate => candidate.id !== candidateId)
+          const { subscriptions: rawList } = await feature001Api.listSubscriptions()
+          backendItems = (rawList || []).map(toDisplayItem)
+          refreshOverlapActions()
+          await refreshAttentionItems()
+          await renderRoute()
+        } catch {
+          button.disabled = false
+          live.announce("That couldn't be completed. Please try again.")
+        }
+        return
       }
+      const card = event.target.closest('[data-attention-id]')
+      if (!card) return
+      const item = attentionItems.find(entry => entry.id === card.dataset.attentionId)
+      if (!item) return
+      renderAttentionDetail(attentionRoot, item)
+      attentionDialog.open(card)
     })
   }
+
+  // ---- FEATURE-003: dismissing an attention item, and closing the detail
+  // dialog before "Review subscription" navigates away from it.
+  attentionRoot.querySelector('[data-attention-detail-body]').addEventListener('click', async (event) => {
+    if (event.target.closest('[data-attention-review]')) { attentionDialog.close(); return }
+    const dismissButton = event.target.closest('[data-attention-dismiss]')
+    if (!dismissButton) return
+    const itemKey = dismissButton.dataset.attentionDismissId
+    dismissButton.disabled = true
+    try {
+      await feature001Api.dismissAttentionItem(itemKey)
+      attentionItems = attentionItems.filter(item => item.id !== itemKey)
+      attentionDialog.close()
+      await renderRoute()
+      live.announce('Dismissed.')
+    } catch {
+      dismissButton.disabled = false
+      live.announce("That couldn't be completed. Please try again.")
+    }
+  })
 
   // ---- FEATURE-002: corrections ("This looks wrong") and "Not a
   // subscription" rejection, both scoped to `currentSubscriptionId`
@@ -347,7 +409,8 @@ const renderAuthenticated = async (user, gmailError) => {
     try {
       for (const change of changes) updated = await feature001Api.correctSubscription(currentSubscriptionId, change.field, change.value)
       backendItems = backendItems.map(item => item.remoteId === updated.id ? toDisplayItem(updated) : item)
-      refreshActions()
+      refreshOverlapActions()
+      await refreshAttentionItems()
       correctionDialog.close()
       await renderRoute()
       live.announce(changes.length === 1 ? 'Correction saved.' : 'Corrections saved.')
@@ -355,7 +418,7 @@ const renderAuthenticated = async (user, gmailError) => {
       // Whatever succeeded before the failure is already applied server-side -
       // refresh so Subscription Detail reflects that partial progress
       // honestly instead of silently hiding it or claiming nothing saved.
-      if (updated) { backendItems = backendItems.map(item => item.remoteId === updated.id ? toDisplayItem(updated) : item); refreshActions(); await renderRoute() }
+      if (updated) { backendItems = backendItems.map(item => item.remoteId === updated.id ? toDisplayItem(updated) : item); refreshOverlapActions(); await refreshAttentionItems(); await renderRoute() }
       errorEl.hidden = false
       errorEl.textContent = error.message || "That value couldn't be saved. Please try again."
     } finally {
@@ -368,7 +431,8 @@ const renderAuthenticated = async (user, gmailError) => {
     try {
       await feature001Api.rejectSubscription(currentSubscriptionId)
       backendItems = backendItems.filter(item => item.remoteId !== currentSubscriptionId)
-      refreshActions()
+      refreshOverlapActions()
+      await refreshAttentionItems()
       rejectDialog.close()
       live.announce('No longer counted as an active subscription.')
       navigate('subscriptions')
@@ -410,9 +474,10 @@ const renderAuthenticated = async (user, gmailError) => {
       const previousIds = new Set(allItems().map(item => item.id))
       const { subscriptions: rawList } = await feature001Api.listSubscriptions()
       backendItems = (rawList || []).map(toDisplayItem)
-      refreshActions()
+      refreshOverlapActions()
       const newIds = new Set(allItems().filter(item => !previousIds.has(item.id)).map(item => item.id))
       try { candidates = (await feature001Api.listCandidates()).candidates || [] } catch { /* the review page just keeps showing its last known state */ }
+      await refreshAttentionItems()
       await refreshGmailSource()
       await renderRoute()
       renderScanResults(result)
@@ -447,6 +512,8 @@ const renderAuthenticated = async (user, gmailError) => {
         await feature001Api.disconnectGmail()
         const { subscriptions: rawList } = await feature001Api.listSubscriptions()
         backendItems = (rawList || []).map(toDisplayItem)
+        refreshOverlapActions()
+        await refreshAttentionItems()
         await refreshGmailSource()
         await renderRoute()
         applyGmailSource()
@@ -467,6 +534,16 @@ const renderAuthenticated = async (user, gmailError) => {
     await connectGmail()
     event.currentTarget.disabled = false
   })
+
+  // Deliberately last: renderRoute's switch calls into every wireXxx()
+  // function above (wireAttentionPage, wireSubscriptionsPage,
+  // wireSourcesPage, signOut, ...) depending on which route is current, so
+  // the very first render - which can legitimately land on any route via a
+  // deep link or a page refresh, not just the default overview - must not
+  // run until all of them are defined.
+  onRouteChange(renderRoute)
+  await renderRoute()
+  renderSidebarFooter()
 
   if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'))
 }
