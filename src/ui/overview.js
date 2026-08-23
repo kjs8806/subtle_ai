@@ -7,8 +7,10 @@ const escapeHtml = value => String(value ?? '').replace(/[&<>"]/g, character => 
 const svg = (paths, viewBox = '0 0 24 24') => `<svg width="18" height="18" viewBox="${viewBox}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`
 
 const ICONS = {
-  spend: svg('<path d="M3 17V9m6 8V5m6 12v-6m6 6V3"/>'),
-  annual: svg('<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/>'),
+  // A trending sparkline, matching the reference mockup's Monthly spend icon.
+  spend: svg('<path d="M3 15.5 7.5 11l3 3L17 7l4 3.5"/>'),
+  // An ascending bar chart, matching the reference mockup's Annual spend icon.
+  annual: svg('<path d="M5 19v-5M10.5 19V9M16 19v-8M21 19V6"/>'),
   active: svg('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="m9 12 2 2 4-4"/>'),
 }
 
