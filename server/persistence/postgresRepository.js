@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
+import { buildAttentionItems, RULE_VERSION } from '../../src/services/attentionItemBuilder.js'
+import { detectPriceChange } from '../../src/services/priceChangeService.js'
 
 // node-postgres returns NUMERIC columns (current_price, amount, confidence) as
 // strings by default, to avoid float-precision loss on arbitrary-precision
@@ -272,6 +274,37 @@ export const createPostgresRepository = ({ pool }) => {
       const existing = await pool.query('SELECT status FROM subscription_candidates WHERE user_id = $1 AND id = $2', [userId, candidateId])
       if (!existing.rows[0]) return null
       return { error: 'invalid_state' }
+    },
+
+    // FEATURE-003: price-change/renewal intelligence, mixed with FEATURE-002's
+    // existing ambiguous-candidate review into one Worth-your-attention list.
+    // Every attention-worthy price change detected on this call is durably
+    // upserted into price_change_events first (Tech Lead guidance: derived
+    // intelligence is persisted, not recalculated ad hoc) - the natural key
+    // (subscription_id, previous_price, current_price, currency) makes this
+    // idempotent, so a rescan re-detecting the identical transition is a
+    // no-op rather than a duplicate row. Renewal items have no discrete
+    // "event" of their own (see migrations/009's comment), so nothing is
+    // persisted for those beyond an eventual dismissal.
+    async listAttentionItems(userId) {
+      const [subscriptions, candidates] = await Promise.all([this.listSubscriptions(userId), this.listCandidates(userId)])
+      for (const subscription of subscriptions) {
+        const change = detectPriceChange({ currentPrice: subscription.currentPrice, currency: subscription.currency, cadence: subscription.billingCycle, priceHistory: subscription.priceHistory })
+        if (!change) continue
+        await pool.query(
+          `INSERT INTO price_change_events (user_id, subscription_id, change_type, currency, cadence, previous_price, current_price, per_period_delta, percent_change, annual_impact, is_attention_worthy, first_seen_at, rule_version)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+           ON CONFLICT (subscription_id, previous_price, current_price, currency) DO NOTHING`,
+          [userId, subscription.id, change.changeType, change.currency, change.cadence, change.previousPrice, change.currentPrice, change.perPeriodDelta, change.percentChange, change.annualImpact, change.isAttentionWorthy, change.firstSeenAt, RULE_VERSION],
+        )
+      }
+      const dismissed = await pool.query('SELECT item_key FROM attention_item_dismissals WHERE user_id = $1', [userId])
+      const dismissedKeys = new Set(dismissed.rows.map((row) => row.item_key))
+      return buildAttentionItems({ subscriptions, candidates, isDismissed: (id) => dismissedKeys.has(id) })
+    },
+    async dismissAttentionItem(userId, itemKey) {
+      await pool.query('INSERT INTO attention_item_dismissals (user_id, item_key) VALUES ($1, $2) ON CONFLICT (user_id, item_key) DO NOTHING', [userId, itemKey])
+      return { itemKey, dismissed: true }
     },
   }
 }

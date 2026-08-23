@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { buildAttentionItems } from '../../src/services/attentionItemBuilder.js'
 
 const clone = (value) => structuredClone(value)
 const publicConnection = (connection) => {
@@ -30,6 +31,10 @@ export const createMemoryRepository = () => {
   const corrections = new Map()
   const conflicts = new Map()
   const candidates = new Map()
+  // FEATURE-003: item_key -> dismissedAt, scoped per user via the key
+  // convention `${userId}:${itemKey}` (memoryRepository has no per-user
+  // table the way Postgres does, so ownership lives in the key itself).
+  const attentionDismissals = new Map()
 
   const activeCorrectionFor = (subscriptionId, field) => [...corrections.values()].find((item) => item.subscriptionId === subscriptionId && item.field === field && !item.supersededAt)
   const hydrateSub = (sub) => sub && {
@@ -308,6 +313,23 @@ export const createMemoryRepository = () => {
       candidate.resolvedAt = new Date().toISOString()
       candidates.set(candidateId, candidate)
       return { candidate: clone(candidate) }
+    },
+
+    // FEATURE-003: price-change/renewal intelligence, mixed with FEATURE-002's
+    // existing ambiguous-candidate review into one Worth-your-attention list.
+    // Recomputed on every call from current state (subscriptions/
+    // priceHistory/candidates), which is naturally idempotent - there's no
+    // separate durable event table to accidentally duplicate in the memory
+    // backend, unlike Postgres's price_change_events (see postgresRepository.js).
+    listAttentionItems: (userId) => {
+      const userSubscriptions = [...subscriptions.values()].filter((item) => item.userId === userId && item.status !== 'rejected').map(hydrateSub)
+      const userCandidates = [...candidates.values()].filter((item) => item.userId === userId && item.status === 'pending')
+      const isDismissed = (itemKey) => attentionDismissals.has(`${userId}:${itemKey}`)
+      return clone(buildAttentionItems({ subscriptions: userSubscriptions, candidates: userCandidates, isDismissed }))
+    },
+    dismissAttentionItem: (userId, itemKey) => {
+      attentionDismissals.set(`${userId}:${itemKey}`, new Date().toISOString())
+      return { itemKey, dismissed: true }
     },
   }
 }
