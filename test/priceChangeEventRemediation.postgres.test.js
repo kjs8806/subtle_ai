@@ -1,14 +1,28 @@
-// Tech Lead remediation tests (GitHub PR #37, review of commit
-// 403272610bc1ef4d6a43d39ad1541347cd6b604d) - BLOCKER 1 and BLOCKER 2.
+// Tech Lead remediation tests (GitHub PR #37).
 //
+// First-round review (of commit 40327261) - BLOCKER 1 and BLOCKER 2:
 // BLOCKER 1: price_change_events' identity must be one canonical value,
 // referenced identically by the persisted event row, the attention item id,
 // and the dismissal key.
-//
 // BLOCKER 2: that identity must be derived from source observation
 // provenance, not raw price values, so two genuinely separate transitions
 // through the same two prices at different points in time are never
 // collapsed into one row.
+//
+// Second-round review (of commit 8473ff9b) - BLOCKER 1 and BLOCKER 2:
+// BLOCKER 1: "the current occurrence" per subscription must be selected by
+// real-world observation chronology (current_price_observation_id's
+// observed_at), never by detected_at - Postgres's transaction-stable now()
+// means several historical events inserted in one recomputation transaction
+// can share an identical detected_at.
+// BLOCKER 2: a currency or billing_cycle correction is also an input to
+// derived price intelligence and must invalidate/recompute stale numbers on
+// every event it can still reach (self-heal via ON CONFLICT ... DO UPDATE),
+// and an event whose currency/cadence no longer matches the live
+// subscription (a currency correction can leave zero same-currency history
+// to recompute against) must never be shown as current - without ever
+// relabeling the original receipt evidence.
+
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Pool } from 'pg'
@@ -240,6 +254,277 @@ integration('a FEATURE-002 correction to current_price is detected and persisted
     const priceItem = items.find((item) => item.type === 'price_change')
     assert.ok(priceItem, 'the corrected price change is attention-worthy and surfaces')
     assert.equal(priceItem.id, `price-change:${events.rows[0].event_key}`)
+  } finally {
+    await pool.end()
+  }
+})
+
+// ============================================================
+// Second-round remediation (review of commit 8473ff9b)
+// ============================================================
+
+integration('SECOND ROUND BLOCKER 1: several historical events inserted within one recomputation transaction (identical detected_at) still resolve to the chronologically latest by observation time', async () => {
+  const pool = await connectPool()
+  try {
+    await pool.query('DROP SCHEMA public CASCADE')
+    await pool.query('CREATE SCHEMA public')
+    await runMigrations({ pool })
+    const repository = createPostgresRepository({ pool })
+    const user = await repository.createUser({ email: 'chronology@example.com', name: 'Chronology' })
+    await repository.authorizeConnection(user.id, createTokenVault({ secret: 'a'.repeat(32) }).encrypt('refresh-token'))
+
+    const first = await repository.persistParsedEvidence(user.id, receipt('msg-jan-10', { amount: 10, receivedAt: '2026-01-01T09:00:00.000Z' }))
+    const subscriptionId = first.subscription.id
+    // Seed the rest of the history directly (bypassing persistParsedEvidence,
+    // which would otherwise trigger recordPriceChangeEvents once per
+    // receipt) so none of these three transitions has been detected/
+    // persisted yet - the *next* recompute must discover and insert all
+    // three in a single call/transaction.
+    await pool.query(
+      `INSERT INTO price_observations (subscription_id, evidence_id, amount, currency, observed_at) VALUES
+         ($1, NULL, 12, 'USD', '2026-01-15T09:00:00.000Z'),
+         ($1, NULL, 10, 'USD', '2026-06-01T09:00:00.000Z'),
+         ($1, NULL, 12, 'USD', '2026-12-01T09:00:00.000Z')`,
+      [subscriptionId],
+    )
+
+    // A single correction (to the value it already has) is enough to run
+    // recordPriceChangeEvents exactly once, over the full four-observation
+    // history, inside one transaction.
+    await repository.applyCorrection(user.id, subscriptionId, 'billing_cycle', 'monthly')
+
+    const events = await pool.query('SELECT event_key, previous_price, current_price, detected_at FROM price_change_events WHERE subscription_id = $1 ORDER BY current_price_observation_id', [subscriptionId])
+    assert.equal(events.rows.length, 3, 'all three historical transitions were discovered and persisted in the one recompute pass')
+    const detectedTimestamps = new Set(events.rows.map((row) => row.detected_at.getTime()))
+    assert.equal(detectedTimestamps.size, 1, "Postgres's transaction-stable now() gives all three rows the exact same detected_at - the premise this test is built to force")
+
+    // Despite identical detected_at, GET /api/v1/attention must still
+    // surface the chronologically latest transition (December's 10 -> 12),
+    // not an arbitrary one of the three.
+    const items = await repository.listAttentionItems(user.id)
+    const priceItem = items.find((item) => item.type === 'price_change' && item.subscriptionId === subscriptionId)
+    assert.ok(priceItem)
+    assert.equal(priceItem.priceChange.previousPrice, 10)
+    assert.equal(priceItem.priceChange.currentPrice, 12)
+    assert.equal(priceItem.priceChange.firstSeenAt.toISOString?.() ?? priceItem.priceChange.firstSeenAt, '2026-12-01T09:00:00.000Z', 'the December event specifically, identified by its observation date, not detected_at')
+  } finally {
+    await pool.end()
+  }
+})
+
+integration('SECOND ROUND BLOCKER 2: correcting billing_cycle from monthly to yearly recomputes annual impact/materiality on the existing event, not just current_price corrections', async () => {
+  const pool = await connectPool()
+  try {
+    await pool.query('DROP SCHEMA public CASCADE')
+    await pool.query('CREATE SCHEMA public')
+    await runMigrations({ pool })
+    const repository = createPostgresRepository({ pool })
+    const user = await repository.createUser({ email: 'cadence-my@example.com', name: 'Cadence' })
+    await repository.authorizeConnection(user.id, createTokenVault({ secret: 'a'.repeat(32) }).encrypt('refresh-token'))
+
+    // $10 -> $12/month: 20% increase, $24/year impact - attention-worthy on
+    // both legs of the threshold.
+    const first = await repository.persistParsedEvidence(user.id, receipt('msg-1', { amount: 10, receivedAt: '2026-01-01T09:00:00.000Z' }))
+    const subscriptionId = first.subscription.id
+    await repository.persistParsedEvidence(user.id, receipt('msg-2', { amount: 12, receivedAt: '2026-02-01T09:00:00.000Z' }))
+    const before = await pool.query('SELECT id, event_key, cadence, annual_impact, is_attention_worthy FROM price_change_events WHERE subscription_id = $1', [subscriptionId])
+    assert.equal(before.rows[0].cadence, 'monthly')
+    assert.equal(Number(before.rows[0].annual_impact), 24)
+    assert.equal(before.rows[0].is_attention_worthy, true)
+
+    await repository.applyCorrection(user.id, subscriptionId, 'billing_cycle', 'yearly')
+
+    // Same event (same event_key/row - the underlying observations did not
+    // change), but its cadence-dependent numbers are now correct for yearly
+    // billing: a $10 -> $12 *yearly* transition is only $2/year impact. It
+    // remains attention-worthy only because the percentage leg (20%) still
+    // independently qualifies.
+    const after = await pool.query('SELECT id, event_key, cadence, annual_impact, percent_change, is_attention_worthy FROM price_change_events WHERE subscription_id = $1', [subscriptionId])
+    assert.equal(after.rows.length, 1, 'no new event row was created - the existing one was updated in place')
+    assert.equal(after.rows[0].id, before.rows[0].id, 'same row')
+    assert.equal(after.rows[0].event_key, before.rows[0].event_key, 'same canonical identity - only the derived numbers changed')
+    assert.equal(after.rows[0].cadence, 'yearly')
+    assert.equal(Number(after.rows[0].annual_impact), 2, 'a $10->$12 *yearly* transition is $2/year, not the stale $24 computed under monthly')
+    assert.equal(Number(after.rows[0].percent_change), 20, 'percent change is cadence-independent and unchanged')
+    assert.equal(after.rows[0].is_attention_worthy, true, 'still attention-worthy via the 20% threshold even though the $24 annual-impact leg no longer qualifies')
+
+    const items = await repository.listAttentionItems(user.id)
+    const priceItem = items.find((item) => item.type === 'price_change')
+    assert.equal(priceItem.priceChange.annualImpact, 2, 'the live attention item reflects the corrected cadence, never the stale pre-correction number')
+    assert.equal(priceItem.id, `price-change:${before.rows[0].event_key}`, 'the attention item id is unchanged - the correction updated the occurrence, it did not create a new one')
+  } finally {
+    await pool.end()
+  }
+})
+
+integration('SECOND ROUND BLOCKER 2: correcting billing_cycle from yearly to monthly recomputes the symmetric direction', async () => {
+  const pool = await connectPool()
+  try {
+    await pool.query('DROP SCHEMA public CASCADE')
+    await pool.query('CREATE SCHEMA public')
+    await runMigrations({ pool })
+    const repository = createPostgresRepository({ pool })
+    const user = await repository.createUser({ email: 'cadence-yr@example.com', name: 'Cadence Yearly' })
+    await repository.authorizeConnection(user.id, createTokenVault({ secret: 'a'.repeat(32) }).encrypt('refresh-token'))
+
+    const yearlyReceipt = (sourceId, opts) => ({ ...receipt(sourceId, opts), cadence: 'yearly', fieldObservations: { ...receipt(sourceId, opts).fieldObservations, cadence: { value: 'yearly', provenance: 'confirmed' } } })
+    // $100 -> $110/year: 10% increase, $10/year impact - attention-worthy on
+    // the percentage leg alone (under $24/year).
+    const first = await repository.persistParsedEvidence(user.id, yearlyReceipt('msg-1', { amount: 100, receivedAt: '2026-01-01T09:00:00.000Z' }))
+    const subscriptionId = first.subscription.id
+    await repository.persistParsedEvidence(user.id, yearlyReceipt('msg-2', { amount: 110, receivedAt: '2026-02-01T09:00:00.000Z' }))
+    const before = await pool.query('SELECT cadence, annual_impact, is_attention_worthy FROM price_change_events WHERE subscription_id = $1', [subscriptionId])
+    assert.equal(before.rows[0].cadence, 'yearly')
+    assert.equal(Number(before.rows[0].annual_impact), 10)
+
+    await repository.applyCorrection(user.id, subscriptionId, 'billing_cycle', 'monthly')
+
+    // The same $100->$110 transition, reinterpreted as monthly billing, is a
+    // $120/year impact - well past the $24 threshold.
+    const after = await pool.query('SELECT cadence, annual_impact, is_attention_worthy FROM price_change_events WHERE subscription_id = $1', [subscriptionId])
+    assert.equal(after.rows[0].cadence, 'monthly')
+    assert.equal(Number(after.rows[0].annual_impact), 120)
+    assert.equal(after.rows[0].is_attention_worthy, true)
+  } finally {
+    await pool.end()
+  }
+})
+
+integration('SECOND ROUND BLOCKER 2: correcting currency from USD to CAD suppresses the now-foreign-currency event as "current" without deleting it, and never relabels the original receipt evidence', async () => {
+  const pool = await connectPool()
+  try {
+    await pool.query('DROP SCHEMA public CASCADE')
+    await pool.query('CREATE SCHEMA public')
+    await runMigrations({ pool })
+    const repository = createPostgresRepository({ pool })
+    const user = await repository.createUser({ email: 'currency@example.com', name: 'Currency' })
+    await repository.authorizeConnection(user.id, createTokenVault({ secret: 'a'.repeat(32) }).encrypt('refresh-token'))
+
+    const first = await repository.persistParsedEvidence(user.id, receipt('msg-1', { amount: 10, currency: 'USD', receivedAt: '2026-01-01T09:00:00.000Z' }))
+    const subscriptionId = first.subscription.id
+    await repository.persistParsedEvidence(user.id, receipt('msg-2', { amount: 12, currency: 'USD', receivedAt: '2026-02-01T09:00:00.000Z' }))
+
+    const itemsBefore = await repository.listAttentionItems(user.id)
+    assert.ok(itemsBefore.some((item) => item.type === 'price_change' && item.subscriptionId === subscriptionId), 'the USD price increase is the current item before any correction')
+
+    await repository.applyCorrection(user.id, subscriptionId, 'currency', 'CAD')
+
+    // The event row is NOT deleted - useful historical provenance is
+    // preserved - but it must never be shown as the live subscription's
+    // current occurrence once the subscription's own currency has moved on
+    // and there is no CAD history to legitimately compare against.
+    const eventRows = await pool.query('SELECT currency, previous_price, current_price FROM price_change_events WHERE subscription_id = $1', [subscriptionId])
+    assert.equal(eventRows.rows.length, 1, 'the historical USD event record is preserved, not deleted')
+    assert.equal(eventRows.rows[0].currency, 'USD', "the event's own currency is left exactly as it was computed - it is not relabeled to CAD")
+
+    const itemsAfter = await repository.listAttentionItems(user.id)
+    assert.ok(!itemsAfter.some((item) => item.type === 'price_change' && item.subscriptionId === subscriptionId), 'the stale USD event must never be shown as current once the subscription is CAD - no fabricated cross-currency comparison')
+
+    // The original receipts are never rewritten to say CAD.
+    const observations = await pool.query('SELECT currency FROM price_observations WHERE subscription_id = $1 AND evidence_id IS NOT NULL', [subscriptionId])
+    assert.ok(observations.rows.every((row) => row.currency === 'USD'), 'original receipt-derived price observations keep their real, originally-observed currency')
+  } finally {
+    await pool.end()
+  }
+})
+
+integration('SECOND ROUND: corrected cadence/currency-derived state survives a repository restart', async () => {
+  const pool = await connectPool()
+  try {
+    await pool.query('DROP SCHEMA public CASCADE')
+    await pool.query('CREATE SCHEMA public')
+    await runMigrations({ pool })
+    const repositoryBeforeRestart = createPostgresRepository({ pool })
+    const user = await repositoryBeforeRestart.createUser({ email: 'restart-correction@example.com', name: 'Restart Correction' })
+    await repositoryBeforeRestart.authorizeConnection(user.id, createTokenVault({ secret: 'a'.repeat(32) }).encrypt('refresh-token'))
+    const first = await repositoryBeforeRestart.persistParsedEvidence(user.id, receipt('msg-1', { amount: 10, receivedAt: '2026-01-01T09:00:00.000Z' }))
+    const subscriptionId = first.subscription.id
+    await repositoryBeforeRestart.persistParsedEvidence(user.id, receipt('msg-2', { amount: 12, receivedAt: '2026-02-01T09:00:00.000Z' }))
+    await repositoryBeforeRestart.applyCorrection(user.id, subscriptionId, 'billing_cycle', 'yearly')
+
+    const repositoryAfterRestart = createPostgresRepository({ pool })
+    const items = await repositoryAfterRestart.listAttentionItems(user.id)
+    const priceItem = items.find((item) => item.type === 'price_change')
+    assert.ok(priceItem, 'the corrected occurrence is still there after a fresh repository instance')
+    assert.equal(priceItem.priceChange.annualImpact, 2, 'the recomputed (not stale) annual impact persisted across the restart')
+  } finally {
+    await pool.end()
+  }
+})
+
+integration('SECOND ROUND: dismissing one occurrence never suppresses a genuinely different one, and a correction-driven self-heal keeps the same identity so its dismissal still applies', async () => {
+  const pool = await connectPool()
+  try {
+    await pool.query('DROP SCHEMA public CASCADE')
+    await pool.query('CREATE SCHEMA public')
+    await runMigrations({ pool })
+    const repository = createPostgresRepository({ pool })
+    const user = await repository.createUser({ email: 'dismiss-identity@example.com', name: 'Dismiss Identity' })
+    await repository.authorizeConnection(user.id, createTokenVault({ secret: 'a'.repeat(32) }).encrypt('refresh-token'))
+
+    const first = await repository.persistParsedEvidence(user.id, receipt('msg-jan-10', { amount: 10, receivedAt: '2026-01-01T09:00:00.000Z' }))
+    const subscriptionId = first.subscription.id
+    await repository.persistParsedEvidence(user.id, receipt('msg-jan-12', { amount: 12, receivedAt: '2026-01-15T09:00:00.000Z' }))
+    const itemsBeforeDismiss = await repository.listAttentionItems(user.id)
+    const januaryItem = itemsBeforeDismiss.find((item) => item.type === 'price_change')
+    await repository.dismissAttentionItem(user.id, januaryItem.id)
+
+    // A cadence correction self-heals January's event in place (same
+    // event_key) - the dismissal, keyed to that exact identity, must still
+    // suppress it.
+    await repository.applyCorrection(user.id, subscriptionId, 'billing_cycle', 'yearly')
+    const itemsAfterSelfHeal = await repository.listAttentionItems(user.id)
+    assert.ok(!itemsAfterSelfHeal.some((item) => item.id === januaryItem.id), 'the dismissal survives a same-identity self-heal recomputation')
+
+    // A later, genuinely different transition (a new event_key) must not be
+    // suppressed just because an earlier, unrelated occurrence was dismissed.
+    await repository.persistParsedEvidence(user.id, receipt('msg-jun-10', { amount: 10, receivedAt: '2026-06-01T09:00:00.000Z' }))
+    await repository.persistParsedEvidence(user.id, receipt('msg-dec-12', { amount: 12, receivedAt: '2026-12-01T09:00:00.000Z' }))
+    const itemsAfterNewTransition = await repository.listAttentionItems(user.id)
+    const decemberItem = itemsAfterNewTransition.find((item) => item.type === 'price_change')
+    assert.ok(decemberItem, 'the new, distinct December transition is its own occurrence, not suppressed by January\'s dismissal')
+    assert.notEqual(decemberItem.id, januaryItem.id)
+  } finally {
+    await pool.end()
+  }
+})
+
+integration('SECOND ROUND (found during this remediation, same class as BLOCKER 2): accepting a FEATURE-002 conflict also invalidates/recomputes price intelligence, not only a direct correction', async () => {
+  const pool = await connectPool()
+  try {
+    await pool.query('DROP SCHEMA public CASCADE')
+    await pool.query('CREATE SCHEMA public')
+    await runMigrations({ pool })
+    const repository = createPostgresRepository({ pool })
+    const user = await repository.createUser({ email: 'accept-conflict@example.com', name: 'Accept Conflict' })
+    await repository.authorizeConnection(user.id, createTokenVault({ secret: 'a'.repeat(32) }).encrypt('refresh-token'))
+
+    const first = await repository.persistParsedEvidence(user.id, receipt('msg-1', { amount: 10, receivedAt: '2026-01-01T09:00:00.000Z' }))
+    const subscriptionId = first.subscription.id
+    // An active correction to yearly billing, in place before the second
+    // receipt arrives.
+    await repository.applyCorrection(user.id, subscriptionId, 'billing_cycle', 'yearly')
+
+    // The second receipt's own cadence field observation ("monthly") conflicts
+    // with the active yearly correction - correction precedence keeps
+    // billing_cycle at "yearly" for now, and the conflict is surfaced rather
+    // than silently applied.
+    const second = await repository.persistParsedEvidence(user.id, receipt('msg-2', { amount: 12, receivedAt: '2026-02-01T09:00:00.000Z' }))
+    const conflict = second.subscription.conflicts.find((c) => c.field === 'billing_cycle')
+    assert.ok(conflict, 'the receipt\'s own "monthly" cadence conflicts with the active yearly correction')
+
+    const beforeAccept = await repository.listAttentionItems(user.id)
+    const beforeItem = beforeAccept.find((item) => item.type === 'price_change')
+    assert.equal(beforeItem.priceChange.annualImpact, 2, 'still under the yearly correction: $10->$12/year is $2/year')
+
+    // Accepting the conflict makes "monthly" (the receipt's own value) the
+    // new authoritative correction - this must invalidate/recompute the
+    // existing event exactly like a direct applyCorrection would.
+    await repository.acceptConflict(user.id, conflict.id)
+    const afterAccept = await repository.listAttentionItems(user.id)
+    const afterItem = afterAccept.find((item) => item.type === 'price_change')
+    assert.ok(afterItem, 'the event is still current after accepting the conflict')
+    assert.equal(afterItem.priceChange.annualImpact, 24, 'now recomputed under monthly billing: $10->$12/month is $24/year, not the stale $2 from before accepting')
   } finally {
     await pool.end()
   }
