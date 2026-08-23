@@ -1,3 +1,4 @@
+// Browser smoke suite configuration for QA regression coverage.
 import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
