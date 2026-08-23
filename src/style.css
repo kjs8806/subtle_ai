@@ -440,9 +440,9 @@ details p{display:flex;justify-content:space-between;margin:0;padding:8px 0;colo
 .preview-sidebar{padding:16px 12px;border-right:1px solid var(--border);background:var(--paper);font-size:11px}
 .preview-brand{display:flex;align-items:center;gap:6px;margin-bottom:14px;font-weight:800;font-size:11.5px}
 .preview-logo{display:grid;width:18px;height:18px;place-items:center;border-radius:5px;background:var(--purple);color:#fff;font-weight:800;font-size:10px}
-.preview-nav-item{position:relative;margin-bottom:2px;padding:6px 8px;border-radius:6px;color:var(--muted)}
+.preview-nav-item{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:2px;padding:6px 8px;border-radius:6px;color:var(--muted)}
 .preview-nav-item.is-active{background:var(--purple-soft);color:var(--purple-ink);font-weight:600}
-.preview-nav-badge{position:absolute;right:6px;top:50%;transform:translateY(-50%);display:inline-grid;min-width:14px;height:14px;place-items:center;border-radius:var(--radius-pill);background:var(--coral);color:#fff;font-size:8.5px;font-weight:700}
+.preview-nav-badge{flex:none;display:inline-grid;min-width:14px;height:14px;place-items:center;border-radius:var(--radius-pill);background:var(--coral);color:#fff;font-size:8.5px;font-weight:700}
 .preview-main{padding:18px 20px}
 .preview-greeting{display:flex;flex-direction:column;gap:2px;margin-bottom:14px}
 .preview-greeting strong{font-size:14px}

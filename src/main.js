@@ -253,10 +253,6 @@ const renderAuthenticated = async (user, gmailError) => {
     window.scrollTo(0, 0)
   }
 
-  onRouteChange(renderRoute)
-  await renderRoute()
-  renderSidebarFooter()
-
   // ---- Subscriptions page: client-side search/sort/billing-cadence filter
   // over the already-loaded list (no new endpoint - everything filtered here
   // is already on the page). Only the row list re-renders on each change;
@@ -469,6 +465,14 @@ const renderAuthenticated = async (user, gmailError) => {
   })
 
   if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'))
+
+  // Registered last, after every wire*Page helper renderRoute() can call is
+  // defined - landing directly on a deep-linked hash (e.g. a hard refresh on
+  // #/subscriptions) makes this the first call to renderRoute(), and calling
+  // it any earlier would hit those consts before their declarations run.
+  onRouteChange(renderRoute)
+  await renderRoute()
+  renderSidebarFooter()
 }
 
 async function boot() {

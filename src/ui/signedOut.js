@@ -74,7 +74,7 @@ export const signedOutMarkup = () => `<div class="landing wrap" id="signed-out">
 ${productPreviewMarkup()}
 <section class="landing-trust-section" aria-label="Why people trust Subtle AI"><p class="landing-trust-title">Trusted by people who want clarity and control</p><div class="landing-trust-grid">${TRUST_POINTS.map(trustCard).join('')}</div></section>
 </div>
-<aside class="landing-signin panel-card" aria-label="Sign in"><h2>Welcome back</h2><p class="landing-signin-sub">Sign in to continue optimizing your subscriptions.</p><button class="google-button" data-google-sign-in type="button">${ICON_GOOGLE}Continue with Google</button><p class="empty-state" data-session-error hidden></p><p class="landing-signin-note">${ICON_LOCK}We only read your emails to find subscription information. <a href="#learn-more">Learn how it works.</a></p></aside>
+<aside class="landing-signin panel-card" aria-label="Sign in"><h2>Welcome back</h2><p class="landing-signin-sub">Sign in to continue optimizing your subscriptions.</p><button class="google-button" data-google-sign-in type="button">${ICON_GOOGLE}Continue with Google</button><p class="empty-state" data-session-error hidden></p><p class="landing-signin-note">${ICON_LOCK}We only read your emails to find subscription information.</p></aside>
 </div>
 </div>`
 
