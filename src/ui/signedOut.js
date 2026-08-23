@@ -7,4 +7,4 @@ export const signedOutMarkup = () => `<div class="main-content wrap" id="signed-
 
 export const loadingMarkup = (message = 'Loading…') => `<div class="main-content wrap" id="loading"><p class="empty-state" role="status">${message}</p></div>`
 
-export const sessionErrorMarkup = (message = "Subtle couldn't reach the server.") => `<div class="main-content wrap" id="session-error"><header class="overview-header"><p class="eyebrow">Connection problem</p><h1>Something went wrong</h1><p>${message}</p></header><button class="primary-button" data-retry-session type="button">Try again</button></div>`
+export const sessionErrorMarkup = (message = "Subtle AI couldn't reach the server.") => `<div class="main-content wrap" id="session-error"><header class="overview-header"><p class="eyebrow">Connection problem</p><h1>Something went wrong</h1><p>${message}</p></header><button class="primary-button" data-retry-session type="button">Try again</button></div>`

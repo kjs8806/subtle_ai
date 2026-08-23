@@ -49,15 +49,21 @@ A new purple/indigo hue family on a light-lavender ground, replacing the sage/co
 | `--radius-xl` | 22px | Dialogs |
 | `--shadow-sm` / `--shadow-md` / `--shadow-lg` | — | Resting, hover, and dialog elevation |
 
+### Service icons (DES-024)
+
+`src/services/serviceIcons.js` is the single source of per-service identity: one original glyph shape per canonical service, in that service's real brand color, keyed by the exact `canonicalService` string `subscriptionTemplates.js` produces. Every surface that shows a subscription (Overview preview, Subscriptions, Subscription Detail, Worth your attention/candidate review) calls the same `serviceIconMarkup(canonicalService)` - there is no second, independent icon treatment anywhere. An unmapped merchant always renders `FALLBACK_SERVICE_ICON`, never a guessed or wrong-service icon; the service name stays visible as real text next to the icon in every case, never replaced by it.
+
 ### Not yet centralized
 
-Per-service brand accents (`.service-red/blue/navy/purple/green`) remain literal, category-identifying colors rather than semantic tokens — this is intentional (they identify a specific service, not the app's own palette) but still open per the Known gaps below. State never relies on color alone.
+State never relies on color alone.
 
-## Layout (DES-019)
+## Layout and routing (DES-019, corrected by DES-023)
 
-- Persistent left sidebar (260px) with icon+label nav (Overview, Subscriptions, Worth your attention, Sources, Settings) down to 960px, below which it collapses into the existing slide-in mobile menu (`.mobile-topbar` + `#mobile-menu`, unchanged focus/`focusout`/Escape handling).
+- A real multi-page application (`src/ui/router.js`), not one page with anchor-scrolled sections: `#/overview`, `#/subscriptions`, `#/subscriptions/:id`, `#/attention`, `#/sources`, `#/settings`. Hash routing was chosen so every route survives a hard refresh and works with Back/Forward with no server-side change. Only the page content (`[data-page-root]`) swaps between routes; the sidebar, footer, and dialogs are persistent shell.
+- Persistent left sidebar (260px) with icon+label nav (Overview, Subscriptions, Worth your attention, Sources, Settings), each a real link to its route (`aria-current="page"` follows the active route) - down to 960px, below which it collapses into the existing slide-in mobile menu (`.mobile-topbar` + `#mobile-menu`, unchanged focus/`focusout`/Escape handling).
+- Overview is a bounded preview only: capped subscriptions list, capped attention list, one read-only Sources status card. Full subscription management, ambiguous-candidate review, Gmail connect/scan/disconnect, and account settings live only on their own routes.
 - Main content width: 1240px maximum.
-- Responsive breakpoints: 1080px (dashboard grid to one column), 960px (sidebar → mobile drawer), 700px (stat grid/table to one column).
+- Responsive breakpoints: 1080px (two-column overview grid to one column), 960px (sidebar → mobile drawer), 700px (stat grid/table to one column).
 - Interactive targets: at least 44 × 44 CSS pixels.
 - Mobile dialogs and Subscription Detail scroll without horizontal overflow.
 - Any element toggled via the DOM `hidden` property must actually disappear - a global `[hidden]{display:none!important}` rule guards against author `display` rules on the same selector winning over the native `[hidden]` default (a real bug hit during DES-018's implementation: the "Confirmed by you" pill and the Disconnect Gmail button both stayed visible until this rule was added).
@@ -132,7 +138,7 @@ Confidence complements provenance; it never converts an inference into a fact. P
 - Focus trapping/restoration and live announcements require implementation verification.
 - Some current controls appear smaller than the 44 × 44 target.
 - Field-level provenance is not consistently presented across Subscription Detail.
-- The core app palette is now centralized as tokens (DES-018); per-service brand accents are still literal (see "Not yet centralized" above).
+- The core app palette is now centralized as tokens (DES-018); per-service icon colors are centralized separately in `serviceIcons.js` (DES-024), intentionally literal brand colors rather than app tokens.
 - Automated browser accessibility and responsive regression coverage are absent.
 - Component rules are not implemented as a standalone reusable library.
 - "Insights" (from the DES-018 reference) has no destination yet - intentionally left out of the sidebar (DES-019) rather than fabricated; revisit once a real feature is scoped.
