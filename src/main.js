@@ -19,7 +19,7 @@ const APP_CONFIG = { name: 'Subtle AI', tagline: 'Your AI subscription optimizer
 const brandMark = `<img class="brand-mark" src="/icon.png" width="32" height="32" alt="" aria-hidden="true">`
 const brandWordmark = `<img class="brand-wordmark" src="/wordmark.png" width="97" height="20" alt="${APP_CONFIG.name}">`
 const brand = `<a class="brand" href="#${routePath('overview')}" aria-label="${APP_CONFIG.name} home">${brandMark}<span class="brand-text">${brandWordmark}<span class="brand-tagline">${APP_CONFIG.tagline}</span></span></a>`
-const shellHeader = `<header class="pre-auth-header wrap">${brand}</header>`
+const shellHeader = (rightContent = '') => `<header class="pre-auth-header wrap">${brand}${rightContent}</header>`
 const addDialogMarkup = `<div class="dialog-backdrop" data-add-dialog hidden><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="add-title"><button class="dialog-close" data-close-dialog aria-label="Close">×</button><p class="eyebrow">Manual entry</p><h2 id="add-title">Add a subscription</h2><form class="subscription-form"><label>Service name<input name="name" placeholder="e.g. Netflix" required></label><div class="form-row"><label>Cost<input name="cost" type="number" min="0" step="0.01" inputmode="decimal" placeholder="22.99" required></label><label>Billing cadence<select name="cadence"><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></label></div><button class="primary-button form-submit" type="submit">Add to overview</button></form></section></div>`
 
 // Sidebar footer summary (mini Gmail status + account link). Kept read-only
@@ -62,18 +62,24 @@ const consumeRedirectSignal = () => {
 }
 
 const renderSessionError = (message) => {
-  app.innerHTML = shellHeader + sessionErrorMarkup(message)
+  app.innerHTML = shellHeader() + sessionErrorMarkup(message)
   const retry = document.querySelector('[data-retry-session]')
   retry.addEventListener('click', boot)
   retry.focus()
 }
 
 const renderSignedOut = (initialError) => {
-  app.innerHTML = shellHeader + signedOutMarkup()
+  // Unlike the other pre-auth screens, this one has real content above the
+  // fold - an in-page link to the feature section below, not a route that
+  // doesn't exist yet.
+  app.innerHTML = shellHeader(`<a class="pre-auth-learn-more" href="#learn-more">Learn more about ${APP_CONFIG.name} <span aria-hidden="true">→</span></a>`) + signedOutMarkup()
   const button = document.querySelector('[data-google-sign-in]')
   const errorEl = document.querySelector('[data-session-error]')
-  if (initialError) { errorEl.hidden = false; errorEl.textContent = initialError }
-  button.focus()
+  if (initialError) { errorEl.hidden = false; errorEl.textContent = initialError; errorEl.scrollIntoView({ block: 'center' }) }
+  // No longer auto-focused: the old minimal screen had nothing else on it,
+  // but this one has a full marketing page above the sign-in card, and
+  // yanking focus straight to the button would skip a sighted-keyboard or
+  // screen-reader user past all of it.
   button.addEventListener('click', async () => {
     button.disabled = true
     errorEl.hidden = true
@@ -467,7 +473,7 @@ const renderAuthenticated = async (user, gmailError) => {
 
 async function boot() {
   const { authError, gmailError } = consumeRedirectSignal()
-  app.innerHTML = shellHeader + loadingMarkup()
+  app.innerHTML = shellHeader() + loadingMarkup()
   let session
   try {
     session = await feature001Api.getSession()

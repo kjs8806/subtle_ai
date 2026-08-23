@@ -411,12 +411,82 @@ details p{display:flex;justify-content:space-between;margin:0;padding:8px 0;colo
 [data-gmail-dialog] li{display:flex;align-items:flex-start;gap:9px;list-style:none}
 [data-gmail-dialog] li::before{content:'';flex-shrink:0;width:6px;height:6px;margin-top:7px;border-radius:50%;background:var(--purple)}
 
-/* ---------- Sign-in / loading / error ---------- */
-#signed-out,#loading,#session-error{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-height:100vh;padding:40px 0}
-#signed-out .overview-header h1,#session-error .overview-header h1{font-size:30px}
+/* ---------- Loading / error (plain centered screens) ---------- */
+#loading,#session-error{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-height:100vh;padding:40px 0}
+#session-error .overview-header h1{font-size:30px}
 .empty-state{padding:34px;border:1px dashed var(--border);border-radius:var(--radius-md);color:var(--muted);text-align:center}
 
-.pre-auth-header{padding:24px 40px 0}
+.pre-auth-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:24px 40px 0}
+.pre-auth-learn-more{color:var(--purple-ink);font-size:13.5px;font-weight:600;text-decoration:none;white-space:nowrap}
+.pre-auth-learn-more:hover{text-decoration:underline}
+
+/* ---------- Sign-in / marketing landing page ---------- */
+.landing{padding:0 0 56px}
+.landing-grid{display:grid;grid-template-columns:1fr 400px;gap:48px;align-items:start;margin-top:40px}
+.landing-main{display:flex;flex-direction:column;gap:48px;min-width:0}
+
+.landing-hero h1{margin:0 0 14px;font:800 44px/1.15 'Inter',sans-serif;letter-spacing:-.02em}
+.landing-accent{color:var(--purple)}
+.landing-hero p{margin:0;max-width:480px;color:var(--muted);font-size:16px;line-height:1.5}
+
+.landing-features{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+.landing-feature-icon{display:grid;width:44px;height:44px;margin-bottom:14px;place-items:center;border-radius:var(--radius-sm);background:var(--purple-soft);color:var(--purple-ink)}
+.landing-feature h3{margin:0 0 6px;font-size:14.5px}
+.landing-feature p{margin:0;color:var(--muted);font-size:13px;line-height:1.5}
+
+.landing-preview{position:relative;padding:8px 40px}
+.preview-frame{display:grid;grid-template-columns:150px 1fr;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--shadow-lg)}
+.preview-sidebar{padding:16px 12px;border-right:1px solid var(--border);background:var(--paper);font-size:11px}
+.preview-brand{display:flex;align-items:center;gap:6px;margin-bottom:14px;font-weight:800;font-size:11.5px}
+.preview-logo{display:grid;width:18px;height:18px;place-items:center;border-radius:5px;background:var(--purple);color:#fff;font-weight:800;font-size:10px}
+.preview-nav-item{position:relative;margin-bottom:2px;padding:6px 8px;border-radius:6px;color:var(--muted)}
+.preview-nav-item.is-active{background:var(--purple-soft);color:var(--purple-ink);font-weight:600}
+.preview-nav-badge{position:absolute;right:6px;top:50%;transform:translateY(-50%);display:inline-grid;min-width:14px;height:14px;place-items:center;border-radius:var(--radius-pill);background:var(--coral);color:#fff;font-size:8.5px;font-weight:700}
+.preview-main{padding:18px 20px}
+.preview-greeting{display:flex;flex-direction:column;gap:2px;margin-bottom:14px}
+.preview-greeting strong{font-size:14px}
+.preview-greeting span{color:var(--muted);font-size:10.5px}
+.preview-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+.preview-stat{display:flex;flex-direction:column;gap:2px;padding:9px 10px;border:1px solid var(--border);border-radius:var(--radius-sm)}
+.preview-stat span{color:var(--muted);font-size:9px}
+.preview-stat strong{font-size:13px}
+.preview-stat small{color:var(--muted-soft);font-size:8.5px}
+.preview-columns{display:grid;grid-template-columns:1.4fr 1fr;gap:10px}
+.preview-list{padding:10px;border:1px solid var(--border);border-radius:var(--radius-sm)}
+.preview-panel-title{display:block;margin-bottom:8px;font-size:10.5px}
+.preview-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:10px}
+.preview-row .preview-dot{flex-shrink:0;width:16px;height:16px;border-radius:5px}
+.preview-row .preview-service{flex:1;display:flex;flex-direction:column;font-weight:600}
+.preview-row .preview-service small{color:var(--muted);font-weight:400;font-size:9px}
+.preview-row em{font-style:normal;color:var(--ink-soft);font-size:9.5px;white-space:nowrap}
+.preview-attn{margin-bottom:8px;color:var(--ink-soft);font-size:9.5px;line-height:1.6}
+.preview-attn span{display:block;padding:2px 6px;margin-bottom:2px;border-radius:var(--radius-pill);font-size:8.5px;font-weight:700;width:fit-content}
+.preview-attn .tone-coral{background:var(--coral-soft);color:var(--coral-ink)}
+.preview-attn .tone-warning{background:var(--warning-soft);color:var(--warning)}
+.preview-attn .tone-purple{background:var(--purple-soft);color:var(--purple-ink)}
+.preview-badge{position:absolute;display:flex;align-items:center;gap:10px;width:200px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);box-shadow:var(--shadow-md);color:var(--muted-soft)}
+.preview-badge strong{display:block;color:var(--ink);font-size:12px}
+.preview-badge small{display:block;margin-top:2px;color:var(--muted);font-size:10.5px;line-height:1.4}
+.preview-badge-security{left:-30px;bottom:4%}
+.preview-badge-gmail{right:-30px;top:38%}
+
+.landing-trust-title{margin:0 0 20px;color:var(--muted);font-size:14px;text-align:center}
+.landing-trust-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+.landing-trust-item{display:flex;gap:12px}
+.landing-trust-icon{display:grid;flex-shrink:0;width:36px;height:36px;place-items:center;border-radius:var(--radius-sm);background:var(--purple-soft);color:var(--purple-ink)}
+.landing-trust-item strong{display:block;margin-bottom:2px;font-size:13.5px}
+.landing-trust-item p{margin:0;color:var(--muted);font-size:12.5px;line-height:1.4}
+
+.landing-signin{position:sticky;top:24px;padding:32px}
+.landing-signin h2{margin:0 0 6px;font-size:22px;text-align:center}
+.landing-signin-sub{margin:0 0 24px;color:var(--muted);font-size:13.5px;text-align:center}
+.google-button{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;min-height:48px;padding:0 18px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--ink);font-weight:600;font-size:14.5px;cursor:pointer}
+.google-button:hover{background:var(--paper)}
+.landing-signin [data-session-error]{padding:12px;margin-top:14px;font-size:12.5px}
+.landing-signin-note{display:flex;align-items:flex-start;gap:8px;margin:20px 0 0;color:var(--muted-soft);font-size:11.5px;line-height:1.5}
+.landing-signin-note svg{flex-shrink:0;margin-top:1px}
+.landing-signin-note a{color:var(--purple-ink);font-weight:600;text-decoration:none}
+.landing-signin-note a:hover{text-decoration:underline}
 
 .subscription-price,.stat-card strong,.detail-price{font-variant-numeric:tabular-nums}
 
@@ -426,6 +496,8 @@ details p{display:flex;justify-content:space-between;margin:0;padding:8px 0;colo
   .overview-grid{grid-template-columns:1fr}
   .info-band{grid-template-columns:1fr}
   .meta-rows{grid-template-columns:1fr 1fr}
+  .landing-grid{grid-template-columns:1fr;gap:32px}
+  .landing-signin{position:static;order:-1;max-width:440px}
 }
 @media(max-width:960px){
   /* .app-shell is a row flex at desktop (sidebar | main-col); on mobile the
@@ -448,6 +520,11 @@ details p{display:flex;justify-content:space-between;margin:0;padding:8px 0;colo
      right-anchored FAB would float on top of them at some scroll positions. */
   .fab{display:grid;position:fixed;z-index:9;left:20px;bottom:20px;width:52px;height:52px;place-items:center;border:0;border-radius:50%;background:var(--purple);color:#fff;font-size:26px;line-height:1;box-shadow:var(--shadow-lg);cursor:pointer}
   .fab:hover{background:var(--purple-deep)}
+  .pre-auth-header{padding:20px 20px 0}
+  .landing-grid{margin-top:28px}
+  .landing-hero h1{font-size:34px}
+  .landing-features,.landing-trust-grid{grid-template-columns:1fr 1fr}
+  .preview-badge{display:none}
 }
 @media(max-width:700px){
   .stat-grid{grid-template-columns:1fr}
@@ -476,6 +553,17 @@ details p{display:flex;justify-content:space-between;margin:0;padding:8px 0;colo
      room to see the whole form without it feeling cramped. */
   .correction-backdrop{padding:0;align-items:stretch}
   .correction-backdrop .dialog{width:100%;max-width:none;height:100%;max-height:none;border-radius:0}
+  .pre-auth-header{flex-wrap:wrap;gap:8px 16px}
+  .landing-hero h1{font-size:28px}
+  .landing-hero p{font-size:14.5px}
+  .landing-features{grid-template-columns:1fr}
+  .landing-preview{padding:0}
+  .preview-frame{grid-template-columns:1fr}
+  .preview-sidebar{display:none}
+  .preview-stats{grid-template-columns:1fr 1fr}
+  .preview-columns{grid-template-columns:1fr}
+  .landing-trust-grid{grid-template-columns:1fr}
+  .landing-signin{padding:24px}
 }
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}

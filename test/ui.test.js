@@ -11,6 +11,7 @@ import { sourcesPageMarkup } from '../src/ui/sources.js'
 import { settingsPageMarkup } from '../src/ui/settings.js'
 import { correctionDialogMarkup, detailMarkup, fieldProvenance, rejectConfirmMarkup } from '../src/ui/subscriptionDetail.js'
 import { gmailDisclosureMarkup } from '../src/ui/gmailDisclosure.js'
+import { signedOutMarkup } from '../src/ui/signedOut.js'
 import { FALLBACK_SERVICE_ICON, serviceIconFor, serviceIconMarkup } from '../src/services/serviceIcons.js'
 
 const candidate = { id: 'cand-1', canonicalService: 'Amazon', rawMerchant: 'AMZN Mktp', evidence: [{ amount: 9.99, currency: 'USD', cadence: 'monthly' }] }
@@ -285,4 +286,36 @@ test('the service worker treats /api/** as network-only and never caches authent
   const apiBranchIndex = sw.indexOf("pathname.startsWith('/api/')")
   const cachePutIndex = sw.indexOf('cache.put')
   assert.ok(apiBranchIndex > -1 && cachePutIndex > apiBranchIndex, 'the /api/ branch must be checked, and return, before any cache.put call')
+})
+
+// ---- Landing/sign-in page: marketing content matching the approved mockup,
+// but only the one control that actually works (Google sign-in) - no
+// email/password auth, sign-up, or password reset exist on the backend, and
+// no fabricated star rating or testimonial.
+test('the landing page offers only the real Google sign-in control and no fabricated auth, rating, or testimonial UI', () => {
+  const page = signedOutMarkup()
+  assert.match(page, /data-google-sign-in/)
+  assert.match(page, /Continue with Google/)
+  assert.doesNotMatch(page, /type="email"|type="password"|Forgot your password|Sign up|Don't have an account/i)
+  assert.doesNotMatch(page, /★|star-rating|testimonial|Subtle AI user/i)
+
+  // Real, currently-true product claims only.
+  assert.match(page, /Find everything/)
+  assert.match(page, /Understand the details/)
+  assert.match(page, /Know what matters/)
+  assert.match(page, /Take action/)
+  assert.match(page, /Trusted by people who want clarity and control/)
+
+  // The product-preview panel is illustrative, not live data, and is marked
+  // aria-hidden - the only real interactive elements on the whole page are
+  // the Google button and the one "Learn how it works" anchor (the preview
+  // itself is built entirely from div/span/strong/em/small, never <a> or
+  // <button>, so nothing in it reads as a control that happens to do nothing).
+  assert.match(page, /class="landing-preview" aria-hidden="true"/)
+  assert.equal((page.match(/<button/g) || []).length, 1)
+  assert.equal((page.match(/<a /g) || []).length, 1)
+
+  // "Learn more" is a real in-page anchor to the feature section, not a link
+  // to a marketing page that doesn't exist.
+  assert.match(page, /id="learn-more"/)
 })
