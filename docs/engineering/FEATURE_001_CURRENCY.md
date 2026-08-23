@@ -84,11 +84,12 @@ they were in.
 
 ## Price-change and merge behavior
 
-`detectPriceChange` only reports a price increase when both compared price
-observations share the same *resolved* currency. A currency mismatch, or
-either observation having an unresolved currency, means no price-change
-recommendation is generated - `$10 USD` to `$12 CAD` is never reported as a
-$2 increase, and currency conversion is out of scope.
+`src/services/priceChangeService.js`'s `detectPriceChange` (FEATURE-003) only
+reports a price change when both compared price observations share the same
+*resolved* currency. A currency mismatch, or either observation having an
+unresolved currency, means no price-change is detected at all - `$10 USD` to
+`$12 CAD` is never reported as a $2 increase, and currency conversion is out
+of scope.
 
 `mergeSubscriptionDetections` and the repository-level upsert in
 `persistParsedEvidence` never overwrite or compare amounts across

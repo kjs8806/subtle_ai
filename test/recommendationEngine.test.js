@@ -5,16 +5,12 @@ import { createSubscriptionRecord, mergeSubscriptionDetections, parseReceipt } f
 
 const record = (id, subject, sender, body) => createSubscriptionRecord(parseReceipt({ id, subject, sender, body }).evidence)
 
-test('buildActionItems surfaces a price-increase card for a subscription with a rising price history', () => {
+test('buildActionItems no longer surfaces a price-increase card - that is now GET /api/v1/attention (FEATURE-003)', () => {
   const first = record('receipt-1', 'Netflix payment receipt', 'billing@netflix.com', 'USD $10 monthly')
   const second = record('receipt-2', 'Netflix payment receipt', 'billing@netflix.com', 'USD $12 monthly')
   const [netflix] = mergeSubscriptionDetections([first, second])
 
-  const items = buildActionItems([netflix])
-  assert.equal(items.length, 1)
-  assert.equal(items[0].label, 'Price increase detected')
-  assert.deepEqual(items[0].affectedServices, ['Netflix'])
-  assert.equal(items[0].saving, '+$24.00/year')
+  assert.deepEqual(buildActionItems([netflix]), [])
 })
 
 test('buildActionItems surfaces one deduped overlap card for a known overlapping pair', () => {

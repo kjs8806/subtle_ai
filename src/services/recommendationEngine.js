@@ -5,19 +5,12 @@ import { buildRecommendations, normalizeMerchant } from './receiptPipeline.js'
 // actionCard() in src/ui/attention.js ({id, label, affectedServices, body,
 // impactLabel, saving, secondary}). Kept separate from receiptPipeline.js so
 // the engine itself stays UI-agnostic.
+//
+// Price-change detection is handled separately by
+// src/services/priceChangeService.js and surfaced via GET /api/v1/attention
+// (FEATURE-003) - this engine now only covers overlap detection.
 const money = (value) => `$${Number(value).toFixed(2)}`
 const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 }
-
-const priceIncreaseItem = (record, recommendation) => ({
-  id: `price-${record.id}`,
-  priority: recommendation.priority,
-  label: 'Price increase detected',
-  affectedServices: [record.canonicalService],
-  body: `${money(recommendation.previous)} → ${money(recommendation.current)}/month. That adds ${money(recommendation.annualImpact)} to your yearly spend.`,
-  impactLabel: 'Yearly impact',
-  saving: `+${money(recommendation.annualImpact)}/year`,
-  secondary: 'Dismiss',
-})
 
 const overlapItem = (record, related) => ({
   id: `overlap-${[record.id, related.id].sort().join('-')}`,
@@ -41,8 +34,7 @@ export const buildActionItems = (records = []) => {
   const items = []
   for (const record of enriched) {
     for (const recommendation of buildRecommendations(record, enriched)) {
-      if (recommendation.type === 'price_increase') items.push(priceIncreaseItem(record, recommendation))
-      else if (recommendation.type === 'possible_overlap') {
+      if (recommendation.type === 'possible_overlap') {
         const related = byId.get(recommendation.relatedSubscriptionId)
         if (related) items.push(overlapItem(record, related))
       }
