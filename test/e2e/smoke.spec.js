@@ -1,0 +1,125 @@
+import { test, expect } from '@playwright/test'
+
+async function signIn(page) {
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible()
+  await page.getByRole('button', { name: 'Continue with Google' }).click()
+  await expect(page.getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page')
+}
+
+async function connectAndScan(page) {
+  await page.getByRole('link', { name: 'Sources' }).click()
+  const action = page.locator('[data-gmail-action]')
+  await expect(action).toHaveText(/Find subscriptions from receipts/)
+  await action.click()
+  await expect(page.getByRole('dialog', { name: 'Find subscriptions from receipts' })).toBeVisible()
+  await page.getByRole('button', { name: 'Continue with Gmail' }).click()
+  await expect(page.locator('[data-gmail-status]')).toHaveText('Connected')
+  await expect(page.locator('[data-last-scan-results]')).toContainText('subscription')
+}
+
+test('@critical sign in → Connect Gmail → Scan → subscription appears', async ({ page }) => {
+  await signIn(page)
+  await connectAndScan(page)
+  await page.getByRole('link', { name: 'Subscriptions' }).click()
+  await expect(page.locator('[data-subscription-rows] [data-subscription-id]')).toHaveCount(6)
+  await expect(page.getByText('Netflix', { exact: true })).toBeVisible()
+})
+
+test('@critical subscription detail → correction → corrected provenance visible', async ({ page }) => {
+  await signIn(page)
+  await connectAndScan(page)
+  await page.getByRole('link', { name: 'Subscriptions' }).click()
+  await page.getByRole('link', { name: /Review Netflix/ }).click()
+  await expect(page.getByRole('heading', { name: 'Netflix' })).toBeVisible()
+
+  await page.getByRole('button', { name: 'This looks wrong' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Update the details below' })
+  await expect(dialog).toBeVisible()
+  await dialog.locator('[data-correction-price]').fill('18.99')
+  await dialog.getByRole('button', { name: 'Save changes' }).click()
+
+  await expect(page.locator('[data-detail-cost]')).toContainText('USD 18.99')
+  await expect(page.locator('[data-detail-provenance]')).toContainText('Confirmed by you')
+})
+
+test('@critical reject subscription → confirm dialog → removed from active list', async ({ page }) => {
+  await signIn(page)
+  await connectAndScan(page)
+  await page.getByRole('link', { name: 'Subscriptions' }).click()
+  await page.getByRole('link', { name: /Review Spotify/ }).click()
+  await page.getByRole('button', { name: 'Not a subscription' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Not a subscription?' })
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('button', { name: 'Mark as not a subscription' }).click()
+  await expect(page.getByRole('heading', { name: 'Your subscriptions' })).toBeVisible()
+  await expect(page.getByRole('link', { name: /Review Spotify/ })).toHaveCount(0)
+})
+
+test('ambiguous candidate can be confirmed and rejected', async ({ page }) => {
+  await signIn(page)
+  await connectAndScan(page)
+  await page.getByRole('link', { name: 'Worth your attention' }).click()
+
+  const candidates = page.locator('[data-candidate-id]')
+  await expect(candidates).toHaveCount(2)
+
+  const first = candidates.first()
+  await first.getByRole('button', { name: /Confirm .* as a subscription/ }).click()
+  await expect(candidates).toHaveCount(1)
+
+  const remaining = candidates.first()
+  await remaining.getByRole('button', { name: /is not a subscription/ }).click()
+  await expect(candidates).toHaveCount(0)
+  await expect(page.getByText('Nothing to review right now.')).toBeVisible()
+})
+
+test('@mobile mobile navigation opens, routes, and closes with Escape', async ({ page }) => {
+  await signIn(page)
+  const menuButton = page.getByRole('button', { name: 'Menu' })
+  await expect(menuButton).toBeVisible()
+  await menuButton.click()
+  await expect(menuButton).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.locator('#mobile-menu')).toBeVisible()
+
+  await page.keyboard.press('Escape')
+  await expect(menuButton).toHaveAttribute('aria-expanded', 'false')
+  await expect(menuButton).toBeFocused()
+
+  await menuButton.click()
+  await page.locator('#mobile-menu').getByRole('link', { name: 'Subscriptions' }).click()
+  await expect(page.getByRole('heading', { name: 'Your subscriptions' })).toBeVisible()
+  await expect(page.locator('#mobile-menu')).toBeHidden()
+})
+
+test('empty state is honest before first scan', async ({ page }) => {
+  await signIn(page)
+  await page.getByRole('link', { name: 'Subscriptions' }).click()
+  await expect(page.getByRole('heading', { name: 'No subscriptions yet' })).toBeVisible()
+  await expect(page.getByText(/haven't found any subscriptions/i)).toBeVisible()
+})
+
+test('session API failure shows retryable error state', async ({ page }) => {
+  await page.route('**/api/v1/session', route => route.abort())
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Something went wrong' })).toBeVisible()
+  const retry = page.getByRole('button', { name: 'Try again' })
+  await expect(retry).toBeVisible()
+  await expect(retry).toBeFocused()
+})
+
+test('@mobile consequential dialogs are keyboard-operable and return focus', async ({ page }) => {
+  await signIn(page)
+  await connectAndScan(page)
+  await page.getByRole('link', { name: 'Subscriptions' }).click()
+  await page.getByRole('link', { name: /Review Netflix/ }).click()
+
+  const trigger = page.getByRole('button', { name: 'This looks wrong' })
+  await trigger.focus()
+  await trigger.press('Enter')
+  const dialog = page.getByRole('dialog', { name: 'Update the details below' })
+  await expect(dialog).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  await expect(trigger).toBeFocused()
+})
