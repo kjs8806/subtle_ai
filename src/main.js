@@ -28,7 +28,7 @@ const sidebarFooterMarkup = (user, gmailSource) => {
   const connected = gmailSource?.status === 'connected'
   const lastScan = gmailSource?.lastScanAt ? new Date(gmailSource.lastScanAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null
   const initials = (user?.name || user?.email || '?').trim().charAt(0).toUpperCase()
-  return `<div class="sidebar-source-card"><div class="source-row">${NAV_ICONS.sources}<span>${connected ? 'Gmail connected' : 'Gmail not connected'}</span></div><p>${connected ? (lastScan ? `Last scan: ${lastScan}` : 'Ready to scan') : 'Connect from Sources'}</p></div><a class="sidebar-user" href="#${routePath('settings')}"><span class="avatar">${initials}</span><span class="who"><strong>${user?.name || 'Account'}</strong><span>${user?.email || ''}</span></span>${NAV_ICONS.chevron}</a>`
+  return `<div class="sidebar-source-card"><span class="source-icon">${NAV_ICONS.sources}</span><span class="who"><strong>${connected ? 'Gmail connected' : 'Gmail not connected'}</strong><p>${connected ? (lastScan ? `Last scan: ${lastScan}` : 'Ready to scan') : 'Connect from Sources'}</p></span></div><a class="sidebar-user" href="#${routePath('settings')}"><span class="avatar">${initials}</span><span class="who"><strong>${user?.name || 'Account'}</strong><span>${user?.email || ''}</span></span>${NAV_ICONS.chevron}</a>`
 }
 
 document.title = APP_CONFIG.name
