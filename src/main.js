@@ -11,7 +11,7 @@ import { filterAndSortSubscriptions, renderSubscriptionRows, subscriptionsPageMa
 import { attentionDetailDialogMarkup, attentionPageMarkup, filterAttentionItems, renderAttentionDetail, renderAttentionList, sortAttentionItems } from './ui/attention.js'
 import { buildActionItems } from './services/recommendationEngine.js'
 import { sourcesPageMarkup } from './ui/sources.js'
-import { settingsPageMarkup } from './ui/settings.js'
+import { deleteAccountConfirmMarkup, settingsPageMarkup } from './ui/settings.js'
 import { collectChangedCorrections, correctionDialogMarkup, detailMarkup, rejectConfirmMarkup, removeManualConfirmMarkup, renderCorrectionDialog, renderDetail, wireCorrectionDialogInteractions } from './ui/subscriptionDetail.js'
 import { loadingMarkup, sessionErrorMarkup, signedOutMarkup } from './ui/signedOut.js'
 
@@ -154,7 +154,7 @@ const renderAuthenticated = async (user, gmailError) => {
   const attentionTotal = () => attentionItems.length + overlapActions.length
 
   // ---- persistent shell (sidebar, dialogs, footer) -----------------------
-  app.innerHTML = `<div class="app-shell">${navigationMarkup(brand, { activeRoute: currentRoute().name, attentionCount: attentionTotal() })}<div class="main-col"><div data-page-root></div></div></div>${gmailDisclosureMarkup()}${correctionDialogMarkup()}${rejectConfirmMarkup()}${removeManualConfirmMarkup()}${addDialogMarkup}${attentionDetailDialogMarkup()}`
+  app.innerHTML = `<div class="app-shell">${navigationMarkup(brand, { activeRoute: currentRoute().name, attentionCount: attentionTotal() })}<div class="main-col"><div data-page-root></div></div></div>${gmailDisclosureMarkup()}${correctionDialogMarkup()}${rejectConfirmMarkup()}${removeManualConfirmMarkup()}${addDialogMarkup}${attentionDetailDialogMarkup()}${deleteAccountConfirmMarkup()}`
   initializeNavigation(app)
 
   const pageRoot = document.querySelector('[data-page-root]')
@@ -165,6 +165,7 @@ const renderAuthenticated = async (user, gmailError) => {
   const rejectRoot = document.querySelector('[data-reject-dialog]'); const rejectDialog = createDialogController(rejectRoot)
   const removeManualRoot = document.querySelector('[data-remove-manual-dialog]'); const removeManualDialog = createDialogController(removeManualRoot)
   const attentionRoot = document.querySelector('[data-attention-dialog]'); const attentionDialog = createDialogController(attentionRoot)
+  const deleteAccountRoot = document.querySelector('[data-delete-account-dialog]'); const deleteAccountDialog = createDialogController(deleteAccountRoot)
 
   const renderSidebarFooter = () => { const slot = document.querySelector('[data-sidebar-footer]'); if (slot) slot.innerHTML = sidebarFooterMarkup(user, gmailSourceUnavailable ? null : gmailSource) }
   const updateNavActive = (routeName) => {
@@ -283,6 +284,10 @@ const renderAuthenticated = async (user, gmailError) => {
       case 'settings':
         pageRoot.innerHTML = settingsPageMarkup({ user })
         pageRoot.querySelector('[data-sign-out]').addEventListener('click', signOut)
+        pageRoot.querySelector('[data-open-delete-account]').addEventListener('click', (event) => {
+          deleteAccountRoot.querySelector('[data-delete-account-error]').hidden = true
+          deleteAccountDialog.open(event.currentTarget)
+        })
         break
       default:
         pageRoot.innerHTML = overviewMarkup({ subscriptions: items, attentionItems, overlapActions, monthlySpend: monthlySpendFor(items), greeting, dateLabel, gmailSource, gmailSourceUnavailable })
@@ -519,6 +524,25 @@ const renderAuthenticated = async (user, gmailError) => {
     try { await feature001Api.logout() } catch { /* session cookie is cleared server-side regardless of network hiccups on our end */ }
     boot()
   }
+
+  // MVP-BETA-004 (#41): unlike signOut, a failed request here must not be
+  // treated as "probably fine anyway" - the account still exists if the
+  // request failed, so the dialog stays open with a visible error instead of
+  // silently rebooting into what would look like a successful deletion.
+  deleteAccountRoot.querySelector('[data-confirm-delete-account]').addEventListener('click', async (event) => {
+    const button = event.currentTarget
+    button.disabled = true
+    try {
+      await feature001Api.deleteAccount()
+      boot()
+    } catch {
+      button.disabled = false
+      const errorEl = deleteAccountRoot.querySelector('[data-delete-account-error]')
+      errorEl.textContent = "Your account couldn't be deleted. Please try again."
+      errorEl.hidden = false
+      live.announce("Your account couldn't be deleted. Please try again.")
+    }
+  })
 
   addRoot.querySelector('form').addEventListener('submit', event => {
     event.preventDefault()

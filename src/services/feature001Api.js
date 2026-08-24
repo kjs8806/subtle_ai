@@ -27,6 +27,7 @@ export const feature001Api = {
   getSession: () => request('/api/v1/session'),
   startGoogleSignIn: () => request('/api/v1/auth/google/start'),
   logout: () => request('/api/v1/auth/logout', { method: 'POST' }),
+  deleteAccount: () => request('/api/v1/account', { method: 'DELETE' }),
   getGmailSource: () => request('/api/v1/sources/gmail'),
   authorizeGmail: () => request('/api/v1/sources/gmail/authorize', { method: 'POST' }),
   scanGmail: () => request('/api/v1/sources/gmail/scan', { method: 'POST' }),
