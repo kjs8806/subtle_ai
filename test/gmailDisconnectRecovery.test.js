@@ -23,6 +23,20 @@ const authorize = async (app) => {
   return callback.cookies.find(({ name }) => name === 'subtle_session').value
 }
 
+// Gmail authorization is a separate, explicit step from sign-in (never
+// implied by it - see server/app.js's OIDC callback and
+// docs/product/features/FEATURE-001.md), so every test below that needs a
+// connected source as fixture state asks for it explicitly rather than
+// relying on sign-in to have connected it, matching test/server.test.js's
+// authorizeAndConnect convention.
+const authorizeAndConnect = async (app) => {
+  const token = await authorize(app)
+  const headers = { cookie: `subtle_session=${token}` }
+  const connect = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/authorize', headers, payload: {} })
+  assert.equal(connect.statusCode, 200)
+  return token
+}
+
 // Wraps a real repository so its disconnectConnection can be made to fail on
 // its first N calls before delegating to the real implementation - the
 // repository interface has no concept of injectable failure, so this is the
@@ -72,7 +86,7 @@ test('CASE A: a local purge failure after confirmed remote revocation is recover
   const revoke = countingRevoke()
   const provider = { ...createFakeGmailProvider(), revokeConnection: revoke.fn }
   const app = buildApp({ repository, provider })
-  const token = await authorize(app)
+  const token = await authorizeAndConnect(app)
   const headers = { cookie: `subtle_session=${token}` }
   await seedGmailDerivedState(app, headers)
 
@@ -117,7 +131,7 @@ test('CASE B: a genuine provider revocation failure never purges local data', as
   const { repository, attempts } = withFailingPurge(realRepository, 0)
   const provider = { ...createFakeGmailProvider(), revokeConnection: async () => { throw new Error('Google is unreachable') } }
   const app = buildApp({ repository, provider })
-  const token = await authorize(app)
+  const token = await authorizeAndConnect(app)
   const headers = { cookie: `subtle_session=${token}` }
   await seedGmailDerivedState(app, headers)
   const before = await gmailState(app, headers)
@@ -137,7 +151,7 @@ test('CASE B (variant): a non-throwing but unsuccessful revocation result never 
   const { repository, attempts } = withFailingPurge(realRepository, 0)
   const provider = { ...createFakeGmailProvider(), revokeConnection: async () => ({ status: 'revocation_failed' }) }
   const app = buildApp({ repository, provider })
-  const token = await authorize(app)
+  const token = await authorizeAndConnect(app)
   const headers = { cookie: `subtle_session=${token}` }
   await seedGmailDerivedState(app, headers)
 
@@ -153,7 +167,7 @@ test('CASE C: a normal, first-try-successful disconnect is unchanged', async () 
   const revoke = countingRevoke()
   const provider = { ...createFakeGmailProvider(), revokeConnection: revoke.fn }
   const app = buildApp({ repository: realRepository, provider })
-  const token = await authorize(app)
+  const token = await authorizeAndConnect(app)
   const headers = { cookie: `subtle_session=${token}` }
   await seedGmailDerivedState(app, headers)
 
@@ -254,7 +268,7 @@ integration('CASE A against PostgreSQL: local purge failure after confirmed remo
     // exchange result is what makes the OIDC callback take that path.
     const provider = { ...createFakeGmailProvider(), exchangeAuthorizationCode: async () => ({ status: 'authorized', subject: 'pg-recovery-subject', email: 'pg-recovery@example.com', name: 'PG Recovery', refreshToken: 'mock-refresh-token' }), revokeConnection: revoke.fn }
     const app = buildApp({ repository, provider })
-    const token = await authorize(app)
+    const token = await authorizeAndConnect(app)
     const headers = { cookie: `subtle_session=${token}` }
     await seedGmailDerivedState(app, headers)
 

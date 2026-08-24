@@ -147,15 +147,13 @@ test('re-authenticating with the same Google identity after deletion creates a b
   assert.notEqual(second.user.id, first.user.id, 'expected a new internal user id, not the deleted one')
   const subscriptions = await app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers: second.headers })
   assert.deepEqual(subscriptions.json().subscriptions, [], 'the new account must start with zero subscriptions, not the deleted account\'s data')
-  // GMAIL_PROVIDER=mock connects Gmail as a side effect of sign-in itself
-  // (server/app.js's OIDC callback, a pre-existing demo/prototype
-  // convenience - not something this account-deletion work changes), so the
-  // new account is expected to show 'connected' here - the point of this
-  // assertion is that it is a *fresh* connection with no scan history, not
-  // that it starts disconnected.
+  // Gmail authorization is a separate, explicit step from sign-in (see
+  // server/app.js's OIDC callback and docs/product/features/FEATURE-001.md)
+  // - the new account starts fully disconnected, exactly like any other
+  // fresh sign-in, not merely with no scan history.
   const source = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers: second.headers })
-  assert.equal(source.json().status, 'connected')
-  assert.equal(source.json().lastScanAt, null, 'the new account must have no scan history from the deleted account')
+  assert.equal(source.json().status, 'not_connected')
+  assert.equal(source.json().lastScanAt, undefined, 'the new account must have no scan history from the deleted account')
 })
 
 test('a failed Gmail revocation never blocks account deletion', async () => {
