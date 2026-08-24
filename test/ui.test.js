@@ -12,7 +12,7 @@ import { settingsPageMarkup } from '../src/ui/settings.js'
 import { correctionDialogMarkup, detailMarkup, fieldProvenance, rejectConfirmMarkup, renewalLabel } from '../src/ui/subscriptionDetail.js'
 import { gmailDisclosureMarkup } from '../src/ui/gmailDisclosure.js'
 import { signedOutMarkup } from '../src/ui/signedOut.js'
-import { FALLBACK_SERVICE_ICON, serviceIconFor, serviceIconMarkup } from '../src/services/serviceIcons.js'
+import { FALLBACK_SERVICE_ICON, SERVICE_ICONS, serviceIconFor, serviceIconMarkup } from '../src/services/serviceIcons.js'
 
 const candidate = { id: 'cand-1', canonicalService: 'Amazon', rawMerchant: 'AMZN Mktp', evidence: [{ amount: 9.99, currency: 'USD', cadence: 'monthly' }] }
 // FEATURE-003 attention-item fixtures (src/services/attentionItemBuilder.js's output shape).
@@ -322,23 +322,65 @@ test('Subscription Detail follows the approved hierarchy and exposes FEATURE-002
 })
 
 // ---- Service icons: recognizable identity per canonical service, never a
-// wrong or invented logo for an unmapped merchant.
-test('known canonical services get a distinct icon; unmapped merchants get the neutral fallback, never a guess', () => {
+// wrong or invented logo for an unmapped merchant, and never a generic
+// document icon when a real (even unmapped) name is available.
+test('known canonical services get a distinct icon; unmapped-but-named merchants get a first-letter tile; only a missing name gets the neutral fallback', () => {
   assert.notEqual(serviceIconFor('Netflix'), FALLBACK_SERVICE_ICON)
   assert.notEqual(serviceIconFor('Spotify'), FALLBACK_SERVICE_ICON)
   assert.notEqual(serviceIconFor('Dropbox'), FALLBACK_SERVICE_ICON)
   assert.notEqual(serviceIconFor('Canva'), FALLBACK_SERVICE_ICON)
   assert.notEqual(serviceIconFor('NordVPN'), FALLBACK_SERVICE_ICON)
-  assert.equal(serviceIconFor('Some Unmapped Merchant LLC'), FALLBACK_SERVICE_ICON)
+
+  // Unmapped but named: a letter tile, not the neutral fallback and not a
+  // guessed logo for a service Subtle AI doesn't actually recognize.
+  assert.notEqual(serviceIconFor('Some Unmapped Merchant LLC'), FALLBACK_SERVICE_ICON)
+  assert.notEqual(serviceIconFor('Some Unmapped Merchant LLC'), serviceIconFor('Netflix'))
+  assert.match(serviceIconFor('Some Unmapped Merchant LLC').svg, />S</)
+  assert.match(serviceIconFor('Crave').svg, />C</)
+  assert.match(serviceIconFor('Patreon').svg, />P</)
+  assert.match(serviceIconFor('MyFitnessPal').svg, />M</)
+  // Leading symbols/whitespace are skipped to find the first *meaningful*
+  // character.
+  assert.match(serviceIconFor('  #1 Fitness Club').svg, />1</)
+
+  // Every unmapped-but-named service gets the same letter-tile styling
+  // (background/foreground), matching the established Subtle AI identity
+  // tile look rather than a per-service invented palette.
+  assert.deepEqual(
+    { bg: serviceIconFor('Crave').bg, fg: serviceIconFor('Crave').fg },
+    { bg: serviceIconFor('Patreon').bg, fg: serviceIconFor('Patreon').fg },
+  )
+
+  // Only a genuinely missing/invalid name falls all the way through to the
+  // neutral generic icon.
   assert.equal(serviceIconFor(''), FALLBACK_SERVICE_ICON)
   assert.equal(serviceIconFor(undefined), FALLBACK_SERVICE_ICON)
+  assert.equal(serviceIconFor('   '), FALLBACK_SERVICE_ICON)
 
   const netflix = serviceIconMarkup('Netflix')
   assert.match(netflix, /Netflix logo/)
+  // A letter tile never claims to be a "logo" - it's a stand-in for a name
+  // Subtle AI doesn't recognize, not a real brand mark.
   const unknown = serviceIconMarkup('Totally Unknown Co')
-  assert.match(unknown, /aria-label="Totally Unknown Co logo"/)
+  assert.match(unknown, /aria-label="Totally Unknown Co"/)
+  assert.doesNotMatch(unknown, /logo/)
   // The service name always stays visible as real text elsewhere (the row
   // markup, not the icon) - the icon itself never substitutes for the name.
+})
+
+// ---- Service icons: a FEATURE-002 correction that changes canonicalService
+// must change the displayed icon on the very next render, in both
+// directions - nothing here caches or pins the icon to the old name.
+test('serviceIconFor tracks canonicalService live, so a FEATURE-002 correction changes the icon tier immediately', () => {
+  // Unknown -> a name FEATURE-002 maps to a real logo: tile becomes the logo.
+  assert.equal(serviceIconFor('Some New Service Nobody Recognizes') === SERVICE_ICONS.Netflix, false)
+  assert.equal(serviceIconFor('Netflix'), SERVICE_ICONS.Netflix)
+  // Known -> corrected to a name with no mapping: logo becomes a letter tile,
+  // never stays pinned to the old logo and never falls to the generic icon.
+  const corrected = serviceIconFor('Some Renamed Local Gym')
+  assert.notEqual(corrected, SERVICE_ICONS.Netflix)
+  assert.notEqual(corrected, FALLBACK_SERVICE_ICON)
+  assert.match(corrected.svg, />S</)
 })
 
 // ---- Branding: "Subtle AI" everywhere, never bare "Subtle".
