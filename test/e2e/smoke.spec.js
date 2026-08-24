@@ -40,7 +40,11 @@ test('@critical sign in → Connect Gmail → Scan → subscription appears', as
   await connectAndScan(page)
   await navigateTo(page, 'subscriptions')
   await expect(page.locator('[data-subscription-rows] [data-subscription-id]')).toHaveCount(6)
-  await expect(page.getByText('Netflix', { exact: true })).toBeVisible()
+  // Scoped to the subscription rows: an always-present (hidden) correction-
+  // dialog <select> elsewhere on the page also lists every known service
+  // name as an <option>, including "Netflix", which makes an unscoped
+  // page-wide text match ambiguous under Playwright's strict mode.
+  await expect(page.locator('[data-subscription-rows]').getByText('Netflix', { exact: true })).toBeVisible()
 })
 
 test('@critical subscription detail → correction → corrected provenance visible', async ({ page }) => {
