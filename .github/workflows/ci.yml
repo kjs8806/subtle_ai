@@ -97,6 +97,15 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/subtle_ai_test
       - name: Run browser smoke suite
         run: npm run test:smoke
+      - name: Upload smoke suite artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-suite-results
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
       - name: Build application
         run: npm run build
       - name: Check whitespace errors
