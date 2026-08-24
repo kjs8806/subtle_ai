@@ -129,6 +129,12 @@ button,a,input,select{font:inherit}
 .stat-card .stat-meta{display:block;margin-top:6px;color:var(--muted);font-size:12px}
 .stat-card .stat-meta.positive{color:var(--success)}
 
+/* ---------- Overview: first-run guidance (only while zero subscriptions exist) ---------- */
+.first-run-panel{padding:22px 24px;margin-bottom:20px;border:1px solid var(--purple-soft);background:var(--purple-soft)}
+.first-run-panel h2{margin:0 0 6px;font:700 18px 'Inter',sans-serif}
+.first-run-panel p{margin:0 0 16px;max-width:60ch;color:var(--ink-soft)}
+.first-run-actions{display:flex;flex-wrap:wrap;gap:10px}
+
 /* ---------- Overview: condensed previews only ---------- */
 .overview-grid{display:grid;grid-template-columns:2fr 1fr;gap:16px;align-items:start;margin-bottom:28px}
 .overview-side{display:flex;flex-direction:column;gap:16px}
