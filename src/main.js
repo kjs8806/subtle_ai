@@ -184,12 +184,22 @@ const renderAuthenticated = async (user, gmailError) => {
 
   // ---- Gmail source state -> live UI, defensive against the Sources page
   // not currently being mounted (querySelector returns null; every update
-  // below just no-ops rather than throwing). -------------------------------
+  // below just no-ops rather than throwing). Scoped to #page-sources rather
+  // than a bare document-wide query for each element: a Gmail-state update
+  // can be triggered by an async operation (scan/connect/disconnect) that
+  // resolves after the user has already navigated away and pageRoot's
+  // innerHTML has been replaced by an unrelated route - scoping to the
+  // Sources page's own root, then requiring every control to exist within
+  // it, is what actually guarantees this never touches a partial or
+  // unrelated DOM surface, not just checking one element and assuming its
+  // usual siblings are there too. -------------------------------
   const setGmailState = (state, copy, action, { disabled = false } = {}) => {
-    const status = document.querySelector('[data-gmail-status]'); if (!status) return
-    const message = document.querySelector('[data-gmail-message]')
-    const gmailButton = document.querySelector('[data-gmail-action]')
-    const disconnectButton = document.querySelector('[data-gmail-disconnect]')
+    const root = document.querySelector('#page-sources'); if (!root) return
+    const status = root.querySelector('[data-gmail-status]')
+    const message = root.querySelector('[data-gmail-message]')
+    const gmailButton = root.querySelector('[data-gmail-action]')
+    const disconnectButton = root.querySelector('[data-gmail-disconnect]')
+    if (!status || !message || !gmailButton || !disconnectButton) return
     status.textContent = state; status.dataset.state = state.toLowerCase().replace(/\s+/g, '-'); message.textContent = copy
     gmailButton.dataset.gmailAction = action
     gmailButton.textContent = action === 'scan' ? 'Scan receipts' : 'Find subscriptions from receipts'
@@ -486,7 +496,13 @@ const renderAuthenticated = async (user, gmailError) => {
   })
   rejectRoot.querySelector('[data-confirm-reject]').addEventListener('click', async (event) => {
     if (!currentSubscriptionId) return
-    event.currentTarget.disabled = true
+    // A DOM Event's currentTarget is reset to null by the browser once
+    // dispatch finishes - true even for this button, which is never removed
+    // or replaced (rejectRoot is part of the persistent app shell). Capture
+    // the real element once, before the first await, and use that from here
+    // on rather than event.currentTarget, which would throw when set below.
+    const button = event.currentTarget
+    button.disabled = true
     try {
       await feature001Api.rejectSubscription(currentSubscriptionId)
       backendItems = backendItems.filter(item => item.remoteId !== currentSubscriptionId)
@@ -498,7 +514,7 @@ const renderAuthenticated = async (user, gmailError) => {
     } catch {
       live.announce("That couldn't be completed. Please try again.")
     } finally {
-      event.currentTarget.disabled = false
+      button.disabled = false
     }
   })
   // "Remove subscription" for a manually-added item - purely local state, no
@@ -599,11 +615,16 @@ const renderAuthenticated = async (user, gmailError) => {
     })
   }
   gmailRoot.querySelector('[data-continue-gmail]').addEventListener('click', async event => {
-    event.currentTarget.disabled = true
+    // Same reasoning as the reject-confirm handler above: event.currentTarget
+    // goes null once dispatch finishes, well before connectGmail()'s awaits
+    // resolve, even though this button (part of the persistent gmailRoot
+    // dialog markup) is never removed - capture it once, up front.
+    const button = event.currentTarget
+    button.disabled = true
     setGmailState('Authorizing', 'Waiting for Gmail authorization…', 'connect', { disabled: true }); live.announce('Waiting for Gmail authorization.')
     gmailDialog.close()
     await connectGmail()
-    event.currentTarget.disabled = false
+    button.disabled = false
   })
 
   // Deliberately last: renderRoute's switch calls into every wireXxx()
