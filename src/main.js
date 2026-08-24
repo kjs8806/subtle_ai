@@ -617,14 +617,6 @@ const renderAuthenticated = async (user, gmailError) => {
   renderSidebarFooter()
 
   if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'))
-
-  // Registered last, after every wire*Page helper renderRoute() can call is
-  // defined - landing directly on a deep-linked hash (e.g. a hard refresh on
-  // #/subscriptions) makes this the first call to renderRoute(), and calling
-  // it any earlier would hit those consts before their declarations run.
-  onRouteChange(renderRoute)
-  await renderRoute()
-  renderSidebarFooter()
 }
 
 async function boot() {

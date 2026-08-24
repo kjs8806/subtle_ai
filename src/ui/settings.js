@@ -9,7 +9,7 @@ export const settingsPageMarkup = ({ user } = {}) => `<div class="main-content w
 <div class="settings-row"><div><strong>Account</strong><span>${escapeHtml(user?.name || 'Signed in')}</span></div></div>
 <div class="settings-row"><div><strong>Email</strong><span>${escapeHtml(user?.email || 'Not provided')}</span></div></div>
 <div class="settings-row"><div><strong>Connected accounts</strong><span>Manage Gmail connection and scanning</span></div><a class="secondary-button" href="#/sources">Sources</a></div>
-<div class="settings-row"><div><strong>Privacy</strong><span>Subtle AI only reads emails to find subscription info. Your data is encrypted and never sold.</span></div></div>
+<div class="settings-row"><div><strong>Privacy</strong><span>Gmail access is read-only and used to search for subscription receipt and renewal emails. Your Gmail credentials are encrypted, and you can disconnect Gmail anytime from Sources.</span></div></div>
 <div class="settings-row"><div><strong>Sign out</strong><span>End your session on this device.</span></div><button class="secondary-button" data-sign-out type="button">Sign out</button></div>
 </section>
 </div>`

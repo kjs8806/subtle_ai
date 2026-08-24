@@ -74,7 +74,7 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
   // through it, success or failure, must redirect back into the app rather than
   // render a bare JSON page the user would be stranded on. The outcome is
   // carried as a query param the frontend reads once on boot and clears.
-  const redirectToApp = (reply, params = {}) => reply.redirect(`/${Object.keys(params).length ? `?${new URLSearchParams(params)}` : ''}`)
+  const redirectToApp = (reply, params = {}, hash = '') => reply.redirect(`/${Object.keys(params).length ? `?${new URLSearchParams(params)}` : ''}${hash}`)
   app.get('/api/v1/auth/google/callback', async (request, reply) => {
     const { state: queryState, code } = request.query || {}
     const expiresAt = typeof queryState === 'string' ? oauthStates.get(queryState) : undefined
@@ -127,16 +127,25 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
     return provider.createGmailAuthorizationRequest({ state })
   })
   app.get('/api/v1/sources/gmail/callback', { preHandler: requireUser }, async (request, reply) => {
+    // Every outcome of this callback - success or failure - is Gmail-specific
+    // and belongs on the Sources page: success lands the user on its existing
+    // "Connected - ready to scan" state (the next-step guidance FEATURE-039
+    // A5 requires) instead of stranding them on Overview with no cue that
+    // anything happened, and a failure surfaces via the Sources page's own
+    // gmail-message slot (renderRoute only reads gmailError there) instead of
+    // being silently dropped when the user lands on '/' with nothing checking
+    // for it.
+    const redirectToSources = (params = {}) => redirectToApp(reply, params, '#/sources')
     const { state: queryState, code } = request.query || {}
     const state = typeof queryState === 'string' ? oauthStates.get(queryState) : undefined
     if (typeof queryState === 'string') oauthStates.delete(queryState)
     reply.clearCookie('subtle_gmail_oauth_state', { path: '/' })
-    if (typeof queryState !== 'string' || typeof code !== 'string' || !state || state.purpose !== 'gmail' || state.userId !== request.user.id || state.expiresAt <= now() || queryState !== request.cookies.subtle_gmail_oauth_state) return redirectToApp(reply, { gmail_error: 'invalid_oauth_state' })
+    if (typeof queryState !== 'string' || typeof code !== 'string' || !state || state.purpose !== 'gmail' || state.userId !== request.user.id || state.expiresAt <= now() || queryState !== request.cookies.subtle_gmail_oauth_state) return redirectToSources({ gmail_error: 'invalid_oauth_state' })
     // See the OIDC callback above: a thrown provider error must redirect like
     // every other outcome here, never fall through to the generic JSON 500 handler.
     try {
       const result = await provider.exchangeGmailAuthorizationCode({ code })
-      if (result.status !== 'authorized') return redirectToApp(reply, { gmail_error: result.status || 'authorization_failed' })
+      if (result.status !== 'authorized') return redirectToSources({ gmail_error: result.status || 'authorization_failed' })
       // Fail closed: the Gmail-authorized account must be present and must exactly
       // match the signed-in application identity. A gmail.readonly-only access token
       // carries no OIDC claims, so Google's tokeninfo never returns a `sub` for it -
@@ -150,7 +159,7 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
       const gmailEmail = typeof result.email === 'string' ? result.email.trim().toLowerCase() : ''
       const identity = repository.getIdentityForUser ? await repository.getIdentityForUser({ userId: request.user.id, provider: 'google' }) : null
       const identityEmail = typeof identity?.email === 'string' ? identity.email.trim().toLowerCase() : ''
-      if (!gmailEmail || !identityEmail || gmailEmail !== identityEmail) return redirectToApp(reply, { gmail_error: 'identity_mismatch' })
+      if (!gmailEmail || !identityEmail || gmailEmail !== identityEmail) return redirectToSources({ gmail_error: 'identity_mismatch' })
       // Google only guarantees a refresh token on first consent; a reconnect may
       // legitimately omit it. Never encrypt an empty string over an existing valid
       // token - that would silently downgrade a working connection to one that can
@@ -162,14 +171,14 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
         encryptedToken = tokenVault ? tokenVault.encrypt(newRefreshToken) : null
       } else {
         const existingEncryptedToken = repository.getEncryptedRefreshToken ? await repository.getEncryptedRefreshToken(request.user.id) : null
-        if (!decryptRefreshToken(existingEncryptedToken)) return redirectToApp(reply, { gmail_error: 'missing_refresh_token' })
+        if (!decryptRefreshToken(existingEncryptedToken)) return redirectToSources({ gmail_error: 'missing_refresh_token' })
         encryptedToken = existingEncryptedToken
       }
       await repository.authorizeConnection(request.user.id, encryptedToken)
-      return redirectToApp(reply)
+      return redirectToSources()
     } catch (error) {
       request.log.error(error)
-      return redirectToApp(reply, { gmail_error: 'authorization_failed' })
+      return redirectToSources({ gmail_error: 'authorization_failed' })
     }
   })
   app.post('/api/v1/sources/gmail/scan', { preHandler: requireUser }, async (request, reply) => {

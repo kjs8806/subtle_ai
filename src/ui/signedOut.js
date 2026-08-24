@@ -17,7 +17,7 @@ const FEATURES = [
   { icon: ICON_TREND, title: 'Take action', body: 'Review, compare, and make confident decisions to save more.' },
 ]
 const TRUST_POINTS = [
-  { icon: ICON_SHIELD, title: 'Bank-level security', body: 'We use industry-standard encryption to protect your data.' },
+  { icon: ICON_SHIELD, title: 'Read-only Gmail access', body: "Subtle AI can't send, delete, or change anything in your mailbox." },
   { icon: ICON_EYE_OFF, title: 'Your data stays yours', body: 'We never sell your data. Ever.' },
   { icon: ICON_CHECK_CIRCLE, title: 'Receipt-backed insights', body: 'Every subscription is matched with real evidence.' },
   { icon: ICON_USERS, title: "You're in control", body: 'Connect, review, and decide what’s right for you.' },
@@ -55,7 +55,7 @@ const productPreviewMarkup = () => `<div class="landing-preview" aria-hidden="tr
 </div>
 </div>
 </div>
-<div class="preview-badge preview-badge-security">${ICON_LOCK}<span><strong>Private &amp; secure</strong><small>Your data is encrypted and never sold</small></span></div>
+<div class="preview-badge preview-badge-security">${ICON_LOCK}<span><strong>Private &amp; secure</strong><small>Read-only Gmail access, encrypted credentials</small></span></div>
 <div class="preview-badge preview-badge-gmail">${ICON_GOOGLE}<span><strong>Works with Gmail</strong><small>Securely connect and let Subtle AI do the rest</small></span></div>
 </div>`
 
@@ -74,7 +74,7 @@ export const signedOutMarkup = () => `<div class="landing wrap" id="signed-out">
 ${productPreviewMarkup()}
 <section class="landing-trust-section" aria-label="Why people trust Subtle AI"><p class="landing-trust-title">Trusted by people who want clarity and control</p><div class="landing-trust-grid">${TRUST_POINTS.map(trustCard).join('')}</div></section>
 </div>
-<aside class="landing-signin panel-card" aria-label="Sign in"><h2>Welcome back</h2><p class="landing-signin-sub">Sign in to continue optimizing your subscriptions.</p><button class="google-button" data-google-sign-in type="button">${ICON_GOOGLE}Continue with Google</button><p class="empty-state" data-session-error hidden></p><p class="landing-signin-note">${ICON_LOCK}We only read your emails to find subscription information.</p></aside>
+<aside class="landing-signin panel-card" aria-label="Sign in"><h2>Welcome back</h2><p class="landing-signin-sub">Sign in to continue optimizing your subscriptions.</p><button class="google-button" data-google-sign-in type="button">${ICON_GOOGLE}Continue with Google</button><p class="empty-state" data-session-error hidden></p><p class="landing-signin-note">${ICON_LOCK}Gmail access is read-only, requested separately from sign-in, and you can disconnect anytime.</p></aside>
 </div>
 </div>`
 

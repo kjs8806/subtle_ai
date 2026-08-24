@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import test from 'node:test'
 import { demoSubscriptions } from '../src/data/demoSubscriptions.js'
 import { currentRoute, routePath } from '../src/ui/router.js'
@@ -441,4 +441,80 @@ test('the landing page offers only the real Google sign-in control and no fabric
   // The feature section keeps its id as the target of the header's
   // "Learn more" anchor (added in main.js, outside signedOutMarkup).
   assert.match(page, /id="learn-more"/)
+})
+
+// MVP-BETA-005 (#42, C7/C8): regression coverage for a real bug found while
+// inspecting the service worker - APP_SHELL used to list /icon.svg, an asset
+// DES-027 deleted in favor of /icon.png. cache.addAll() rejects the whole
+// install step on any 404, which silently broke SW install and installability
+// for every user. Every precached path must resolve to a file that actually
+// exists in public/.
+test('the service worker only precaches assets that actually exist in public/', () => {
+  const sw = readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8')
+  const shellMatch = sw.match(/const APP_SHELL = (\[[^\]]*\])/)
+  assert.ok(shellMatch, 'expected an APP_SHELL array literal in sw.js')
+  const shell = JSON.parse(shellMatch[1].replace(/'/g, '"'))
+  assert.doesNotMatch(sw, /icon\.svg/, 'icon.svg was removed from public/ - sw.js must not reference it')
+  for (const path of shell) {
+    // '/' and '/index.html' both resolve to the built root index.html, which
+    // lives outside public/ (Vite copies public/ verbatim but builds
+    // index.html from the project root) - every other entry must be a real
+    // file inside public/.
+    const resolved = path === '/' || path === '/index.html' ? new URL('../index.html', import.meta.url) : new URL(`../public${path}`, import.meta.url)
+    assert.ok(existsSync(resolved), `APP_SHELL references ${path}, which does not exist`)
+  }
+})
+
+// MVP-BETA-002 (#39, A1/A4/A8): the first-run panel is derived entirely from
+// real backend state (gmailSource, subscription count) passed in by the
+// caller - never a persisted "hasSeenOnboarding" flag - and must disappear
+// once the user has any subscription at all.
+test('Overview shows a first-run panel only while there are zero subscriptions, matching real Gmail source state', () => {
+  const base = { subscriptions: [], attentionItems: [], overlapActions: [], monthlySpend: 0 }
+
+  const disconnected = overviewMarkup({ ...base, gmailSource: { status: 'not_connected' }, gmailSourceUnavailable: false })
+  assert.match(disconnected, /first-run-panel/)
+  assert.match(disconnected, /Connect Gmail/)
+  assert.match(disconnected, /href="#\/sources"/)
+  assert.match(disconnected, /Add a subscription manually/)
+  assert.match(disconnected, /href="#\/subscriptions"/)
+
+  const connectedNeverScanned = overviewMarkup({ ...base, gmailSource: { status: 'connected', lastScanAt: null }, gmailSourceUnavailable: false })
+  assert.match(connectedNeverScanned, /Scan your Gmail for subscriptions/)
+  assert.match(connectedNeverScanned, />Scan receipts</)
+
+  const scannedZeroResults = overviewMarkup({ ...base, gmailSource: { status: 'connected', lastScanAt: '2026-08-20T00:00:00.000Z' }, gmailSourceUnavailable: false })
+  assert.match(scannedZeroResults, /No subscriptions found yet/)
+  assert.doesNotMatch(scannedZeroResults, />Connect Gmail</)
+
+  // Never fabricate a connection state the app doesn't actually know (DES-012):
+  // when the Gmail source failed to load, the panel must not claim "not
+  // connected" - it falls back to the manual-entry path only.
+  const unavailable = overviewMarkup({ ...base, gmailSource: null, gmailSourceUnavailable: true })
+  assert.match(unavailable, /Add your first subscription/)
+  assert.doesNotMatch(unavailable, />Connect Gmail</)
+
+  const withSubscriptions = overviewMarkup({ ...base, subscriptions: demoSubscriptions.slice(0, 1), gmailSource: { status: 'not_connected' }, gmailSourceUnavailable: false })
+  assert.doesNotMatch(withSubscriptions, /first-run-panel/)
+})
+
+// MVP-BETA-003 (#40, B8): the app requests gmail.readonly, which grants
+// read access to the whole mailbox, not just receipt/renewal messages - so
+// copy across the app must describe the access as read-only and describe
+// what Subtle AI actually searches for, rather than claiming it technically
+// "only reads" receipts, and must not claim blanket data encryption when only
+// Gmail credentials are encrypted at rest.
+test('Gmail trust copy describes the actual read-only scope instead of overclaiming what is technically read', () => {
+  const overclaim = /only read(s)? (your )?emails?/i
+  for (const [name, markup] of [
+    ['sources', sourcesPageMarkup()],
+    ['settings', settingsPageMarkup({ user: { name: 'Test', email: 'test@example.com' } })],
+    ['signedOut', signedOutMarkup()],
+    ['gmailDisclosure', gmailDisclosureMarkup()],
+  ]) {
+    assert.doesNotMatch(markup, overclaim, `${name} still claims Subtle AI "only reads" emails, overclaiming gmail.readonly's actual mailbox-wide scope`)
+  }
+  assert.match(sourcesPageMarkup(), /read-only/i)
+  assert.match(settingsPageMarkup({ user: {} }), /read-only/i)
+  assert.match(gmailDisclosureMarkup(), /read-only/i)
 })
