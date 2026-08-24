@@ -5,7 +5,7 @@ import { expectNoSeriousA11yViolations, signIn } from './helpers.js'
 // step (it injects and runs a full ruleset against the live DOM on top of the
 // sign-in + navigate + dialog-open work already in each test below), so this
 // file gets a longer per-test timeout than the suite default in
-// playwright.config.js rather than raising that default for every spec.
+// playwright.e2e.config.js rather than raising that default for every spec.
 test.setTimeout(60_000)
 
 // #43 Accessibility & Cross-Browser QA Gate - automated axe-core coverage of
@@ -13,10 +13,10 @@ test.setTimeout(60_000)
 // + Gmail disclosure dialog, Subscriptions + Add dialog, Subscription Detail
 // + correction/removal dialogs, Worth your attention, Settings), per the
 // product-approved matrix in the #43 QA plan. This suite is deliberately
-// self-contained (it never assumes another spec ran first or leaves the
-// mock account connected/disconnected for another spec) so it stays safe to
-// run in any order against the single shared mock account - see
-// playwright.config.js's fullyParallel:false / workers:1 comment.
+// self-contained (it never assumes another spec ran first, or that its own
+// tests run in a particular order) so it stays safe to run in any order -
+// each signIn() call now gets its own fresh, isolated backend account (see
+// helpers.js), but this suite doesn't depend on that either way.
 //
 // Zero axe violations is evidence, not certification (per #43): a critical
 // or serious finding fails this suite; moderate/minor findings are logged

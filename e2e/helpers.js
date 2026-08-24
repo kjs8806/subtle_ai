@@ -2,9 +2,12 @@ import { expect } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 
 // Shared across e2e specs: signs in with the mock Google provider
-// (GMAIL_PROVIDER=mock, see playwright.config.js) and waits for the
+// (GMAIL_PROVIDER=mock, see playwright.e2e.config.js) and waits for the
 // authenticated shell to render. No real Google credentials are used or
-// needed - see server/gmail/fakeProvider.js.
+// needed - see server/gmail/fakeProvider.js. Each call drives the real
+// "Continue with Google" redirect round trip, so (per fakeProvider.js's
+// mock-success:<uuid> code) it also mints its own fresh, isolated backend
+// account rather than reusing one shared mock account across tests.
 export const signIn = async (page) => {
   await page.goto('/')
   await page.getByRole('button', { name: /Continue with Google/i }).click()

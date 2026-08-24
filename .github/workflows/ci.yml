@@ -38,16 +38,39 @@ jobs:
         env:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           CANDIDATE_SHA: ${{ github.sha }}
         shell: bash
         run: |
+          set -euo pipefail
+          # The checked-out commit must be exactly the candidate GitHub
+          # Actions says it built, and the merge candidate's second parent
+          # must be exactly the PR's head commit - these are the two
+          # guarantees that actually matter (CI ran the real candidate, and
+          # that candidate really contains the exact PR head).
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          test "$(git rev-parse HEAD^1)" = "$PR_BASE_SHA"
           test "$(git rev-parse HEAD^2)" = "$PR_HEAD_SHA"
+          # GitHub's refs/pull/<n>/merge is a synthetic merge of the PR head
+          # onto the CURRENT tip of the base branch, and is regenerated every
+          # time the base branch moves. github.event.pull_request.base.sha is
+          # only a snapshot captured when this specific event fired, and goes
+          # stale the moment another PR merges into the base branch before
+          # (or while) this job runs - asserting HEAD^1 equals that snapshot
+          # exactly is therefore a race, not a real integrity check: it can
+          # fail on a candidate that is perfectly legitimate, just built
+          # against a newer base than the payload knew about. The property
+          # that actually matters - "the base side of this merge is a real
+          # point in the base branch's own history, not a fabricated or
+          # unrelated commit" - is what we verify instead, against a freshly
+          # fetched base ref so it can't itself go stale mid-job.
+          git fetch --no-tags origin "$PR_BASE_REF"
+          git merge-base --is-ancestor HEAD^1 FETCH_HEAD
           {
             echo "### CI identity"
-            echo "- PR head: \`$PR_HEAD_SHA\`"
-            echo "- PR base: \`$PR_BASE_SHA\`"
+            echo "- PR head (verified as merge candidate's 2nd parent): \`$PR_HEAD_SHA\`"
+            echo "- PR base ref: \`$PR_BASE_REF\`"
+            echo "- PR base SHA at event time: \`$PR_BASE_SHA\`"
+            echo "- Merge candidate's actual base parent: \`$(git rev-parse HEAD^1)\`"
             echo "- Candidate merge: \`$CANDIDATE_SHA\`"
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@v7
@@ -56,6 +79,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Install Playwright test runner
+        run: npm install --no-save --package-lock=false @playwright/test@1.62.1
       - name: Install Playwright browser engines
         run: npx playwright install --with-deps chromium firefox webkit
       - name: Run tests
@@ -70,8 +95,36 @@ jobs:
         run: npm run test:runtime
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/subtle_ai_test
+      - name: Run browser smoke suite
+        run: npm run test:smoke
       - name: Run Playwright cross-browser suite
         run: npm run test:e2e
+      - name: Print failure context to the job log
+        # Artifacts (screenshots/traces) aren't readable from this session -
+        # they land in Azure blob storage behind a URL the sandbox's network
+        # policy blocks. error-context.md is plain text/YAML (an accessibility
+        # snapshot of the page at the moment of failure), so print it directly
+        # into the log where it's actually readable, instead of only kept in
+        # an artifact nobody here can open. Covers both suites - each writes
+        # into its own test-results/ subdirectory.
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s globstar nullglob
+          for f in test-results/**/error-context.md; do
+            echo "::group::$f"
+            cat "$f"
+            echo "::endgroup::"
+          done
+      - name: Upload browser test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-test-results
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
       - name: Build application
         run: npm run build
       - name: Check whitespace errors

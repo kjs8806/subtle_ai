@@ -4,11 +4,14 @@ import { expect, test } from '@playwright/test'
 // in, understand the Gmail disclosure, connect Gmail, scan, see a discovered
 // subscription, open it, return to Sources, disconnect, and confirm manual
 // entry still works independently of Gmail. Runs against the real dev server
-// (GMAIL_PROVIDER=mock, see playwright.config.js) so every network call is
-// real; nothing here mocks the app's own behavior. One long scenario, not
-// independent tests - the mock provider binds every sign-in to the same
-// fixed backend account (server/app.js's userId = 'mock-user'), so state is
-// shared and must be walked in order rather than assumed fresh per test.
+// (GMAIL_PROVIDER=mock, see playwright.e2e.config.js) so every network call
+// is real; nothing here mocks the app's own behavior. One long scenario, not
+// independent tests, so the steps below can build on each other in order -
+// though as of the identity-isolation fix (server/gmail/fakeProvider.js's
+// mock-success:<uuid> code, minted fresh per real "Continue with Google"
+// click; see test/browserIdentityIsolation.test.js) each Playwright test
+// actually gets its own fresh, isolated backend account rather than sharing
+// one fixed account across the whole suite.
 test('new user can sign in, connect Gmail, discover subscriptions, and disconnect', async ({ page }) => {
   await test.step('landing page explains the product before requiring sign-in', async () => {
     await page.goto('/')
@@ -23,11 +26,12 @@ test('new user can sign in, connect Gmail, discover subscriptions, and disconnec
   })
 
   await test.step('start from a disconnected account', async () => {
-    // GMAIL_PROVIDER=mock also authorizes Gmail as part of sign-in itself
-    // (server/app.js, preserving the pre-existing PD-011 demo shortcut) so
-    // the seeded mock account starts already connected. Disconnecting first
-    // reaches the genuine "never connected" starting point a real first-time
-    // user has - the same disconnect flow exercised again later in this test.
+    // Sign-in and Gmail authorization are deliberately separate steps
+    // (server/app.js's callback, docs/product/features/FEATURE-001.md) - a
+    // fresh mock sign-in already starts disconnected. This guard just makes
+    // the step resilient if that ever stops being true, and reaches the
+    // genuine "never connected" starting point a real first-time user has -
+    // the same disconnect flow exercised again later in this test.
     await page.goto('/#/sources')
     if (await page.locator('[data-gmail-disconnect]').isVisible()) {
       await page.locator('[data-gmail-disconnect]').click()

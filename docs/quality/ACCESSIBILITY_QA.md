@@ -22,6 +22,11 @@ Passing on a development branch does not authorize closing #43.
 - Repo inspected at: `main` @ `f56961f8641e35b97436d41a63fd7a24980ef0ff`, then
   QA automation from PR #50 (`qa/issue-43-cross-browser-gate`,
   `ec09e4b7e99fe9cee514460459dd6050b01b12ce`) merged in.
+- `main` subsequently advanced to `913b67d` (PR #35, "QA: add Playwright browser
+  smoke suite" — merged, not stale as this document originally assumed) and was
+  merged into this branch. That PR split Playwright into two independent
+  suites and changed real, load-bearing mock-provider behavior — see "Two
+  Playwright suites" and "Resolved gap" below.
 - #41 (Account & Data Controls / Delete Account) is **not yet merged to `main`**
   (open as PR #51). Delete-Account QA coverage below is written from the PR diff
   but cannot be executed or certified until it lands — see "Deferred to #41
@@ -45,9 +50,44 @@ browsers, pixel-identical rendering across engines, native-app behavior. PWA
 install UX may differ by platform — that alone is not a #43 defect as long as
 the web application stays fully usable on that platform.
 
+## Two Playwright suites
+
+PR #35 (merged into `main`) added a second, independent Playwright suite
+alongside this one, and split configuration so each suite only boots the dev
+server(s) it needs:
+
+| Suite | Config | Test dir | `npm run` | Owns |
+| --- | --- | --- | --- | --- |
+| Browser smoke suite | `playwright.config.js` | `test/e2e/` | `test:smoke` | General QA regression smoke coverage (not #43-specific) |
+| #43 accessibility/cross-browser gate | `playwright.e2e.config.js` | `e2e/` | `test:e2e` | This document's scope |
+
+Both now run in CI (`.github/workflows/ci.yml`), sequentially, with the job
+halting on the first suite that fails so failure artifacts always reflect the
+suite that actually broke. #43's automated evidence is `test:e2e` /
+`playwright.e2e.config.js` only — the smoke suite is Chromium-only by design
+and doesn't attempt cross-browser or accessibility coverage.
+
+### Resolved gap — per-test mock identity isolation
+
+The original #43 QA plan flagged: *"the current shared fixed mock account
+constrains deterministic multi-engine mutating flows."* PR #35 fixes this at
+the root: `server/gmail/fakeProvider.js`'s `createAuthorizationRequest` now
+mints a fresh `mock-success:<uuid>` code on every real "Continue with Google"
+click, so **every `signIn()` call now resolves to its own new, isolated
+backend account** rather than sharing one fixed `mock-user`. Sign-in also no
+longer auto-connects Gmail (previously a PD-011 demo shortcut) — a fresh
+account now genuinely starts disconnected, matching a real first-time user.
+Proven with real evidence in `test/browserIdentityIsolation.test.js` (distinct
+codes/subjects/user UUIDs/sessions per sign-in; one identity's connect+scan
+invisible to another). This suite's specs already used defensive
+"disconnect-if-connected" guards rather than asserting the old behavior, so
+**no test changes were needed** — verified by re-running the full suite
+post-merge (see "Locally verified" below). Comments in `e2e/*.js` that
+described the old shared-account/auto-connect assumption have been corrected.
+
 ## Automated coverage (this pass)
 
-Suite: `e2e/` (Playwright), config `playwright.config.js`.
+Suite: `e2e/` (Playwright), config `playwright.e2e.config.js`.
 
 | Project | Engine | Scope |
 | --- | --- | --- |
@@ -75,9 +115,10 @@ Spec files:
   logged to the test output for manual review, per the "zero violations is
   evidence, not certification" policy below.
 
-CI (`.github/workflows/ci.yml`) now installs all three engines and runs
-`npm run test:e2e` on PRs/pushes to `main` (added in PR #50, verified in this
-pass).
+CI (`.github/workflows/ci.yml`) now installs all three engines and runs both
+`npm run test:smoke` and `npm run test:e2e` on PRs/pushes to `main` (`test:e2e`
+wiring added in PR #50; reconciled with PR #35's smoke-suite CI steps in this
+pass — see "Two Playwright suites" above).
 
 **Environment limitation (this session):** this sandbox's network egress blocks
 `cdn.playwright.dev` / `playwright.download.prss.microsoft.com`, so only the
@@ -89,12 +130,15 @@ the first post-push CI run on this branch is green across all five projects
 before treating the automated matrix as passing; do not infer Firefox/WebKit PASS
 from this session's Chromium-only local run.
 
-Locally verified this pass, `chromium-desktop` + `chromium-mobile` projects:
-the pre-existing suite (`onboarding-flow.spec.js`, `responsive.spec.js`) is
-**25/25 green**. The new `accessibility.spec.js` is **0/6 green** — every
-scanned surface fails on the confirmed contrast defect below (DEFECT-A11Y-01),
-not on a test-infrastructure problem; see that section for per-page detail and
-its CI-gate consequence.
+Locally verified this pass, `chromium-desktop` + `chromium-mobile` projects,
+before merging PR #35's `main` changes in: the pre-existing suite
+(`onboarding-flow.spec.js`, `responsive.spec.js`) is **25/25 green**. Re-run on
+`chromium-desktop` alone *after* merging PR #35 (to confirm the identity-isolation
+and Gmail-auto-connect changes didn't regress anything): still **13/13 green**
+on that project. The `accessibility.spec.js` suite is **0/6 green** both before
+and after the merge — every scanned surface fails on the confirmed contrast
+defect below (DEFECT-A11Y-01), not on a test-infrastructure or merge problem;
+see that section for per-page detail and its CI-gate consequence.
 
 ### Automated accessibility policy
 

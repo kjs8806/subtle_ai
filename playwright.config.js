@@ -1,65 +1,69 @@
+// Browser smoke suite configuration for QA regression coverage.
 import { defineConfig, devices } from '@playwright/test'
 
-// #43 Accessibility & Cross-Browser QA Gate
-//
-// GMAIL_PROVIDER defaults to 'mock' (see server/config/env.js), so browser CI
-// never talks to real Google/Gmail and never needs production OAuth secrets.
-// The current mock provider binds sign-in to one fixed backend account, so the
-// suite must remain serial until engineering provides isolated test identities.
-// Serial execution keeps the existing mutating onboarding flow deterministic
-// while allowing the same core journey to run against multiple browser engines.
 export default defineConfig({
-  testDir: './e2e',
-  timeout: 30_000,
+  testDir: './test/e2e',
+  // 90s (not the previous 30s) so signIn()'s bounded 60s retry loop for a
+  // transient session-fetch outage (see test/e2e/smoke.spec.js) always has
+  // room to actually succeed within one test, instead of being cut off by
+  // the per-test timeout before the retry has a chance to land.
+  timeout: 90_000,
+  expect: { timeout: 5_000 },
   fullyParallel: false,
+  // fullyParallel:false only serializes tests within one project/file; it does
+  // not stop Playwright from running the desktop-chromium and mobile-chromium
+  // projects concurrently in separate workers. Both share one backend
+  // (port 8787, one in-memory PERSISTENCE_PROVIDER store) and one frontend
+  // dev server (port 4173) - two projects' tests genuinely racing those
+  // shared servers caused real, reproducible cross-test interference
+  // (a correction save from one test observed as unapplied by another test
+  // running at the same moment). Pinning workers:1 makes every test in the
+  // suite run strictly one at a time, matching what this config already
+  // assumed but never enforced.
   workers: 1,
   retries: process.env.CI ? 1 : 0,
-  reporter: [['list']],
+  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {
-    baseURL: 'http://127.0.0.1:5173',
+    baseURL: 'http://127.0.0.1:4173',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
-  webServer: {
-    command: 'npm run dev',
-    url: 'http://127.0.0.1:5173',
-    reuseExistingServer: !process.env.CI,
-    timeout: 60_000,
-    env: {
-      GMAIL_PROVIDER: 'mock',
-      PERSISTENCE_PROVIDER: 'memory',
-      MOCK_GMAIL_SCENARIO: 'success',
+  webServer: [
+    {
+      command: 'node server/app.js',
+      url: 'http://127.0.0.1:8787/api/v1/health',
+      env: {
+        ...process.env,
+        HOST: '127.0.0.1',
+        PORT: '8787',
+        GMAIL_PROVIDER: 'mock',
+        PERSISTENCE_PROVIDER: 'memory',
+      },
+      reuseExistingServer: !process.env.CI,
     },
-  },
+    {
+      command: 'vite --host 127.0.0.1 --port 4173',
+      url: 'http://127.0.0.1:4173',
+      reuseExistingServer: !process.env.CI,
+    },
+  ],
   projects: [
-    // Desktop engines representing the supported Chrome/Edge (Chromium),
-    // Firefox, and Safari-family (WebKit) rendering/runtime engines. WebKit is
-    // automation evidence only and must never be reported as real Safari PASS.
     {
-      name: 'chromium-desktop',
-      use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } },
+      name: 'desktop-chromium',
+      use: { ...devices['Desktop Chrome'] },
+      // @mobile-tagged tests exercise mobile-only layout (the slide-out menu,
+      // viewport-dependent affordances) and have no meaningful desktop
+      // equivalent - they belong solely to the mobile project below.
+      // @critical and untagged tests still run here.
+      grepInvert: /@mobile/,
     },
     {
-      name: 'firefox-desktop',
-      use: { ...devices['Desktop Firefox'], viewport: { width: 1280, height: 800 } },
-    },
-    {
-      name: 'webkit-desktop',
-      use: { ...devices['Desktop Safari'], viewport: { width: 1280, height: 800 } },
-    },
-
-    // Mobile engine coverage is intentionally limited to the non-destructive
-    // responsive suite while the mock backend uses one shared account. Real
-    // Android Chrome and real iOS Safari remain mandatory manual #43 evidence.
-    {
-      name: 'chromium-mobile',
-      use: { ...devices['Pixel 7'] },
-      testMatch: /responsive\.spec\.js/,
-    },
-    {
-      name: 'webkit-mobile',
-      use: { ...devices['iPhone 15'] },
-      testMatch: /responsive\.spec\.js/,
+      name: 'mobile-chromium',
+      use: { ...devices['Pixel 5'] },
+      // Only @mobile (mobile-specific) and @critical (must pass on both
+      // viewports) tests run here - untagged tests are covered once by
+      // desktop and don't need a second, viewport-identical run.
+      grep: /@mobile|@critical/,
     },
   ],
 })
