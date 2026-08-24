@@ -12,7 +12,7 @@ import { attentionDetailDialogMarkup, attentionPageMarkup, filterAttentionItems,
 import { buildActionItems } from './services/recommendationEngine.js'
 import { sourcesPageMarkup } from './ui/sources.js'
 import { settingsPageMarkup } from './ui/settings.js'
-import { collectChangedCorrections, correctionDialogMarkup, detailMarkup, rejectConfirmMarkup, renderCorrectionDialog, renderDetail, wireCorrectionDialogInteractions } from './ui/subscriptionDetail.js'
+import { collectChangedCorrections, correctionDialogMarkup, detailMarkup, rejectConfirmMarkup, removeManualConfirmMarkup, renderCorrectionDialog, renderDetail, wireCorrectionDialogInteractions } from './ui/subscriptionDetail.js'
 import { loadingMarkup, sessionErrorMarkup, signedOutMarkup } from './ui/signedOut.js'
 
 const APP_CONFIG = { name: 'Subtle AI', tagline: 'Your AI subscription optimizer' }
@@ -21,6 +21,12 @@ const brandWordmark = `<img class="brand-wordmark" src="/wordmark.png" width="97
 const brand = `<a class="brand" href="#${routePath('overview')}" aria-label="${APP_CONFIG.name} home">${brandMark}<span class="brand-text">${brandWordmark}<span class="brand-tagline">${APP_CONFIG.tagline}</span></span></a>`
 const shellHeader = (rightContent = '') => `<header class="pre-auth-header wrap">${brand}${rightContent}</header>`
 const addDialogMarkup = `<div class="dialog-backdrop" data-add-dialog hidden><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="add-title"><button class="dialog-close" data-close-dialog aria-label="Close">×</button><p class="eyebrow">Manual entry</p><h2 id="add-title">Add a subscription</h2><form class="subscription-form"><label>Service name<input name="name" placeholder="e.g. Netflix" required></label><div class="form-row"><label>Cost<input name="cost" type="number" min="0" step="0.01" inputmode="decimal" placeholder="22.99" required></label><label>Billing cadence<select name="cadence"><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></label></div><button class="primary-button form-submit" type="submit">Add to overview</button></form></section></div>`
+// Maps the correction form's backend-shaped field names (from
+// collectChangedCorrections) onto a manual display-item's own property
+// names, so editing a manual entry can reuse the same form/diff logic as a
+// Gmail-derived correction without a PATCH call - the diff is just applied
+// straight onto the local manualSubscriptions entry instead.
+const MANUAL_FIELD_MAP = { canonicalService: 'name', plan: 'plan', currentPrice: 'cost', currency: 'currency', billingCycle: 'cadence', nextRenewal: 'next' }
 
 // Sidebar footer summary (mini Gmail status + account link). Kept read-only
 // (no independent scan/connect controls) so the interactive Gmail source
@@ -148,7 +154,7 @@ const renderAuthenticated = async (user, gmailError) => {
   const attentionTotal = () => attentionItems.length + overlapActions.length
 
   // ---- persistent shell (sidebar, dialogs, footer) -----------------------
-  app.innerHTML = `<div class="app-shell">${navigationMarkup(brand, { activeRoute: currentRoute().name, attentionCount: attentionTotal() })}<div class="main-col"><div data-page-root></div></div></div>${gmailDisclosureMarkup()}${correctionDialogMarkup()}${rejectConfirmMarkup()}${addDialogMarkup}${attentionDetailDialogMarkup()}`
+  app.innerHTML = `<div class="app-shell">${navigationMarkup(brand, { activeRoute: currentRoute().name, attentionCount: attentionTotal() })}<div class="main-col"><div data-page-root></div></div></div>${gmailDisclosureMarkup()}${correctionDialogMarkup()}${rejectConfirmMarkup()}${removeManualConfirmMarkup()}${addDialogMarkup}${attentionDetailDialogMarkup()}`
   initializeNavigation(app)
 
   const pageRoot = document.querySelector('[data-page-root]')
@@ -157,6 +163,7 @@ const renderAuthenticated = async (user, gmailError) => {
   const correctionRoot = document.querySelector('[data-correction-dialog]'); const correctionDialog = createDialogController(correctionRoot)
   wireCorrectionDialogInteractions(correctionRoot)
   const rejectRoot = document.querySelector('[data-reject-dialog]'); const rejectDialog = createDialogController(rejectRoot)
+  const removeManualRoot = document.querySelector('[data-remove-manual-dialog]'); const removeManualDialog = createDialogController(removeManualRoot)
   const attentionRoot = document.querySelector('[data-attention-dialog]'); const attentionDialog = createDialogController(attentionRoot)
 
   const renderSidebarFooter = () => { const slot = document.querySelector('[data-sidebar-footer]'); if (slot) slot.innerHTML = sidebarFooterMarkup(user, gmailSourceUnavailable ? null : gmailSource) }
@@ -213,10 +220,12 @@ const renderAuthenticated = async (user, gmailError) => {
 
   // ---- route rendering -----------------------------------------------------
   let currentSubscriptionId = null
+  let currentManualId = null
 
   const renderSubscriptionDetailRoute = async (id) => {
     const summary = findSubscription(id)
     currentSubscriptionId = null
+    currentManualId = null
     if (!summary) {
       pageRoot.innerHTML = `<div class="main-content wrap"><a class="back-link" href="#${routePath('subscriptions')}">${NAV_ICONS.back}Back to Subscriptions</a><p class="empty-state">This subscription could not be found.</p></div>`
       return
@@ -229,6 +238,7 @@ const renderAuthenticated = async (user, gmailError) => {
       catch { live.announce('Latest evidence could not be loaded; showing the last known details.') }
     }
     currentSubscriptionId = item.remoteId || null
+    currentManualId = item.remoteId ? null : item.id
     renderDetail(detailRoot, item)
     detailRoot.querySelector('[data-toggle-correction]')?.addEventListener('click', () => {
       renderCorrectionDialog(correctionRoot, item)
@@ -237,6 +247,14 @@ const renderAuthenticated = async (user, gmailError) => {
     detailRoot.querySelector('[data-open-reject]')?.addEventListener('click', (event) => {
       rejectRoot.querySelector('[data-reject-name]').textContent = item.name
       rejectDialog.open(event.currentTarget)
+    })
+    detailRoot.querySelector('[data-edit-manual]')?.addEventListener('click', () => {
+      renderCorrectionDialog(correctionRoot, item, { isManual: true })
+      correctionDialog.open(document.activeElement)
+    })
+    detailRoot.querySelector('[data-remove-manual]')?.addEventListener('click', (event) => {
+      removeManualRoot.querySelector('[data-remove-manual-name]').textContent = item.name
+      removeManualDialog.open(event.currentTarget)
     })
   }
 
@@ -423,13 +441,27 @@ const renderAuthenticated = async (user, gmailError) => {
   // separate PATCHes (the API is single-field, per FEATURE-002's existing
   // per-field provenance/conflict handling) - one user "Save changes" click,
   // sequential requests underneath so an untouched field is never touched.
+  // A manually-added item ("Edit subscription") reuses the same form and the
+  // same changed-field diff, but there's no backend record to PATCH - the
+  // diff is applied straight onto the local manualSubscriptions entry via
+  // MANUAL_FIELD_MAP instead.
   correctionRoot.querySelector('[data-correction-form]').addEventListener('submit', async (event) => {
     event.preventDefault()
     const errorEl = correctionRoot.querySelector('[data-correction-error]')
     errorEl.hidden = true
-    if (!currentSubscriptionId) return
     const changes = collectChangedCorrections(correctionRoot)
     if (!changes.length) { correctionDialog.close(); return }
+
+    if (currentManualId) {
+      const patch = Object.fromEntries(changes.map(change => [MANUAL_FIELD_MAP[change.field], change.value]))
+      manualSubscriptions = manualSubscriptions.map(item => item.id === currentManualId ? { ...item, ...patch } : item)
+      correctionDialog.close()
+      await renderRoute()
+      live.announce(changes.length === 1 ? 'Change saved.' : 'Changes saved.')
+      return
+    }
+
+    if (!currentSubscriptionId) return
     const submitButton = correctionRoot.querySelector('[data-correction-submit]')
     submitButton.disabled = true
     let updated = null
@@ -468,6 +500,18 @@ const renderAuthenticated = async (user, gmailError) => {
     } finally {
       event.currentTarget.disabled = false
     }
+  })
+  // "Remove subscription" for a manually-added item - purely local state, no
+  // API call and nothing to roll back on failure, unlike the Gmail reject
+  // flow above.
+  removeManualRoot.querySelector('[data-confirm-remove-manual]').addEventListener('click', () => {
+    if (!currentManualId) return
+    const removedName = manualSubscriptions.find(item => item.id === currentManualId)?.name
+    manualSubscriptions = manualSubscriptions.filter(item => item.id !== currentManualId)
+    currentManualId = null
+    removeManualDialog.close()
+    live.announce(removedName ? `${removedName} removed.` : 'Subscription removed.')
+    navigate('subscriptions')
   })
 
   const signOut = async (event) => {
