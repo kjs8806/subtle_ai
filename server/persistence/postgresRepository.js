@@ -123,8 +123,32 @@ export const createPostgresRepository = ({ pool }) => {
       return winner.rows[0]
     },
     async getConnection(userId) { const { rows } = await pool.query('SELECT * FROM source_connections WHERE user_id = $1 AND provider = $2', [userId, 'gmail']); return rowConnection(rows[0]) || { status: 'not_connected', scanStatus: 'idle' } },
-    async authorizeConnection(userId, token = null) { const ciphertext = token?.ciphertext || token || null; const keyVersion = token?.keyVersion || null; const { rows } = await pool.query('INSERT INTO source_connections (user_id, provider, authorization_state, encrypted_refresh_token, token_key_version) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, provider) DO UPDATE SET authorization_state = $3, encrypted_refresh_token = COALESCE($4, source_connections.encrypted_refresh_token), token_key_version = COALESCE($5, source_connections.token_key_version), scan_state = $6 RETURNING *', [userId, 'gmail', 'connected', ciphertext, keyVersion, 'idle']); return rowConnection(rows[0]) },
+    // MVP-BETA-004 (#41, Tech Lead remediation on PR #51): a connection
+    // stuck in 'revoked_pending_purge' (Google-side revocation already
+    // confirmed on a previous disconnect attempt, but the local purge
+    // hadn't completed yet) must finish that purge before a new connection
+    // is established here - otherwise the old, now-orphaned Gmail-derived
+    // data would silently persist alongside data from the new connection
+    // instead of ever being cleaned up. This makes reconnecting a second,
+    // equally valid way to complete a stuck purge, in addition to retrying
+    // disconnect directly.
+    async authorizeConnection(userId, token = null) {
+      const existing = await pool.query('SELECT authorization_state FROM source_connections WHERE user_id = $1 AND provider = $2', [userId, 'gmail'])
+      if (existing.rows[0]?.authorization_state === 'revoked_pending_purge') await this.disconnectConnection(userId)
+      const ciphertext = token?.ciphertext || token || null
+      const keyVersion = token?.keyVersion || null
+      const { rows } = await pool.query('INSERT INTO source_connections (user_id, provider, authorization_state, encrypted_refresh_token, token_key_version) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, provider) DO UPDATE SET authorization_state = $3, encrypted_refresh_token = COALESCE($4, source_connections.encrypted_refresh_token), token_key_version = COALESCE($5, source_connections.token_key_version), scan_state = $6 RETURNING *', [userId, 'gmail', 'connected', ciphertext, keyVersion, 'idle'])
+      return rowConnection(rows[0])
+    },
     async getEncryptedRefreshToken(userId) { const { rows } = await pool.query('SELECT encrypted_refresh_token AS ciphertext, token_key_version AS "keyVersion" FROM source_connections WHERE user_id = $1 AND provider = $2 AND authorization_state = $3', [userId, 'gmail', 'connected']); return rows[0]?.ciphertext ? rows[0] : null },
+    // Persists that Google-side revocation is confirmed, *before* the local
+    // purge is attempted - see disconnectConnection below and the matching
+    // comment in server/app.js for why this ordering is the whole point of
+    // this remediation. Clearing the token here too means it can never be
+    // reused even if the purge that follows fails and is retried later.
+    async markGmailRevoked(userId) {
+      await pool.query("UPDATE source_connections SET authorization_state = 'revoked_pending_purge', encrypted_refresh_token = NULL, token_key_version = NULL WHERE user_id = $1 AND provider = $2", [userId, 'gmail'])
+    },
     async beginScan(userId) { const client = await pool.connect(); try { await client.query('BEGIN'); const connection = await client.query('SELECT * FROM source_connections WHERE user_id = $1 AND provider = $2 AND authorization_state = $3 FOR UPDATE', [userId, 'gmail', 'connected']); if (!connection.rows[0]) { await client.query('ROLLBACK'); return null } if (connection.rows[0].scan_state === 'scanning') { await client.query('ROLLBACK'); return { conflict: true } } const scan = await client.query('INSERT INTO scan_runs (connection_id, status) VALUES ($1, $2) RETURNING *', [connection.rows[0].id, 'scanning']); await client.query('UPDATE source_connections SET scan_state = $1 WHERE id = $2', ['scanning', connection.rows[0].id]); await client.query('COMMIT'); return { id: scan.rows[0].id, userId, status: 'scanning', startedAt: scan.rows[0].started_at, completedAt: null, found: 0 } } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() } },
     async completeScan(userId, scanId, found, status = 'complete') { const { rows } = await pool.query('UPDATE scan_runs s SET status = $1, found_count = $2, completed_at = now() FROM source_connections c WHERE s.id = $3 AND s.connection_id = c.id AND c.user_id = $4 RETURNING s.*, c.id AS connection_id', [status, found, scanId, userId]); if (!rows[0]) return null; await pool.query('UPDATE source_connections SET scan_state = $1, last_scan_at = now() WHERE id = $2', [status === 'failed' ? 'error' : 'idle', rows[0].connection_id]); return { id: rows[0].id, userId, status: rows[0].status, startedAt: rows[0].started_at, completedAt: rows[0].completed_at, found: rows[0].found_count } },
     async persistParsedEvidence(userId, parsed) {

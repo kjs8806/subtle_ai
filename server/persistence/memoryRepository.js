@@ -44,6 +44,25 @@ export const createMemoryRepository = () => {
     conflicts: [...conflicts.values()].filter((item) => { const correction = corrections.get(item.correctionId); return correction && correction.subscriptionId === sub.id && !item.acknowledgedAt }).map((item) => clone({ ...item, field: corrections.get(item.correctionId).field })),
   }
 
+  // MVP-BETA-004 (#41): every Gmail-derived record for a user, shared by
+  // disconnectConnection and authorizeConnection's self-heal of a stale
+  // 'revoked_pending_purge' connection (Tech Lead remediation on PR #51) -
+  // both need the exact same purge, and it must be idempotent (a retry, or
+  // a reconnect that discovers nothing left to clean up, is always a safe
+  // no-op) for the retry-without-re-revoking guarantee to actually hold.
+  const purgeGmailData = (userId) => {
+    const subscriptionIds = new Set([...subscriptions.values()].filter((item) => item.userId === userId).map((item) => item.id))
+    const correctionIds = new Set([...corrections.values()].filter((item) => item.userId === userId).map((item) => item.id))
+    for (const [id, item] of conflicts) if (correctionIds.has(item.correctionId)) conflicts.delete(id)
+    for (const id of correctionIds) corrections.delete(id)
+    for (const [id, item] of candidates) if (item.userId === userId) candidates.delete(id)
+    for (const [id, item] of attentionDismissals) if (id.startsWith(`${userId}:`)) attentionDismissals.delete(id)
+    for (const key of billingEvents) if (subscriptionIds.has(key.split(':')[0])) billingEvents.delete(key)
+    for (const [id, item] of evidence) if (item.userId === userId) evidence.delete(id)
+    for (const [id, item] of subscriptions) if (item.userId === userId) subscriptions.delete(id)
+    for (const id of scans.keys()) if (scans.get(id).userId === userId) scans.delete(id)
+  }
+
   return {
     createUser: ({ id = randomUUID(), email, name }) => {
       const user = { id, email, name }
@@ -66,12 +85,34 @@ export const createMemoryRepository = () => {
       return clone(user)
     },
     getConnection: (userId) => publicConnection(connections.get(userId) || { status: 'not_connected', scanStatus: 'idle' }),
+    // MVP-BETA-004 (#41, Tech Lead remediation on PR #51): a connection
+    // stuck in 'revoked_pending_purge' (Google-side revocation already
+    // confirmed on a previous disconnect attempt, but the local purge
+    // hadn't completed yet) must finish that purge before a new connection
+    // is established here - otherwise the old, now-orphaned Gmail-derived
+    // data would silently persist alongside data from the new connection
+    // instead of ever being cleaned up. This makes reconnecting a second,
+    // equally valid way to complete a stuck purge, in addition to retrying
+    // disconnect directly.
     authorizeConnection: (userId, encryptedRefreshToken = null) => {
+      if (connections.get(userId)?.status === 'revoked_pending_purge') purgeGmailData(userId)
       const connection = { id: connections.get(userId)?.id || randomUUID(), userId, provider: 'gmail', status: 'connected', scanStatus: 'idle', lastScanAt: null, encryptedRefreshToken }
       connections.set(userId, connection)
       return publicConnection(connection)
     },
     getEncryptedRefreshToken: (userId) => connections.get(userId)?.encryptedRefreshToken || null,
+    // Persists that Google-side revocation is confirmed, *before* the local
+    // purge is attempted - see disconnectConnection below and the matching
+    // comment in server/app.js for why this ordering is the whole point of
+    // this remediation. Clearing the token here too means it can never be
+    // reused even if the purge that follows fails and is retried later.
+    markGmailRevoked: (userId) => {
+      const connection = connections.get(userId)
+      if (!connection) return
+      connection.status = 'revoked_pending_purge'
+      connection.encryptedRefreshToken = null
+      connections.set(userId, connection)
+    },
     // MVP-BETA-004 (#41, Product Owner policy on issue #41): disconnecting
     // Gmail purges every Gmail-derived record but preserves the user,
     // identity, and connection row itself (reset to not_connected, so it can
@@ -83,19 +124,12 @@ export const createMemoryRepository = () => {
     // application code doesn't explicitly delete (unlike postgresRepository.js,
     // where a missed table is at least visible as a foreign-key error - see
     // that file's disconnectConnection for the real bug that surfaced this).
+    // Safe to call repeatedly (purgeGmailData is idempotent), which is what
+    // lets a retry after a failed purge just call this again.
     disconnectConnection: (userId) => {
       const connection = connections.get(userId)
       if (!connection) return clone({ status: 'not_connected', scanStatus: 'idle' })
-      const subscriptionIds = new Set([...subscriptions.values()].filter((item) => item.userId === userId).map((item) => item.id))
-      const correctionIds = new Set([...corrections.values()].filter((item) => item.userId === userId).map((item) => item.id))
-      for (const [id, item] of conflicts) if (correctionIds.has(item.correctionId)) conflicts.delete(id)
-      for (const id of correctionIds) corrections.delete(id)
-      for (const [id, item] of candidates) if (item.userId === userId) candidates.delete(id)
-      for (const [id, item] of attentionDismissals) if (id.startsWith(`${userId}:`)) attentionDismissals.delete(id)
-      for (const key of billingEvents) if (subscriptionIds.has(key.split(':')[0])) billingEvents.delete(key)
-      for (const [id, item] of evidence) if (item.userId === userId) evidence.delete(id)
-      for (const [id, item] of subscriptions) if (item.userId === userId) subscriptions.delete(id)
-      for (const id of scans.keys()) if (scans.get(id).userId === userId) scans.delete(id)
+      purgeGmailData(userId)
       connection.status = 'not_connected'
       connection.scanStatus = 'idle'
       connection.encryptedRefreshToken = null
@@ -109,16 +143,7 @@ export const createMemoryRepository = () => {
     // connection rows themselves, which disconnect deliberately preserves.
     deleteAccount: (userId) => {
       const existed = users.has(userId)
-      const subscriptionIds = new Set([...subscriptions.values()].filter((item) => item.userId === userId).map((item) => item.id))
-      const correctionIds = new Set([...corrections.values()].filter((item) => item.userId === userId).map((item) => item.id))
-      for (const [id, item] of conflicts) if (correctionIds.has(item.correctionId)) conflicts.delete(id)
-      for (const id of correctionIds) corrections.delete(id)
-      for (const [id, item] of candidates) if (item.userId === userId) candidates.delete(id)
-      for (const [id, item] of attentionDismissals) if (id.startsWith(`${userId}:`)) attentionDismissals.delete(id)
-      for (const key of billingEvents) if (subscriptionIds.has(key.split(':')[0])) billingEvents.delete(key)
-      for (const [id, item] of evidence) if (item.userId === userId) evidence.delete(id)
-      for (const [id, item] of subscriptions) if (item.userId === userId) subscriptions.delete(id)
-      for (const id of scans.keys()) if (scans.get(id).userId === userId) scans.delete(id)
+      purgeGmailData(userId)
       connections.delete(userId)
       for (const [key, identity] of identities) if (identity.userId === userId) identities.delete(key)
       users.delete(userId)
