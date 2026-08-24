@@ -9,11 +9,12 @@
     "dev:server": "node --watch server/app.js",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test",
+    "test": "node --test test/*.test.js",
     "test:server": "node --test test/server.test.js",
     "test:postgres": "node --test test/postgres.integration.test.js",
     "test:runtime": "node --test test/runtimePersistence.integration.test.js",
-    "test:e2e": "playwright test"
+    "test:smoke": "playwright test",
+    "test:e2e": "playwright test --config=playwright.e2e.config.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",
