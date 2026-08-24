@@ -217,25 +217,11 @@ export const createSubscriptionRecord = (evidence, overrides = {}) => {
   })
 }
 
-export const detectPriceChange = (priceHistory = []) => {
-  if (priceHistory.length < 2) return null
-  const previousEntry = priceHistory[priceHistory.length - 2]
-  const currentEntry = priceHistory[priceHistory.length - 1]
-  // Never compare amounts across different - or unknown - currencies as a
-  // price change: $10 USD -> $12 CAD is not a real increase, and currency
-  // conversion is out of scope. Both observations must agree on a resolved
-  // currency before amounts are meaningfully comparable.
-  if (!previousEntry.currency || !currentEntry.currency || previousEntry.currency !== currentEntry.currency) return null
-  const previous = previousEntry.amount
-  const current = currentEntry.amount
-  if (!previous || current <= previous) return null
-  return { type: 'price_increase', previous, current, annualImpact: (current - previous) * 12, reason: 'The same subscription was observed at a higher price in a later receipt.' }
-}
-
+// Price-change detection now lives in src/services/priceChangeService.js
+// (FEATURE-003), which is currency-safe against a resolved threshold and
+// integer-minor-units-safe. buildRecommendations only handles overlap here.
 export const buildRecommendations = (record, relatedRecords = []) => {
   const recommendations = []
-  const priceChange = detectPriceChange(record.priceHistory)
-  if (priceChange) recommendations.push(createRecommendation({ type: 'price_increase', priority: 'medium', ...priceChange, evidenceIds: record.evidence.map(({ id }) => id) }))
   const overlap = relatedRecords.find((related) => {
     const pair = [record.canonicalService, related.canonicalService].sort().join('|')
     return related.id !== record.id && OVERLAP_PAIRS.has(pair)

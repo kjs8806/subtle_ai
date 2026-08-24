@@ -1,18 +1,47 @@
 // Per-service icon registry, keyed by the exact canonicalService strings
 // produced by src/services/subscriptionTemplates.js.
 //
-// These are original, single-color glyphs in each service's real brand
-// color - not the service's actual trademarked logo file. This app has no
-// legitimate licensed source for third-party brand assets, and hot-linking
-// logos from an arbitrary external host is both a reliability risk and
-// explicitly out of scope - so "recognizable service identity" is
-// implemented as a distinct shape + the service's own brand color per
-// service, consistently reused everywhere a subscription is shown, rather
-// than a flat colored letter tile. An unmapped/unknown merchant always gets
-// the neutral fallback glyph - never a guessed or wrong-service icon.
+// Icon selection policy, in priority order:
+//   1. Known mapped service (a SERVICE_ICONS entry) - a distinct, recognizable
+//      shape in that service's real brand color. These are original glyphs,
+//      not the service's actual trademarked logo file: this app has no
+//      licensed source for third-party brand assets, and hot-linking logos
+//      from an arbitrary external host (or a search engine) is both a
+//      reliability risk and a trademark-guideline risk - so this
+//      repo-committed set *is* the approved, maintainable asset source, and
+//      it is never recolored or stretched per-surface.
+//   2. Unknown/unmapped service with a usable name - a first-letter tile
+//      (see letterTileIcon below), styled like the rest of the app's
+//      identity tiles (the account avatar's purple-soft/purple-ink pairing -
+//      see .sidebar-user .avatar in style.css), never a generic
+//      document/image icon and never an invented logo for a service this
+//      app doesn't actually recognize.
+//   3. No usable service name at all - the neutral FALLBACK_SERVICE_ICON.
+// serviceIconFor is the single source of truth every surface (Overview,
+// Subscriptions, Subscription Detail, Worth your attention, the correction
+// dialog's live preview) calls through, so a given canonicalService always
+// resolves to the same tier and the same icon everywhere - including right
+// after a FEATURE-002 correction changes canonicalService, since nothing
+// caches the old icon.
 const glyph = (inner, viewBox = '0 0 24 24') => `<svg viewBox="${viewBox}" width="20" height="20" aria-hidden="true" focusable="false">${inner}</svg>`
 
 const solid = (bg, fg, inner) => ({ bg, fg, svg: glyph(inner) })
+
+// Matches --purple-soft/--purple-ink in style.css - the same pairing already
+// used for the account avatar - so a service letter tile reads as the same
+// "identity tile" design language, not a new one-off color scheme.
+const LETTER_TILE_BG = '#efebff'
+const LETTER_TILE_FG = '#4a3ad1'
+const letterTileIcon = (letter) => solid(LETTER_TILE_BG, LETTER_TILE_FG, `<text x="12" y="12.5" text-anchor="middle" dominant-baseline="middle" font-size="16" font-weight="700" font-family="inherit" fill="currentColor">${letter}</text>`)
+
+// The "first meaningful character": the first letter or digit, skipping any
+// leading symbol/whitespace/emoji, uppercased. Returns null when a name has
+// no such character at all (empty, whitespace-only, symbols-only) so the
+// caller can fall through to the generic icon instead of tiling nothing.
+const firstMeaningfulChar = (name) => {
+  const match = String(name ?? '').match(/[\p{L}\p{N}]/u)
+  return match ? match[0].toUpperCase() : null
+}
 
 export const SERVICE_ICONS = {
   Netflix: solid('#E50914', '#ffffff', '<path d="M5 3h4l6 12V3h4v18h-4L9 9v12H5z" fill="currentColor"/>'),
@@ -43,14 +72,25 @@ export const SERVICE_ICONS = {
   'Uber One': solid('#000000', '#ffffff', '<path d="M7 5v9a5 5 0 0 0 10 0V5" stroke="currentColor" stroke-width="2.1" fill="none" stroke-linecap="round"/>'),
 }
 
+// Reserved for tier 3 only: no usable service name at all. Never shown for
+// an unmapped-but-named service - that's letterTileIcon's job.
 export const FALLBACK_SERVICE_ICON = solid('#eceafc', '#5b5f78', '<path d="M4.6 6.4A2 2 0 0 1 6.6 4.4h7l6 6v9a2 2 0 0 1-2 2H6.6a2 2 0 0 1-2-2Z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M13.6 4.4v6h6" fill="none" stroke="currentColor" stroke-width="1.5"/>')
 
-export const serviceIconFor = (canonicalService) => SERVICE_ICONS[canonicalService] || FALLBACK_SERVICE_ICON
+export const serviceIconFor = (canonicalService) => {
+  if (SERVICE_ICONS[canonicalService]) return SERVICE_ICONS[canonicalService]
+  const letter = firstMeaningfulChar(canonicalService)
+  return letter ? letterTileIcon(letter) : FALLBACK_SERVICE_ICON
+}
+
+const escapeAttr = (value) => String(value).replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char])
 
 // `size` selects a CSS modifier class (see .service-icon.icon-* in style.css)
-// - callers never inline dimensions, so every surface stays visually consistent.
+// - callers never inline dimensions, so every surface stays visually
+// consistent. The label reflects which tier actually rendered: "logo" is
+// only claimed for a real known-service icon, never for a letter tile that
+// merely stands in for a name Subtle AI doesn't recognize.
 export const serviceIconMarkup = (canonicalService, { size = 'md' } = {}) => {
   const icon = serviceIconFor(canonicalService)
-  const label = canonicalService ? `${canonicalService} logo` : 'Unknown service'
+  const label = SERVICE_ICONS[canonicalService] ? `${canonicalService} logo` : canonicalService ? escapeAttr(canonicalService) : 'Unknown service'
   return `<span class="service-icon icon-${size}" style="background:${icon.bg};color:${icon.fg}" role="img" aria-label="${label}">${icon.svg}</span>`
 }

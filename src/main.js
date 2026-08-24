@@ -8,11 +8,11 @@ import { initializeNavigation, NAV_ICONS, navigationMarkup } from './ui/navigati
 import { currentRoute, navigate, onRouteChange, routePath } from './ui/router.js'
 import { overviewMarkup } from './ui/overview.js'
 import { filterAndSortSubscriptions, renderSubscriptionRows, subscriptionsPageMarkup } from './ui/subscriptions.js'
-import { attentionPageMarkup } from './ui/attention.js'
+import { attentionDetailDialogMarkup, attentionPageMarkup, filterAttentionItems, renderAttentionDetail, renderAttentionList, sortAttentionItems } from './ui/attention.js'
 import { buildActionItems } from './services/recommendationEngine.js'
 import { sourcesPageMarkup } from './ui/sources.js'
 import { settingsPageMarkup } from './ui/settings.js'
-import { collectChangedCorrections, correctionDialogMarkup, detailMarkup, rejectConfirmMarkup, renderCorrectionDialog, renderDetail, wireCorrectionDialogInteractions } from './ui/subscriptionDetail.js'
+import { collectChangedCorrections, correctionDialogMarkup, detailMarkup, rejectConfirmMarkup, removeManualConfirmMarkup, renderCorrectionDialog, renderDetail, wireCorrectionDialogInteractions } from './ui/subscriptionDetail.js'
 import { loadingMarkup, sessionErrorMarkup, signedOutMarkup } from './ui/signedOut.js'
 
 const APP_CONFIG = { name: 'Subtle AI', tagline: 'Your AI subscription optimizer' }
@@ -21,6 +21,12 @@ const brandWordmark = `<img class="brand-wordmark" src="/wordmark.png" width="97
 const brand = `<a class="brand" href="#${routePath('overview')}" aria-label="${APP_CONFIG.name} home">${brandMark}<span class="brand-text">${brandWordmark}<span class="brand-tagline">${APP_CONFIG.tagline}</span></span></a>`
 const shellHeader = (rightContent = '') => `<header class="pre-auth-header wrap">${brand}${rightContent}</header>`
 const addDialogMarkup = `<div class="dialog-backdrop" data-add-dialog hidden><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="add-title"><button class="dialog-close" data-close-dialog aria-label="Close">×</button><p class="eyebrow">Manual entry</p><h2 id="add-title">Add a subscription</h2><form class="subscription-form"><label>Service name<input name="name" placeholder="e.g. Netflix" required></label><div class="form-row"><label>Cost<input name="cost" type="number" min="0" step="0.01" inputmode="decimal" placeholder="22.99" required></label><label>Billing cadence<select name="cadence"><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></label></div><button class="primary-button form-submit" type="submit">Add to overview</button></form></section></div>`
+// Maps the correction form's backend-shaped field names (from
+// collectChangedCorrections) onto a manual display-item's own property
+// names, so editing a manual entry can reuse the same form/diff logic as a
+// Gmail-derived correction without a PATCH call - the diff is just applied
+// straight onto the local manualSubscriptions entry instead.
+const MANUAL_FIELD_MAP = { canonicalService: 'name', plan: 'plan', currentPrice: 'cost', currency: 'currency', billingCycle: 'cadence', nextRenewal: 'next' }
 
 // Sidebar footer summary (mini Gmail status + account link). Kept read-only
 // (no independent scan/connect controls) so the interactive Gmail source
@@ -105,32 +111,50 @@ const renderAuthenticated = async (user, gmailError) => {
   let gmailSource = { status: 'not_connected', scanStatus: 'idle' }
   let gmailSourceUnavailable = false
   // Derived from backendItems' retained raw records (toDisplayItem stashes
-  // the full backend subscription as item.pipelineRecord) via the same
-  // price-increase/overlap engine FEATURE-001 already built in
-  // receiptPipeline.js - see recommendationEngine.js. Recomputed via
-  // refreshActions() wherever backendItems changes below, so it never
-  // reflects a stale subscription list.
-  let actions = []
-  const refreshActions = () => { actions = buildActionItems(backendItems.map(item => item.pipelineRecord).filter(Boolean)) }
+  // the full backend subscription as item.pipelineRecord) via the overlap-
+  // detection engine (src/services/recommendationEngine.js). Price-change
+  // detection now lives server-side (FEATURE-003, see attentionItems below) -
+  // this only covers overlap, which predates it and isn't part of its scope.
+  // Recomputed via refreshOverlapActions() wherever backendItems changes.
+  // "Keep both" acknowledges a card without changing any subscription, so
+  // (unlike FEATURE-003's attention-item dismissal) there's nothing to
+  // persist server-side - dismissedOverlapIds is in-memory only and resets
+  // on reload, same as this feature's total lack of durable state today.
+  let overlapActions = []
+  const dismissedOverlapIds = new Set()
+  const refreshOverlapActions = () => { overlapActions = buildActionItems(backendItems.map(item => item.pipelineRecord).filter(Boolean)).filter(action => !dismissedOverlapIds.has(action.id)) }
 
-  const [subsResult, sourceResult, candidatesResult] = await Promise.allSettled([
+  // FEATURE-003: the unified, server-computed "Worth your attention" list
+  // (price changes, renewals, and FEATURE-002's ambiguous-candidate review,
+  // already sorted and durable - see GET /api/v1/attention). `candidates`
+  // above is still fetched separately because a needs_review attention item
+  // only carries a candidateId; rendering its full card (evidence count,
+  // raw merchant) needs the full candidate record, looked up by that id.
+  let attentionItems = []
+  const candidatesById = () => new Map(candidates.map(candidate => [candidate.id, candidate]))
+  const refreshAttentionItems = async () => { try { attentionItems = (await feature001Api.getAttentionItems()).items || [] } catch { /* the page just keeps showing its last known state */ } }
+
+  const [subsResult, sourceResult, candidatesResult, attentionResult] = await Promise.allSettled([
     feature001Api.listSubscriptions(),
     feature001Api.getGmailSource(),
     feature001Api.listCandidates(),
+    feature001Api.getAttentionItems(),
   ])
   if (subsResult.status === 'fulfilled') backendItems = (subsResult.value.subscriptions || []).map(toDisplayItem)
   if (sourceResult.status === 'fulfilled') gmailSource = sourceResult.value
   else gmailSourceUnavailable = true
   if (candidatesResult.status === 'fulfilled') candidates = candidatesResult.value.candidates || []
-  refreshActions()
+  if (attentionResult.status === 'fulfilled') attentionItems = attentionResult.value.items || []
+  refreshOverlapActions()
 
   const greeting = user?.name ? `Good morning, ${user.name.split(' ')[0]}.` : 'Good morning.'
   const dateLabel = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
   const allItems = () => [...manualSubscriptions, ...backendItems]
   const findSubscription = id => allItems().find(item => String(item.id) === String(id))
+  const attentionTotal = () => attentionItems.length + overlapActions.length
 
   // ---- persistent shell (sidebar, dialogs, footer) -----------------------
-  app.innerHTML = `<div class="app-shell">${navigationMarkup(brand, { activeRoute: currentRoute().name, attentionCount: candidates.length })}<div class="main-col"><div data-page-root></div></div></div>${gmailDisclosureMarkup()}${correctionDialogMarkup()}${rejectConfirmMarkup()}${addDialogMarkup}`
+  app.innerHTML = `<div class="app-shell">${navigationMarkup(brand, { activeRoute: currentRoute().name, attentionCount: attentionTotal() })}<div class="main-col"><div data-page-root></div></div></div>${gmailDisclosureMarkup()}${correctionDialogMarkup()}${rejectConfirmMarkup()}${removeManualConfirmMarkup()}${addDialogMarkup}${attentionDetailDialogMarkup()}`
   initializeNavigation(app)
 
   const pageRoot = document.querySelector('[data-page-root]')
@@ -139,6 +163,8 @@ const renderAuthenticated = async (user, gmailError) => {
   const correctionRoot = document.querySelector('[data-correction-dialog]'); const correctionDialog = createDialogController(correctionRoot)
   wireCorrectionDialogInteractions(correctionRoot)
   const rejectRoot = document.querySelector('[data-reject-dialog]'); const rejectDialog = createDialogController(rejectRoot)
+  const removeManualRoot = document.querySelector('[data-remove-manual-dialog]'); const removeManualDialog = createDialogController(removeManualRoot)
+  const attentionRoot = document.querySelector('[data-attention-dialog]'); const attentionDialog = createDialogController(attentionRoot)
 
   const renderSidebarFooter = () => { const slot = document.querySelector('[data-sidebar-footer]'); if (slot) slot.innerHTML = sidebarFooterMarkup(user, gmailSourceUnavailable ? null : gmailSource) }
   const updateNavActive = (routeName) => {
@@ -149,9 +175,10 @@ const renderAuthenticated = async (user, gmailError) => {
     })
   }
   const updateAttentionBadge = () => {
+    const total = attentionTotal()
     document.querySelectorAll('[data-route-link="attention"]').forEach(link => {
       link.querySelector('.nav-badge')?.remove()
-      if (candidates.length) link.insertAdjacentHTML('beforeend', `<span class="nav-badge">${candidates.length}</span>`)
+      if (total) link.insertAdjacentHTML('beforeend', `<span class="nav-badge">${total}</span>`)
     })
   }
 
@@ -193,10 +220,12 @@ const renderAuthenticated = async (user, gmailError) => {
 
   // ---- route rendering -----------------------------------------------------
   let currentSubscriptionId = null
+  let currentManualId = null
 
   const renderSubscriptionDetailRoute = async (id) => {
     const summary = findSubscription(id)
     currentSubscriptionId = null
+    currentManualId = null
     if (!summary) {
       pageRoot.innerHTML = `<div class="main-content wrap"><a class="back-link" href="#${routePath('subscriptions')}">${NAV_ICONS.back}Back to Subscriptions</a><p class="empty-state">This subscription could not be found.</p></div>`
       return
@@ -209,6 +238,7 @@ const renderAuthenticated = async (user, gmailError) => {
       catch { live.announce('Latest evidence could not be loaded; showing the last known details.') }
     }
     currentSubscriptionId = item.remoteId || null
+    currentManualId = item.remoteId ? null : item.id
     renderDetail(detailRoot, item)
     detailRoot.querySelector('[data-toggle-correction]')?.addEventListener('click', () => {
       renderCorrectionDialog(correctionRoot, item)
@@ -217,6 +247,14 @@ const renderAuthenticated = async (user, gmailError) => {
     detailRoot.querySelector('[data-open-reject]')?.addEventListener('click', (event) => {
       rejectRoot.querySelector('[data-reject-name]').textContent = item.name
       rejectDialog.open(event.currentTarget)
+    })
+    detailRoot.querySelector('[data-edit-manual]')?.addEventListener('click', () => {
+      renderCorrectionDialog(correctionRoot, item, { isManual: true })
+      correctionDialog.open(document.activeElement)
+    })
+    detailRoot.querySelector('[data-remove-manual]')?.addEventListener('click', (event) => {
+      removeManualRoot.querySelector('[data-remove-manual-name]').textContent = item.name
+      removeManualDialog.open(event.currentTarget)
     })
   }
 
@@ -233,8 +271,8 @@ const renderAuthenticated = async (user, gmailError) => {
         await renderSubscriptionDetailRoute(route.params.id)
         break
       case 'attention':
-        pageRoot.innerHTML = attentionPageMarkup({ actions, candidates })
-        wireCandidateList(pageRoot)
+        pageRoot.innerHTML = attentionPageMarkup({ items: attentionItems, overlapActions })
+        wireAttentionPage(pageRoot)
         break
       case 'sources':
         pageRoot.innerHTML = sourcesPageMarkup()
@@ -247,15 +285,11 @@ const renderAuthenticated = async (user, gmailError) => {
         pageRoot.querySelector('[data-sign-out]').addEventListener('click', signOut)
         break
       default:
-        pageRoot.innerHTML = overviewMarkup({ subscriptions: items, actions, monthlySpend: monthlySpendFor(items), candidates, greeting, dateLabel, gmailSource, gmailSourceUnavailable })
+        pageRoot.innerHTML = overviewMarkup({ subscriptions: items, attentionItems, overlapActions, monthlySpend: monthlySpendFor(items), greeting, dateLabel, gmailSource, gmailSourceUnavailable })
     }
     updateAttentionBadge()
     window.scrollTo(0, 0)
   }
-
-  onRouteChange(renderRoute)
-  await renderRoute()
-  renderSidebarFooter()
 
   // ---- Subscriptions page: client-side search/sort/billing-cadence filter
   // over the already-loaded list (no new endpoint - everything filtered here
@@ -300,32 +334,105 @@ const renderAuthenticated = async (user, gmailError) => {
     root.querySelectorAll('[data-open-add]').forEach(button => button.addEventListener('click', event => addDialog.open(event.currentTarget)))
   }
 
-  // ---- FEATURE-002: ambiguous-candidate review. Confirm/reject act on the
-  // whole pending candidate, not a subscription (there is no subscription
-  // yet), and both remove the candidate from the pending list either way. --
-  const wireCandidateList = (root) => {
-    root.querySelector('.candidate-list')?.addEventListener('click', async (event) => {
+  // ---- FEATURE-003: Worth your attention - filter tabs/sort over the
+  // already-loaded, server-prioritized list (same split-toolbar-from-list
+  // pattern as wireSubscriptionsPage), a price-change/renewal card opening
+  // the detail dialog, and FEATURE-002's ambiguous-candidate confirm/reject
+  // inline on its own card (there is no subscription yet to "review").
+  const wireAttentionPage = (root) => {
+    const state = { filter: 'all', sort: 'priority' }
+    const apply = () => {
+      const filtered = sortAttentionItems(filterAttentionItems(attentionItems, state.filter), state.sort)
+      renderAttentionList(root, { items: filtered, candidatesById: candidatesById(), hasAnyItems: attentionItems.length > 0 })
+      root.querySelectorAll('[data-attention-filter]').forEach(tab => {
+        const active = tab.dataset.attentionFilter === state.filter
+        tab.classList.toggle('is-active', active)
+        tab.setAttribute('aria-selected', String(active))
+      })
+    }
+    apply()
+
+    root.querySelector('[data-attention-tabs]')?.addEventListener('click', (event) => {
+      const tab = event.target.closest('[data-attention-filter]')
+      if (!tab) return
+      state.filter = tab.dataset.attentionFilter
+      apply()
+    })
+    root.querySelector('[data-attention-sort]')?.addEventListener('change', (event) => { state.sort = event.currentTarget.value; apply() })
+
+    root.querySelector('[data-attention-list]')?.addEventListener('click', async (event) => {
       const confirmButton = event.target.closest('[data-confirm-candidate]')
       const rejectButton = event.target.closest('[data-reject-candidate]')
-      const button = confirmButton || rejectButton
-      if (!button) return
-      const candidateId = event.target.closest('[data-candidate-id]')?.dataset.candidateId
-      if (!candidateId) return
-      button.disabled = true
-      try {
-        if (confirmButton) { await feature001Api.confirmCandidate(candidateId); live.announce('Subscription confirmed.') }
-        else { await feature001Api.rejectCandidate(candidateId); live.announce('Marked as not a subscription.') }
-        candidates = candidates.filter(candidate => candidate.id !== candidateId)
-        const { subscriptions: rawList } = await feature001Api.listSubscriptions()
-        backendItems = (rawList || []).map(toDisplayItem)
-        refreshActions()
-        await renderRoute()
-      } catch {
-        button.disabled = false
-        live.announce("That couldn't be completed. Please try again.")
+      if (confirmButton || rejectButton) {
+        const button = confirmButton || rejectButton
+        const candidateId = event.target.closest('[data-candidate-id]')?.dataset.candidateId
+        if (!candidateId) return
+        button.disabled = true
+        try {
+          if (confirmButton) { await feature001Api.confirmCandidate(candidateId); live.announce('Subscription confirmed.') }
+          else { await feature001Api.rejectCandidate(candidateId); live.announce('Marked as not a subscription.') }
+          candidates = candidates.filter(candidate => candidate.id !== candidateId)
+          const { subscriptions: rawList } = await feature001Api.listSubscriptions()
+          backendItems = (rawList || []).map(toDisplayItem)
+          refreshOverlapActions()
+          await refreshAttentionItems()
+          await renderRoute()
+        } catch {
+          button.disabled = false
+          live.announce("That couldn't be completed. Please try again.")
+        }
+        return
       }
+      const card = event.target.closest('[data-attention-id]')
+      if (!card) return
+      const item = attentionItems.find(entry => entry.id === card.dataset.attentionId)
+      if (!item) return
+      renderAttentionDetail(attentionRoot, item)
+      attentionDialog.open(card)
+    })
+
+    // "Keep both" on a legacy overlap card - acknowledges it without
+    // changing any subscription, so it's just removed from view (see
+    // dismissedOverlapIds above; "Review subscription" needs no handler,
+    // it's a real link to the pricier subscription's detail page). Patches
+    // the DOM directly rather than re-rendering the whole page, so it
+    // doesn't reset the filter/sort state above, which the overlap section
+    // is otherwise unrelated to.
+    const overlapSection = root.querySelector('[data-attention-overlap]')
+    overlapSection?.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-dismiss-overlap]')
+      if (!button) return
+      dismissedOverlapIds.add(button.dataset.dismissOverlap)
+      refreshOverlapActions()
+      button.closest('.action-card').remove()
+      if (!overlapActions.length) overlapSection.remove()
+      else overlapSection.querySelector('.count-badge').textContent = overlapActions.length
+      const totalEl = root.querySelector('[data-attention-total]')
+      if (totalEl) totalEl.textContent = `${attentionTotal()} to review`
+      updateAttentionBadge()
+      live.announce('Keeping both.')
     })
   }
+
+  // ---- FEATURE-003: dismissing an attention item, and closing the detail
+  // dialog before "Review subscription" navigates away from it.
+  attentionRoot.querySelector('[data-attention-detail-body]').addEventListener('click', async (event) => {
+    if (event.target.closest('[data-attention-review]')) { attentionDialog.close(); return }
+    const dismissButton = event.target.closest('[data-attention-dismiss]')
+    if (!dismissButton) return
+    const itemKey = dismissButton.dataset.attentionDismissId
+    dismissButton.disabled = true
+    try {
+      await feature001Api.dismissAttentionItem(itemKey)
+      attentionItems = attentionItems.filter(item => item.id !== itemKey)
+      attentionDialog.close()
+      await renderRoute()
+      live.announce('Dismissed.')
+    } catch {
+      dismissButton.disabled = false
+      live.announce("That couldn't be completed. Please try again.")
+    }
+  })
 
   // ---- FEATURE-002: corrections ("This looks wrong") and "Not a
   // subscription" rejection, both scoped to `currentSubscriptionId`
@@ -334,20 +441,35 @@ const renderAuthenticated = async (user, gmailError) => {
   // separate PATCHes (the API is single-field, per FEATURE-002's existing
   // per-field provenance/conflict handling) - one user "Save changes" click,
   // sequential requests underneath so an untouched field is never touched.
+  // A manually-added item ("Edit subscription") reuses the same form and the
+  // same changed-field diff, but there's no backend record to PATCH - the
+  // diff is applied straight onto the local manualSubscriptions entry via
+  // MANUAL_FIELD_MAP instead.
   correctionRoot.querySelector('[data-correction-form]').addEventListener('submit', async (event) => {
     event.preventDefault()
     const errorEl = correctionRoot.querySelector('[data-correction-error]')
     errorEl.hidden = true
-    if (!currentSubscriptionId) return
     const changes = collectChangedCorrections(correctionRoot)
     if (!changes.length) { correctionDialog.close(); return }
+
+    if (currentManualId) {
+      const patch = Object.fromEntries(changes.map(change => [MANUAL_FIELD_MAP[change.field], change.value]))
+      manualSubscriptions = manualSubscriptions.map(item => item.id === currentManualId ? { ...item, ...patch } : item)
+      correctionDialog.close()
+      await renderRoute()
+      live.announce(changes.length === 1 ? 'Change saved.' : 'Changes saved.')
+      return
+    }
+
+    if (!currentSubscriptionId) return
     const submitButton = correctionRoot.querySelector('[data-correction-submit]')
     submitButton.disabled = true
     let updated = null
     try {
       for (const change of changes) updated = await feature001Api.correctSubscription(currentSubscriptionId, change.field, change.value)
       backendItems = backendItems.map(item => item.remoteId === updated.id ? toDisplayItem(updated) : item)
-      refreshActions()
+      refreshOverlapActions()
+      await refreshAttentionItems()
       correctionDialog.close()
       await renderRoute()
       live.announce(changes.length === 1 ? 'Correction saved.' : 'Corrections saved.')
@@ -355,7 +477,7 @@ const renderAuthenticated = async (user, gmailError) => {
       // Whatever succeeded before the failure is already applied server-side -
       // refresh so Subscription Detail reflects that partial progress
       // honestly instead of silently hiding it or claiming nothing saved.
-      if (updated) { backendItems = backendItems.map(item => item.remoteId === updated.id ? toDisplayItem(updated) : item); refreshActions(); await renderRoute() }
+      if (updated) { backendItems = backendItems.map(item => item.remoteId === updated.id ? toDisplayItem(updated) : item); refreshOverlapActions(); await refreshAttentionItems(); await renderRoute() }
       errorEl.hidden = false
       errorEl.textContent = error.message || "That value couldn't be saved. Please try again."
     } finally {
@@ -368,7 +490,8 @@ const renderAuthenticated = async (user, gmailError) => {
     try {
       await feature001Api.rejectSubscription(currentSubscriptionId)
       backendItems = backendItems.filter(item => item.remoteId !== currentSubscriptionId)
-      refreshActions()
+      refreshOverlapActions()
+      await refreshAttentionItems()
       rejectDialog.close()
       live.announce('No longer counted as an active subscription.')
       navigate('subscriptions')
@@ -377,6 +500,18 @@ const renderAuthenticated = async (user, gmailError) => {
     } finally {
       event.currentTarget.disabled = false
     }
+  })
+  // "Remove subscription" for a manually-added item - purely local state, no
+  // API call and nothing to roll back on failure, unlike the Gmail reject
+  // flow above.
+  removeManualRoot.querySelector('[data-confirm-remove-manual]').addEventListener('click', () => {
+    if (!currentManualId) return
+    const removedName = manualSubscriptions.find(item => item.id === currentManualId)?.name
+    manualSubscriptions = manualSubscriptions.filter(item => item.id !== currentManualId)
+    currentManualId = null
+    removeManualDialog.close()
+    live.announce(removedName ? `${removedName} removed.` : 'Subscription removed.')
+    navigate('subscriptions')
   })
 
   const signOut = async (event) => {
@@ -410,9 +545,10 @@ const renderAuthenticated = async (user, gmailError) => {
       const previousIds = new Set(allItems().map(item => item.id))
       const { subscriptions: rawList } = await feature001Api.listSubscriptions()
       backendItems = (rawList || []).map(toDisplayItem)
-      refreshActions()
+      refreshOverlapActions()
       const newIds = new Set(allItems().filter(item => !previousIds.has(item.id)).map(item => item.id))
       try { candidates = (await feature001Api.listCandidates()).candidates || [] } catch { /* the review page just keeps showing its last known state */ }
+      await refreshAttentionItems()
       await refreshGmailSource()
       await renderRoute()
       renderScanResults(result)
@@ -447,6 +583,8 @@ const renderAuthenticated = async (user, gmailError) => {
         await feature001Api.disconnectGmail()
         const { subscriptions: rawList } = await feature001Api.listSubscriptions()
         backendItems = (rawList || []).map(toDisplayItem)
+        refreshOverlapActions()
+        await refreshAttentionItems()
         await refreshGmailSource()
         await renderRoute()
         applyGmailSource()
@@ -468,7 +606,25 @@ const renderAuthenticated = async (user, gmailError) => {
     event.currentTarget.disabled = false
   })
 
+  // Deliberately last: renderRoute's switch calls into every wireXxx()
+  // function above (wireAttentionPage, wireSubscriptionsPage,
+  // wireSourcesPage, signOut, ...) depending on which route is current, so
+  // the very first render - which can legitimately land on any route via a
+  // deep link or a page refresh, not just the default overview - must not
+  // run until all of them are defined.
+  onRouteChange(renderRoute)
+  await renderRoute()
+  renderSidebarFooter()
+
   if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'))
+
+  // Registered last, after every wire*Page helper renderRoute() can call is
+  // defined - landing directly on a deep-linked hash (e.g. a hard refresh on
+  // #/subscriptions) makes this the first call to renderRoute(), and calling
+  // it any earlier would hit those consts before their declarations run.
+  onRouteChange(renderRoute)
+  await renderRoute()
+  renderSidebarFooter()
 }
 
 async function boot() {

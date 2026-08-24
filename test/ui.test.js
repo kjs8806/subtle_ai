@@ -6,15 +6,27 @@ import { currentRoute, routePath } from '../src/ui/router.js'
 import { navigationMarkup } from '../src/ui/navigation.js'
 import { overviewMarkup } from '../src/ui/overview.js'
 import { filterAndSortSubscriptions, subscriptionRow, subscriptionsPageMarkup, subscriptionTableRow } from '../src/ui/subscriptions.js'
-import { actionCard, attentionPageMarkup, candidateRow } from '../src/ui/attention.js'
+import { attentionCardMarkup, attentionDetailMarkup, attentionPageMarkup, candidateRow, countsByFilter, filterAttentionItems, overlapCardMarkup, severityBadgeMarkup, sortAttentionItems } from '../src/ui/attention.js'
 import { sourcesPageMarkup } from '../src/ui/sources.js'
 import { settingsPageMarkup } from '../src/ui/settings.js'
 import { correctionDialogMarkup, detailMarkup, fieldProvenance, rejectConfirmMarkup, renewalLabel } from '../src/ui/subscriptionDetail.js'
 import { gmailDisclosureMarkup } from '../src/ui/gmailDisclosure.js'
 import { signedOutMarkup } from '../src/ui/signedOut.js'
-import { FALLBACK_SERVICE_ICON, serviceIconFor, serviceIconMarkup } from '../src/services/serviceIcons.js'
+import { FALLBACK_SERVICE_ICON, SERVICE_ICONS, serviceIconFor, serviceIconMarkup } from '../src/services/serviceIcons.js'
 
 const candidate = { id: 'cand-1', canonicalService: 'Amazon', rawMerchant: 'AMZN Mktp', evidence: [{ amount: 9.99, currency: 'USD', cadence: 'monthly' }] }
+// FEATURE-003 attention-item fixtures (src/services/attentionItemBuilder.js's output shape).
+const needsReviewAttentionItem = { id: 'needs-review:cand-1', type: 'needs_review', subscriptionId: null, candidateId: 'cand-1', canonicalService: 'Amazon', plan: null, priority: 'low', sortRank: 3, ruleVersion: 1 }
+const priceChangeAttentionItem = {
+  id: 'price-change:sub-1:14.99:17.99:USD', type: 'price_change', subscriptionId: 'sub-1', candidateId: null,
+  canonicalService: 'Canva Pro', plan: 'Pro', priority: 'medium', sortRank: 1, ruleVersion: 1,
+  priceChange: { changeType: 'increase', currency: 'USD', cadence: 'monthly', previousPrice: 14.99, currentPrice: 17.99, perPeriodDelta: 3, percentChange: 20.01, annualImpact: 36, firstSeenAt: '2026-08-12T00:00:00.000Z', isAttentionWorthy: true },
+}
+const renewalAttentionItem = {
+  id: 'renewal:sub-2:2026-08-29', type: 'renewal', subscriptionId: 'sub-2', candidateId: null,
+  canonicalService: 'Spotify', plan: 'Premium Individual', priority: 'high', sortRank: 0, ruleVersion: 1,
+  renewal: { certainty: 'confirmed', date: '2026-08-29', timing: 'soon', daysUntil: 6 },
+}
 
 // ---- Router: a real destination per sidebar item, not anchors into one page.
 test('router maps every sidebar destination to its own path, round-trips through currentRoute, and falls back safely', () => {
@@ -72,7 +84,7 @@ test('the sidebar is real route links with distinct destinations, correct active
 // ---- Overview: orientation only - a preview, not the whole application.
 test('Overview shows previews and links onward, and never contains full management UI', () => {
   const items = demoSubscriptions.slice(0, 8)
-  const overview = overviewMarkup({ subscriptions: items, actions: [], monthlySpend: 108.95, candidates: [candidate], greeting: 'Good morning.', gmailSource: { status: 'connected', lastScanAt: null } })
+  const overview = overviewMarkup({ subscriptions: items, attentionItems: [priceChangeAttentionItem, needsReviewAttentionItem], overlapActions: [], monthlySpend: 108.95, greeting: 'Good morning.', gmailSource: { status: 'connected', lastScanAt: null } })
 
   // Required hierarchy: greeting -> summary cards -> subscriptions preview -> attention preview.
   const order = ['Good morning', 'Monthly recurring spend', 'Annual spend', 'Active subscriptions', 'Worth your attention', 'Your subscriptions']
@@ -92,7 +104,7 @@ test('Overview shows previews and links onward, and never contains full manageme
   assert.doesNotMatch(overview, /data-gmail-action|data-gmail-disconnect|data-confirm-candidate|data-reject-candidate|data-sign-out/)
   assert.match(overview, /href="#\/sources">Manage sources/)
 
-  const empty = overviewMarkup({ subscriptions: [], actions: [], monthlySpend: 0, candidates: [] })
+  const empty = overviewMarkup({ subscriptions: [], attentionItems: [], overlapActions: [], monthlySpend: 0 })
   assert.match(empty, /No subscriptions yet\. Connect Gmail or add one manually\./)
   assert.match(empty, /Nothing needs your attention right now\./)
 })
@@ -144,23 +156,66 @@ test('filterAndSortSubscriptions searches by name/plan, filters by billing caden
 // ---- Worth your attention: its own destination, not a dashboard widget -
 // and it includes ambiguous-candidate review (FEATURE-002), visually distinct
 // from a confirmed subscription.
-test('Worth your attention is a dedicated page combining real signals and ambiguous-candidate review', () => {
-  const action = { id: 'price', label: 'Price increase detected', affectedServices: ['Canva Pro'], body: '$14.99 -> $17.99/month.', saving: '+$36/year', impactLabel: 'Yearly impact' }
-  const page = attentionPageMarkup({ actions: [action], candidates: [candidate] })
+test('Worth your attention (FEATURE-003) is a dedicated page unifying price changes, renewals, and ambiguous-candidate review, prioritized and filterable', () => {
+  const items = [renewalAttentionItem, priceChangeAttentionItem, needsReviewAttentionItem]
+  const page = attentionPageMarkup({ items })
   assert.match(page, /Worth your attention/)
-  assert.match(page, /Needs your review/)
-  assert.match(page, /Items Subtle AI is unsure about won't affect your totals until you decide\./)
+  assert.match(page, /You're in control/)
+  // Filter tabs, one per attention type plus All, each carrying its own count.
+  for (const label of ['All', 'Price changes', 'Renewals', 'Needs review']) assert.match(page, new RegExp(label))
+  assert.match(page, /data-attention-sort/)
+
+  assert.deepEqual(countsByFilter(items), { all: 3, price_change: 1, renewal: 1, needs_review: 1 })
+  assert.deepEqual(filterAttentionItems(items, 'renewal').map(item => item.id), [renewalAttentionItem.id])
+  assert.deepEqual(filterAttentionItems(items, 'all'), items)
+  // Server-provided priority order (renewal soon first) by default; name sort is the only client-side alternative.
+  assert.deepEqual(sortAttentionItems(items, 'priority').map(item => item.id), [renewalAttentionItem.id, priceChangeAttentionItem.id, needsReviewAttentionItem.id])
+  assert.deepEqual(sortAttentionItems(items, 'name').map(item => item.canonicalService), ['Amazon', 'Canva Pro', 'Spotify'])
+
+  // Each card carries a severity badge - a visual aid, not a scoring engine
+  // (Product Owner note, GitHub issue #22) - and opens the detail dialog.
+  const priceCard = attentionCardMarkup(priceChangeAttentionItem)
+  assert.match(priceCard, /data-attention-id="price-change:sub-1:14\.99:17\.99:USD"/)
+  assert.match(priceCard, /severity-medium/)
+  assert.match(priceCard, /USD 14\.99 → USD 17\.99\/mo/)
+  const renewalCard = attentionCardMarkup(renewalAttentionItem)
+  assert.match(renewalCard, /severity-high/)
+  assert.match(renewalCard, /Next renewal/)
 
   const row = candidateRow(candidate)
   assert.match(row, /data-confirm-candidate/)
   assert.match(row, /data-reject-candidate/)
   assert.match(row, /Uncertain/)
   assert.doesNotMatch(row, /subscription-row/, 'a candidate never renders as a confirmed subscription row')
-  assert.match(actionCard(action), /Review subscription/)
 
-  const empty = attentionPageMarkup({ actions: [], candidates: [] })
-  assert.match(empty, /Nothing needs your attention right now\./)
-  assert.match(empty, /Nothing to review right now\./)
+  // Legacy overlap-detection cards (unrelated to FEATURE-003) still render,
+  // with a real "Review subscription" link to the affected subscription and
+  // a "Keep both" button that dismisses the card (both were previously dead
+  // controls with no handler at all).
+  const overlapAction = { id: 'overlap-1', subscriptionId: 'sub-dropbox', label: 'Potential overlap', affectedServices: ['Dropbox', 'Google One'], body: 'Both provide cloud storage.', saving: '$120.00/year', impactLabel: 'Potential savings', secondary: 'Keep both' }
+  const overlapCard = overlapCardMarkup(overlapAction)
+  assert.match(overlapCard, new RegExp(`<a class="primary-button" href="#${routePath('subscription-detail', { id: 'sub-dropbox' }).replace(/\//g, '\\/')}">Review subscription</a>`))
+  assert.match(overlapCard, /data-dismiss-overlap="overlap-1"/)
+  assert.match(attentionPageMarkup({ items: [], overlapActions: [overlapAction] }), /Other suggestions/)
+
+  const empty = attentionPageMarkup({ items: [], overlapActions: [] })
+  assert.match(empty, /You're all caught up/)
+})
+
+test('attentionDetailMarkup shows an impact breakdown for a price change and only "Review subscription"/"Dismiss this item" as actions - never the unauthorized Compare alternatives or Cancel subscription', () => {
+  const body = attentionDetailMarkup(priceChangeAttentionItem)
+  assert.match(body, /USD 14\.99/)
+  assert.match(body, /USD 17\.99/)
+  assert.match(body, /\+USD 36\.00\/yr/)
+  assert.match(body, /Review subscription/)
+  assert.match(body, /Dismiss this item/)
+  assert.doesNotMatch(body, /Compare alternatives/)
+  assert.doesNotMatch(body, /Cancel subscription/)
+  assert.match(body, new RegExp(`href="#${routePath('subscription-detail', { id: priceChangeAttentionItem.subscriptionId }).replace(/\//g, '\\/')}"`))
+
+  const renewalBody = attentionDetailMarkup(renewalAttentionItem)
+  assert.match(renewalBody, /Confirmed/)
+  assert.match(severityBadgeMarkup('high'), /High/)
 })
 
 // ---- Sources: the one place Gmail is actually managed.
@@ -267,23 +322,65 @@ test('Subscription Detail follows the approved hierarchy and exposes FEATURE-002
 })
 
 // ---- Service icons: recognizable identity per canonical service, never a
-// wrong or invented logo for an unmapped merchant.
-test('known canonical services get a distinct icon; unmapped merchants get the neutral fallback, never a guess', () => {
+// wrong or invented logo for an unmapped merchant, and never a generic
+// document icon when a real (even unmapped) name is available.
+test('known canonical services get a distinct icon; unmapped-but-named merchants get a first-letter tile; only a missing name gets the neutral fallback', () => {
   assert.notEqual(serviceIconFor('Netflix'), FALLBACK_SERVICE_ICON)
   assert.notEqual(serviceIconFor('Spotify'), FALLBACK_SERVICE_ICON)
   assert.notEqual(serviceIconFor('Dropbox'), FALLBACK_SERVICE_ICON)
   assert.notEqual(serviceIconFor('Canva'), FALLBACK_SERVICE_ICON)
   assert.notEqual(serviceIconFor('NordVPN'), FALLBACK_SERVICE_ICON)
-  assert.equal(serviceIconFor('Some Unmapped Merchant LLC'), FALLBACK_SERVICE_ICON)
+
+  // Unmapped but named: a letter tile, not the neutral fallback and not a
+  // guessed logo for a service Subtle AI doesn't actually recognize.
+  assert.notEqual(serviceIconFor('Some Unmapped Merchant LLC'), FALLBACK_SERVICE_ICON)
+  assert.notEqual(serviceIconFor('Some Unmapped Merchant LLC'), serviceIconFor('Netflix'))
+  assert.match(serviceIconFor('Some Unmapped Merchant LLC').svg, />S</)
+  assert.match(serviceIconFor('Crave').svg, />C</)
+  assert.match(serviceIconFor('Patreon').svg, />P</)
+  assert.match(serviceIconFor('MyFitnessPal').svg, />M</)
+  // Leading symbols/whitespace are skipped to find the first *meaningful*
+  // character.
+  assert.match(serviceIconFor('  #1 Fitness Club').svg, />1</)
+
+  // Every unmapped-but-named service gets the same letter-tile styling
+  // (background/foreground), matching the established Subtle AI identity
+  // tile look rather than a per-service invented palette.
+  assert.deepEqual(
+    { bg: serviceIconFor('Crave').bg, fg: serviceIconFor('Crave').fg },
+    { bg: serviceIconFor('Patreon').bg, fg: serviceIconFor('Patreon').fg },
+  )
+
+  // Only a genuinely missing/invalid name falls all the way through to the
+  // neutral generic icon.
   assert.equal(serviceIconFor(''), FALLBACK_SERVICE_ICON)
   assert.equal(serviceIconFor(undefined), FALLBACK_SERVICE_ICON)
+  assert.equal(serviceIconFor('   '), FALLBACK_SERVICE_ICON)
 
   const netflix = serviceIconMarkup('Netflix')
   assert.match(netflix, /Netflix logo/)
+  // A letter tile never claims to be a "logo" - it's a stand-in for a name
+  // Subtle AI doesn't recognize, not a real brand mark.
   const unknown = serviceIconMarkup('Totally Unknown Co')
-  assert.match(unknown, /aria-label="Totally Unknown Co logo"/)
+  assert.match(unknown, /aria-label="Totally Unknown Co"/)
+  assert.doesNotMatch(unknown, /logo/)
   // The service name always stays visible as real text elsewhere (the row
   // markup, not the icon) - the icon itself never substitutes for the name.
+})
+
+// ---- Service icons: a FEATURE-002 correction that changes canonicalService
+// must change the displayed icon on the very next render, in both
+// directions - nothing here caches or pins the icon to the old name.
+test('serviceIconFor tracks canonicalService live, so a FEATURE-002 correction changes the icon tier immediately', () => {
+  // Unknown -> a name FEATURE-002 maps to a real logo: tile becomes the logo.
+  assert.equal(serviceIconFor('Some New Service Nobody Recognizes') === SERVICE_ICONS.Netflix, false)
+  assert.equal(serviceIconFor('Netflix'), SERVICE_ICONS.Netflix)
+  // Known -> corrected to a name with no mapping: logo becomes a letter tile,
+  // never stays pinned to the old logo and never falls to the generic icon.
+  const corrected = serviceIconFor('Some Renamed Local Gym')
+  assert.notEqual(corrected, SERVICE_ICONS.Netflix)
+  assert.notEqual(corrected, FALLBACK_SERVICE_ICON)
+  assert.match(corrected.svg, />S</)
 })
 
 // ---- Branding: "Subtle AI" everywhere, never bare "Subtle".
@@ -333,15 +430,15 @@ test('the landing page offers only the real Google sign-in control and no fabric
   assert.match(page, /Trusted by people who want clarity and control/)
 
   // The product-preview panel is illustrative, not live data, and is marked
-  // aria-hidden - the only real interactive elements on the whole page are
-  // the Google button and the one "Learn how it works" anchor (the preview
-  // itself is built entirely from div/span/strong/em/small, never <a> or
-  // <button>, so nothing in it reads as a control that happens to do nothing).
+  // aria-hidden - the only real interactive element on the whole page is the
+  // Google button (the preview itself is built entirely from
+  // div/span/strong/em/small, never <a> or <button>, so nothing in it reads
+  // as a control that happens to do nothing).
   assert.match(page, /class="landing-preview" aria-hidden="true"/)
   assert.equal((page.match(/<button/g) || []).length, 1)
-  assert.equal((page.match(/<a /g) || []).length, 1)
+  assert.equal((page.match(/<a /g) || []).length, 0)
 
-  // "Learn more" is a real in-page anchor to the feature section, not a link
-  // to a marketing page that doesn't exist.
+  // The feature section keeps its id as the target of the header's
+  // "Learn more" anchor (added in main.js, outside signedOutMarkup).
   assert.match(page, /id="learn-more"/)
 })

@@ -21,7 +21,8 @@ const successMessages = [
   { id: 'mock-message-youtube-1', subject: 'YouTube Premium receipt', sender: 'payments@youtube.com', receivedAt: '2026-08-19T09:00:00.000Z', body: 'Your monthly payment of USD $13.99 renews Oct 02, 2026.' },
   // Two receipts for the same ChatGPT Plus subscription, at different prices
   // and dates, so it accumulates a two-point price history and triggers
-  // detectPriceChange's "price increase" recommendation on scan.
+  // priceChangeService's attention-worthy price-increase detection
+  // (FEATURE-003) on scan.
   { id: 'mock-message-chatgpt-0', subject: 'ChatGPT Plus receipt', sender: 'billing@openai.com', receivedAt: '2026-07-15T09:00:00.000Z', body: 'Your monthly payment of USD $16.00 renews Aug 15, 2026.' },
   { id: 'mock-message-chatgpt-1', subject: 'ChatGPT Plus receipt', sender: 'billing@openai.com', receivedAt: '2026-08-20T09:00:00.000Z', body: 'Your monthly payment of USD $20.00 renews Sep 15, 2026.' },
   // Weak-signal receipts: a known-service template match (+3) alone, with no

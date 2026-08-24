@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
+import { buildAttentionItems, RULE_VERSION } from '../../src/services/attentionItemBuilder.js'
+import { detectPriceChangeEvents } from '../../src/services/priceChangeService.js'
 
 // node-postgres returns NUMERIC columns (current_price, amount, confidence) as
 // strings by default, to avoid float-precision loss on arbitrary-precision
@@ -17,6 +19,12 @@ const rowConnection = (row) => row && ({ id: row.id, userId: row.user_id, provid
 // doubles as the safe set of identifiers this file ever interpolates
 // directly into an UPDATE ... SET <field> = $1 statement.
 const CORRECTION_FIELDS = new Set(['canonical_service', 'plan', 'current_price', 'currency', 'billing_cycle', 'next_renewal'])
+// Second-round Tech Lead remediation (GitHub PR #37, BLOCKER 2): every field
+// that price-change detection actually reads (priceChangeService.js's
+// detectPriceChangeEvents takes currentPrice/currency/cadence) must
+// invalidate/recompute derived price intelligence when corrected - not just
+// current_price. See applyCorrection below.
+const PRICE_INTELLIGENCE_FIELDS = new Set(['current_price', 'currency', 'billing_cycle'])
 // Maps a parseReceipt fieldObservations key (camelCase, evidence-facing) to
 // the correction field it corresponds to (snake_case, subscriptions-column-facing)
 // - used only to detect when freshly scanned evidence conflicts with an
@@ -27,7 +35,7 @@ const hydrateSubscription = async (pool, row) => {
   if (!row) return null
   const [evidence, priceHistory, billingHistory, fieldObservations, corrections, conflicts] = await Promise.all([
     pool.query('SELECT e.id, e.canonical_service AS "canonicalService", e.raw_merchant AS "rawMerchant", e.amount, e.currency, e.cadence, e.next_renewal AS "nextRenewal", e.confidence, e.provenance, e.excerpt, sm.provider_message_id AS "sourceId", sm.received_at AS "receivedAt" FROM evidence e JOIN subscription_evidence se ON se.evidence_id = e.id JOIN source_messages sm ON sm.id = e.source_message_id WHERE se.subscription_id = $1 ORDER BY e.created_at', [row.id]),
-    pool.query('SELECT amount, currency, observed_at AS "observedAt" FROM price_observations WHERE subscription_id = $1 ORDER BY observed_at', [row.id]),
+    pool.query('SELECT id, amount, currency, observed_at AS "observedAt" FROM price_observations WHERE subscription_id = $1 ORDER BY observed_at, sequence_id', [row.id]),
     pool.query('SELECT amount, currency, billed_at AS "billedAt", evidence_id AS "evidenceId" FROM billing_events WHERE subscription_id = $1 ORDER BY billed_at', [row.id]),
     pool.query('SELECT field, value, provenance, confidence, evidence_id AS "evidenceId" FROM field_observations WHERE subscription_id = $1 ORDER BY id', [row.id]),
     pool.query('SELECT id, field, value, created_at AS "createdAt" FROM subscription_corrections WHERE subscription_id = $1 AND superseded_at IS NULL ORDER BY created_at', [row.id]),
@@ -37,6 +45,60 @@ const hydrateSubscription = async (pool, row) => {
 }
 
 const evidenceRowMapper = (row) => ({ id: row.id, canonicalService: row.canonical_service, rawMerchant: row.raw_merchant, amount: row.amount, currency: row.currency, cadence: row.cadence, nextRenewal: row.next_renewal, confidence: row.confidence, provenance: row.provenance, excerpt: row.excerpt, createdAt: row.created_at })
+
+// Tech Lead remediation (GitHub PR #37, "Recommended architectural
+// cleanup"; second-round remediation, BLOCKER 2): price-change detection/
+// persistence happens here, at the point evidence or a correction actually
+// changes an input to derived price intelligence - a new Gmail receipt
+// (persistParsedEvidence) or a current_price/currency/billing_cycle
+// correction (applyCorrection) - never as a side effect of
+// GET /api/v1/attention, which only reads what this already persisted.
+// Runs inside the caller's transaction (`client`) so the new observation and
+// any event(s) it produces commit atomically together.
+//
+// Recomputes the *entire* transition history from price_observations every
+// time rather than trying to detect "just the new one" - detectPriceChangeEvents
+// is a pure, cheap function over a small list, and re-deriving the full set
+// is simpler and self-healing (a transition that was somehow never
+// persisted, or one whose derived numbers went stale, gets caught on the
+// next call) than tracking incremental state.
+//
+// ON CONFLICT (event_key) DO UPDATE, not DO NOTHING: event_key is derived
+// only from the observation pair (migrations/010_feature_003_remediation.sql),
+// never from cadence/currency/computed values, so a cadence or currency
+// correction re-detects the *same* event_key for an already-persisted
+// transition but with different derived numbers (a monthly->yearly
+// correction changes that event's annual_impact/is_attention_worthy even
+// though the underlying prices/observations are unchanged). DO NOTHING would
+// silently leave the stale pre-correction numbers in place. previous_price/
+// current_price and the observation FKs are never in the UPDATE SET - they
+// are immutable facts about the transition itself, and detected_at is left
+// alone so it keeps recording when the occurrence was first detected, not
+// when it was last recomputed (detected_at is audit metadata only - see
+// listAttentionItems below for the actual "current" ordering).
+const recordPriceChangeEvents = async (client, userId, subscriptionId) => {
+  const subscription = await client.query('SELECT currency, billing_cycle FROM subscriptions WHERE id = $1', [subscriptionId])
+  const { currency, billing_cycle: cadence } = subscription.rows[0] || {}
+  const priceHistory = await client.query('SELECT id, amount, currency, observed_at AS "observedAt" FROM price_observations WHERE subscription_id = $1 ORDER BY observed_at, sequence_id', [subscriptionId])
+  const events = detectPriceChangeEvents({ currency, cadence, priceHistory: priceHistory.rows })
+  for (const event of events) {
+    const eventKey = `${event.previousObservation.id}:${event.currentObservation.id}`
+    await client.query(
+      `INSERT INTO price_change_events (user_id, subscription_id, event_key, previous_price_observation_id, current_price_observation_id, change_type, currency, cadence, previous_price, current_price, per_period_delta, percent_change, annual_impact, is_attention_worthy, first_seen_at, rule_version)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+       ON CONFLICT (event_key) DO UPDATE SET
+         change_type = EXCLUDED.change_type,
+         currency = EXCLUDED.currency,
+         cadence = EXCLUDED.cadence,
+         per_period_delta = EXCLUDED.per_period_delta,
+         percent_change = EXCLUDED.percent_change,
+         annual_impact = EXCLUDED.annual_impact,
+         is_attention_worthy = EXCLUDED.is_attention_worthy,
+         rule_version = EXCLUDED.rule_version`,
+      [userId, subscriptionId, eventKey, event.previousObservation.id, event.currentObservation.id, event.changeType, event.currency, event.cadence, event.previousPrice, event.currentPrice, event.perPeriodDelta, event.percentChange, event.annualImpact, event.isAttentionWorthy, event.firstSeenAt, RULE_VERSION],
+    )
+  }
+}
 
 export const createPostgresRepository = ({ pool }) => {
   if (!pool) throw new Error('PostgreSQL pool is required')
@@ -113,6 +175,7 @@ export const createPostgresRepository = ({ pool }) => {
         await client.query('INSERT INTO billing_events (subscription_id, evidence_id, amount, currency, billed_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (subscription_id, evidence_id) DO NOTHING', [subscriptionId, evidence.rows[0].id, parsed.amount, parsed.currency, parsed.receivedAt])
         await client.query('INSERT INTO price_observations (subscription_id, evidence_id, amount, currency, observed_at) VALUES ($1, $2, $3, $4, $5)', [subscriptionId, evidence.rows[0].id, parsed.amount, parsed.currency, parsed.receivedAt])
         for (const [field, observation] of Object.entries(parsed.fieldObservations || {})) await client.query('INSERT INTO field_observations (subscription_id, field, value, provenance, confidence, evidence_id) VALUES ($1, $2, $3, $4, $5, $6)', [subscriptionId, field, JSON.stringify(observation.value ?? null), observation.provenance, parsed.confidence.score, evidence.rows[0].id])
+        await recordPriceChangeEvents(client, userId, subscriptionId)
         await client.query('COMMIT')
         return { created: true, evidence: evidence.rows[0], subscription: await this.getSubscription(userId, subscriptionId) }
       } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
@@ -163,7 +226,7 @@ export const createPostgresRepository = ({ pool }) => {
       const client = await pool.connect()
       try {
         await client.query('BEGIN')
-        const owned = await client.query('SELECT id FROM subscriptions WHERE user_id = $1 AND id = $2 FOR UPDATE', [userId, subscriptionId])
+        const owned = await client.query('SELECT id, currency FROM subscriptions WHERE user_id = $1 AND id = $2 FOR UPDATE', [userId, subscriptionId])
         if (!owned.rows[0]) { await client.query('ROLLBACK'); return null }
         await client.query('UPDATE subscription_corrections SET superseded_at = now() WHERE subscription_id = $1 AND field = $2 AND superseded_at IS NULL', [subscriptionId, field])
         await client.query('INSERT INTO subscription_corrections (subscription_id, user_id, field, value) VALUES ($1, $2, $3, $4)', [subscriptionId, userId, field, JSON.stringify(value)])
@@ -171,6 +234,27 @@ export const createPostgresRepository = ({ pool }) => {
         // unvalidated caller input, so interpolating it as a column name here
         // is safe.
         await client.query(`UPDATE subscriptions SET ${field} = $1 WHERE id = $2`, [value, subscriptionId])
+        // A price correction has no receipt behind it, but it still needs to
+        // participate in the same observation-pair identity model as every
+        // other price change (evidence_id stays NULL - see
+        // migrations/010_feature_003_remediation.sql) rather than needing a
+        // second, correction-specific identity scheme.
+        if (field === 'current_price') {
+          await client.query('INSERT INTO price_observations (subscription_id, evidence_id, amount, currency, observed_at) VALUES ($1, NULL, $2, $3, now())', [subscriptionId, value, owned.rows[0].currency])
+        }
+        // Second-round Tech Lead remediation (BLOCKER 2): currency and
+        // billing_cycle are also inputs to derived price intelligence
+        // (annualization, same-currency comparison) - correcting either one
+        // must invalidate/recompute stale derived numbers, not just a price
+        // correction. Neither needs a new price_observations row (no new
+        // price fact was observed, only how to interpret the existing ones
+        // changed) - recordPriceChangeEvents re-derives every event from the
+        // unchanged observation history under the corrected currency/cadence
+        // and self-heals any row whose numbers are now stale (see its own
+        // comment above on ON CONFLICT ... DO UPDATE).
+        if (PRICE_INTELLIGENCE_FIELDS.has(field)) {
+          await recordPriceChangeEvents(client, userId, subscriptionId)
+        }
         await client.query('COMMIT')
         return { subscription: await this.getSubscription(userId, subscriptionId) }
       } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
@@ -191,6 +275,19 @@ export const createPostgresRepository = ({ pool }) => {
         await client.query('INSERT INTO subscription_corrections (subscription_id, user_id, field, value) VALUES ($1, $2, $3, $4)', [subscriptionId, userId, field, JSON.stringify(conflictingValue)])
         await client.query(`UPDATE subscriptions SET ${field} = $1 WHERE id = $2`, [conflictingValue, subscriptionId])
         await client.query('UPDATE correction_conflicts SET acknowledged_at = now() WHERE id = $1', [conflictId])
+        // Same reasoning as applyCorrection above (BLOCKER 2): accepting a
+        // conflict is itself a correction (it supersedes the prior one with
+        // the conflicting value, via the same subscription_corrections
+        // trail) and can change currency/billing_cycle/current_price just
+        // like a direct correction can - no new price_observations row is
+        // needed here specifically because the conflicting value's own
+        // observation was already inserted when the evidence that raised
+        // this conflict was first persisted (persistParsedEvidence always
+        // inserts a price_observations row, whether or not it wins the
+        // subscriptions column update).
+        if (PRICE_INTELLIGENCE_FIELDS.has(field)) {
+          await recordPriceChangeEvents(client, userId, subscriptionId)
+        }
         await client.query('COMMIT')
         return { subscription: await this.getSubscription(userId, subscriptionId) }
       } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
@@ -272,6 +369,75 @@ export const createPostgresRepository = ({ pool }) => {
       const existing = await pool.query('SELECT status FROM subscription_candidates WHERE user_id = $1 AND id = $2', [userId, candidateId])
       if (!existing.rows[0]) return null
       return { error: 'invalid_state' }
+    },
+
+    // FEATURE-003: price-change/renewal intelligence, mixed with FEATURE-002's
+    // existing ambiguous-candidate review into one Worth-your-attention list.
+    // Every attention-worthy price change detected on this call is durably
+    // upserted into price_change_events first (Tech Lead guidance: derived
+    // intelligence is persisted, not recalculated ad hoc) - the natural key
+    // (subscription_id, previous_price, current_price, currency) makes this
+    // idempotent, so a rescan re-detecting the identical transition is a
+    // no-op rather than a duplicate row. Renewal items have no discrete
+    // "event" of their own (see migrations/009's comment), so nothing is
+    // persisted for those beyond an eventual dismissal.
+    // Tech Lead remediation (GitHub PR #37, "Recommended architectural
+    // cleanup"): a pure read - detection and persistence already happened
+    // where the underlying evidence/correction was written (see
+    // recordPriceChangeEvents, called from persistParsedEvidence and
+    // applyCorrection above). This endpoint no longer has any INSERT/upsert
+    // side effect.
+    //
+    // Second-round remediation, BLOCKER 1: "the current occurrence" per
+    // subscription is ordered by the *current* observation's real-world
+    // observed_at (falling back to its insertion-order sequence_id - never
+    // its random-uuid id - to break an exact tie; see migrations/
+    // 011_feature_003_observation_ordering.sql), not by detected_at -
+    // detected_at is when this row was (last) written, which
+    // is audit metadata only. Postgres's now()/CURRENT_TIMESTAMP is
+    // transaction-stable, so recordPriceChangeEvents inserting several
+    // historical events in one transaction (e.g. a bulk-seeded price history
+    // recomputed in one pass) can give them identical detected_at values -
+    // ordering by that would let the DB pick an arbitrary one instead of the
+    // chronologically latest transition.
+    //
+    // BLOCKER 2: an event is only eligible as "current" when its currency
+    // and cadence still match the *live* subscription's - a currency or
+    // billing_cycle correction is a subscription-level fact, and
+    // recordPriceChangeEvents already recomputes/self-heals every reachable
+    // event under the corrected value on write, but a currency correction
+    // can leave *zero* same-currency history to recompute against (old
+    // receipts are never relabeled - see recordPriceChangeEvents/
+    // applyCorrection above), in which case the old, now-foreign-currency
+    // event row is simply never revisited by that recompute. This filter is
+    // the read-time backstop that guarantees a live attention item can never
+    // contradict the subscription's current corrected currency/cadence,
+    // regardless of what write-time recomputation did or didn't reach.
+    async listAttentionItems(userId) {
+      const [subscriptions, candidates, latestEvents, dismissed] = await Promise.all([
+        this.listSubscriptions(userId),
+        this.listCandidates(userId),
+        pool.query(
+          `SELECT DISTINCT ON (pce.subscription_id)
+             pce.subscription_id AS "subscriptionId", pce.event_key AS "eventKey", pce.change_type AS "changeType",
+             pce.currency, pce.cadence, pce.previous_price AS "previousPrice", pce.current_price AS "currentPrice",
+             pce.per_period_delta AS "perPeriodDelta", pce.percent_change AS "percentChange", pce.annual_impact AS "annualImpact",
+             pce.is_attention_worthy AS "isAttentionWorthy", pce.first_seen_at AS "firstSeenAt"
+           FROM price_change_events pce
+           JOIN price_observations cur ON cur.id = pce.current_price_observation_id
+           JOIN subscriptions s ON s.id = pce.subscription_id
+           WHERE pce.user_id = $1 AND pce.currency = s.currency AND pce.cadence = s.billing_cycle
+           ORDER BY pce.subscription_id, cur.observed_at DESC, cur.sequence_id DESC`,
+          [userId],
+        ),
+        pool.query('SELECT item_key FROM attention_item_dismissals WHERE user_id = $1', [userId]),
+      ])
+      const dismissedKeys = new Set(dismissed.rows.map((row) => row.item_key))
+      return buildAttentionItems({ subscriptions, priceChangeEvents: latestEvents.rows, candidates, isDismissed: (id) => dismissedKeys.has(id) })
+    },
+    async dismissAttentionItem(userId, itemKey) {
+      await pool.query('INSERT INTO attention_item_dismissals (user_id, item_key) VALUES ($1, $2) ON CONFLICT (user_id, item_key) DO NOTHING', [userId, itemKey])
+      return { itemKey, dismissed: true }
     },
   }
 }

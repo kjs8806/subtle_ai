@@ -268,6 +268,15 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
     if (result.error === 'invalid_state') return reply.code(409).send({ error: { code: 'invalid_candidate_state', message: 'Candidate is already confirmed' } })
     return { status: 'rejected' }
   })
+
+  // FEATURE-003: price-change/renewal intelligence, unified with FEATURE-002's
+  // ambiguous-candidate review into one Worth-your-attention list. itemKey
+  // (e.g. "price-change:<subId>:<prev>:<curr>:<currency>" or
+  // "renewal:<subId>:<date>") is opaque to the API - it's whatever
+  // buildAttentionItems() assigned as that item's id, round-tripped through
+  // the client for dismissal, URL-encoded since it contains colons.
+  app.get('/api/v1/attention', { preHandler: requireUser }, async (request) => ({ items: await repository.listAttentionItems(request.user.id) }))
+  app.post('/api/v1/attention/:itemKey/dismiss', { preHandler: requireUser }, async (request) => repository.dismissAttentionItem(request.user.id, decodeURIComponent(request.params.itemKey)))
   return app
 }
 

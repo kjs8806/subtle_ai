@@ -308,3 +308,36 @@ test('oauth state cannot be reused', async () => {
   assert.equal(second.statusCode, 302)
   assert.equal(errorFromRedirect(second, 'auth_error'), 'invalid_oauth_state')
 })
+
+test('GET /api/v1/attention requires a session, then surfaces a durable price change and a dismissible renewal', async () => {
+  const app = buildApp()
+  const unauthenticated = await app.inject({ method: 'GET', url: '/api/v1/attention' })
+  assert.equal(unauthenticated.statusCode, 401)
+
+  const session = await authorize(app)
+  const headers = { cookie: `subtle_session=${session}` }
+  await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
+  await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
+
+  // The mock mailbox (server/gmail/fakeProvider.js) has a ChatGPT Plus price
+  // rise from $16.00 to $20.00 (25%, well past the >=5%-or->=$24/yr
+  // threshold) and several explicit renewal dates within the 30-day window.
+  const first = await app.inject({ method: 'GET', url: '/api/v1/attention', headers })
+  assert.equal(first.statusCode, 200)
+  const items = first.json().items
+  const priceItem = items.find((item) => item.type === 'price_change')
+  assert.ok(priceItem, 'the ChatGPT Plus price increase surfaces as an attention item')
+  assert.equal(priceItem.priceChange.previousPrice, 16)
+  assert.equal(priceItem.priceChange.currentPrice, 20)
+  assert.ok(items.some((item) => item.type === 'renewal'), 'at least one renewal within 30 days surfaces')
+
+  const dismiss = await app.inject({
+    method: 'POST',
+    url: `/api/v1/attention/${encodeURIComponent(priceItem.id)}/dismiss`,
+    headers: { ...headers, origin: 'http://127.0.0.1:5173' },
+  })
+  assert.equal(dismiss.statusCode, 200)
+
+  const second = await app.inject({ method: 'GET', url: '/api/v1/attention', headers })
+  assert.ok(!second.json().items.some((item) => item.id === priceItem.id), 'a dismissed item no longer appears')
+})

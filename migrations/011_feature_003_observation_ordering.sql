@@ -1,0 +1,24 @@
+-- FEATURE-003 remediation (GitHub PR #37, second-round review): the same
+-- principle the Tech Lead flagged for price_change_events.detected_at
+-- ("do not use a non-strictly-ordered value as the primary business-
+-- ordering field") also applies one level down, to price_observations
+-- itself - discovered while adding test coverage for the second-round
+-- fixes, not explicitly named in the review.
+--
+-- price_observations was being ordered by (observed_at, id) wherever
+-- chronological order matters (hydrateSubscription's priceHistory query,
+-- recordPriceChangeEvents' transition walk, listAttentionItems' latest-
+-- event selection). observed_at is real-world receipt time and can
+-- legitimately tie (e.g. a receipt whose timestamp is date-only, or two
+-- receipts processed in the same batch) - and `id` (gen_random_uuid()) has
+-- no relationship to insertion order at all, so a tie fell back to
+-- effectively random ordering. Empirically, two observations at an
+-- identical observed_at could sort either way depending on their random
+-- uuid, which can flip an increase into a decrease (previous/current
+-- swapped) - the exact class of bug the detected_at fix was meant to rule
+-- out, just from a different root cause.
+--
+-- sequence_id is a monotonically increasing insertion-order tie-breaker,
+-- independent of both the (possibly-tied, possibly-corrected) observed_at
+-- value and the (unordered) primary key.
+ALTER TABLE price_observations ADD COLUMN sequence_id bigserial;

@@ -1,6 +1,9 @@
+import { CORRECTION_FIELD_FOR, fieldProvenance } from '../services/fieldProvenance.js'
 import { serviceIconFor, serviceIconMarkup } from '../services/serviceIcons.js'
 import { SUBSCRIPTION_TEMPLATES } from '../services/subscriptionTemplates.js'
 import { NAV_ICONS } from './navigation.js'
+
+export { CORRECTION_FIELD_FOR, fieldProvenance }
 
 const money = value => typeof value === 'number' ? `$${value.toFixed(2)}` : 'Price not provided'
 // Currency is shown explicitly whenever it's known (FEATURE-001/002 supports
@@ -15,12 +18,6 @@ const ICON_TRASH = `<svg width="26" height="26" viewBox="0 0 24 24" fill="none" 
 const ICON_RECEIPT = svg('<path d="M9 3h6a1 1 0 0 1 1 1v1h1a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h1V4a1 1 0 0 1 1-1Z"/><path d="M9 12h6M9 16h6"/>')
 const ICON_PERSON = svg('<circle cx="12" cy="8" r="3.5"/><path d="M5 20c1.2-3.5 4-5.5 7-5.5s5.8 2 7 5.5"/>')
 
-// FEATURE-002: maps the UI-facing field keys already used elsewhere in this
-// file to the snake_case field name subscription_corrections/
-// correction_conflicts record server-side (see
-// migrations/008_feature_002_corrections.sql and server/app.js's
-// CORRECTION_FIELD_MAP).
-export const CORRECTION_FIELD_FOR = { canonicalService: 'canonical_service', plan: 'plan', amount: 'current_price', currency: 'currency', cadence: 'billing_cycle', nextRenewal: 'next_renewal' }
 const FRIENDLY_FIELD_LABEL = { canonical_service: 'service', plan: 'plan', current_price: 'price', currency: 'currency', billing_cycle: 'billing cadence', next_renewal: 'next renewal' }
 const KNOWN_SERVICES = [...new Set(SUBSCRIPTION_TEMPLATES.map(({ canonicalService }) => canonicalService))].sort((a, b) => a.localeCompare(b))
 
@@ -29,6 +26,11 @@ const KNOWN_SERVICES = [...new Set(SUBSCRIPTION_TEMPLATES.map(({ canonicalServic
 // "Not a subscription" open their own focused dialogs (correctionDialogMarkup /
 // rejectConfirmMarkup) rather than expanding inline, since both are
 // consequential, form-shaped actions that benefit from a focused surface.
+// A manually-added item (no remoteId) gets the same underlying capability -
+// edit fields, remove the item - through the same two dialogs, just under
+// source-appropriate language ("Edit subscription" / "Remove subscription"
+// instead of "This looks wrong" / "Not a subscription"): see the
+// data-gmail-actions/data-manual-actions toggle in renderDetail.
 export const detailMarkup = () => `<div class="main-content wrap" id="page-subscription-detail"><a class="back-link" href="#/subscriptions">${NAV_ICONS.back}Back to Subscriptions</a>
 
 <header class="detail-identity panel-card"><div class="detail-identity-top">${serviceIconMarkup('', { size: 'lg' })}<div class="detail-identity-who"><div class="id-top"><h1 id="detail-title"></h1><span class="status-pill" data-detail-status>Active</span></div><span data-detail-plan></span></div></div><p class="detail-price"><strong data-detail-cost></strong><span class="provenance-pill" data-detail-provenance hidden>${ICON_CHECK}Confirmed by you</span></p><div class="meta-rows"><div><span>Billing cadence</span><strong data-detail-cadence></strong></div><div><span data-detail-next-label>Next renewal</span><strong data-detail-next></strong></div><div><span>Annualized cost</span><strong data-detail-annual></strong></div><div><span>Status</span><strong data-detail-status-meta></strong></div></div></header>
@@ -39,7 +41,7 @@ export const detailMarkup = () => `<div class="main-content wrap" id="page-subsc
 
 <section class="panel-card"><details><summary>Price history</summary><div data-price-history></div></details><details><summary>Billing history</summary><div data-billing-history></div></details></section>
 
-<section class="panel-card detail-corrections" data-detail-corrections aria-label="Correct or remove this subscription"><p class="conflict-notice" data-conflict-notice hidden></p><div class="detail-corrections-actions"><button class="secondary-button" type="button" data-toggle-correction>This looks wrong</button><button class="quiet-button danger-text" data-open-reject type="button">Not a subscription</button></div></section>
+<section class="panel-card detail-corrections" data-detail-corrections aria-label="Correct or remove this subscription"><p class="conflict-notice" data-conflict-notice hidden></p><div class="detail-corrections-actions" data-gmail-actions><button class="secondary-button" type="button" data-toggle-correction>This looks wrong</button><button class="quiet-button danger-text" data-open-reject type="button">Not a subscription</button></div><div class="detail-corrections-actions" data-manual-actions hidden><button class="secondary-button" type="button" data-edit-manual>Edit subscription</button><button class="quiet-button danger-text" data-remove-manual type="button">Remove subscription</button></div></section>
 </div>`
 
 // FEATURE-002 correction entry point. One form with every supported field,
@@ -48,7 +50,7 @@ export const detailMarkup = () => `<div class="main-content wrap" id="page-subsc
 // Only fields that actually change end up submitted (see
 // collectChangedCorrections), so an untouched field never becomes
 // "Confirmed by you" merely because the form was submitted.
-export const correctionDialogMarkup = () => `<div class="dialog-backdrop correction-backdrop" data-correction-dialog hidden><section class="dialog correction-dialog" role="dialog" aria-modal="true" aria-labelledby="correction-title"><button class="dialog-close" data-close-dialog aria-label="Close">×</button><p class="eyebrow">Correct subscription information</p><h2 id="correction-title">Update the details below</h2><p class="dialog-subtitle">Your changes will be saved.</p><form class="correction-form" data-correction-form>
+export const correctionDialogMarkup = () => `<div class="dialog-backdrop correction-backdrop" data-correction-dialog hidden><section class="dialog correction-dialog" role="dialog" aria-modal="true" aria-labelledby="correction-title"><button class="dialog-close" data-close-dialog aria-label="Close">×</button><p class="eyebrow" data-correction-eyebrow>Correct subscription information</p><h2 id="correction-title" data-correction-title>Update the details below</h2><p class="dialog-subtitle" data-correction-subtitle>Your changes will be saved.</p><form class="correction-form" data-correction-form>
 
 <label class="field-label" for="corr-service">Service</label>
 <div class="service-field"><span class="service-icon icon-sm" data-correction-service-icon aria-hidden="true"></span><select id="corr-service" data-correction-service>${KNOWN_SERVICES.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}</select></div>
@@ -67,7 +69,7 @@ export const correctionDialogMarkup = () => `<div class="dialog-backdrop correct
 
 <p class="form-error" data-correction-error hidden role="alert"></p>
 
-<div class="correction-hint">${ICON_INFO}<span>We'll keep the original receipt evidence so you can always see where this came from.</span></div>
+<div class="correction-hint" data-correction-hint>${ICON_INFO}<span data-correction-hint-text>We'll keep the original receipt evidence so you can always see where this came from.</span></div>
 
 <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>Cancel</button><button class="primary-button" type="submit" data-correction-submit disabled>Save changes</button></div>
 </form></section></div>`
@@ -78,6 +80,13 @@ export const correctionDialogMarkup = () => `<div class="dialog-backdrop correct
 // confirm() or an instant action. Kept entirely separate from the correction
 // dialog above - this is a classification action, not a field edit.
 export const rejectConfirmMarkup = () => `<div class="dialog-backdrop" data-reject-dialog hidden><section class="dialog reject-dialog" role="dialog" aria-modal="true" aria-labelledby="reject-title"><button class="dialog-close" data-close-dialog aria-label="Close">×</button><div class="reject-icon-wrap">${ICON_TRASH}</div><h2 id="reject-title">Not a subscription?</h2><p>This will remove <strong data-reject-name></strong> from your active subscriptions and recurring spend. You can change this later if needed.</p><div class="reject-whatnext"><strong>What will happen</strong><ul><li>${ICON_CHECK}It won't appear in your active subscriptions</li><li>${ICON_CHECK}It won't be counted in recurring spend</li><li>${ICON_CHECK}We'll remember your decision</li></ul></div><div class="dialog-actions"><button class="danger-button" data-confirm-reject type="button">Mark as not a subscription</button><button class="quiet-button" data-close-dialog type="button">Cancel</button></div></section></div>`
+
+// A separate, simpler confirmation for removing a manually-added item.
+// Unlike "Not a subscription" above, there's no server-side classification
+// being recorded and nothing to remember or revisit - the manual entry is
+// just local state, so the copy doesn't promise things ("we'll remember
+// your decision") that wouldn't be true for it.
+export const removeManualConfirmMarkup = () => `<div class="dialog-backdrop" data-remove-manual-dialog hidden><section class="dialog reject-dialog" role="dialog" aria-modal="true" aria-labelledby="remove-manual-title"><button class="dialog-close" data-close-dialog aria-label="Close">×</button><div class="reject-icon-wrap">${ICON_TRASH}</div><h2 id="remove-manual-title">Remove subscription?</h2><p>This will remove <strong data-remove-manual-name></strong>, a manually added subscription, from Subtle AI.</p><div class="dialog-actions"><button class="danger-button" data-confirm-remove-manual type="button">Remove subscription</button><button class="quiet-button" data-close-dialog type="button">Cancel</button></div></section></div>`
 
 const applyServiceIcon = (el, name) => {
   const icon = serviceIconFor(name)
@@ -97,17 +106,6 @@ const toIsoDate = (value) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 }
 
-export const fieldProvenance = (item, field) => {
-  if (item.source === 'Manual entry') return 'User provided'
-  const correctionField = CORRECTION_FIELD_FOR[field]
-  const hasActiveCorrection = correctionField && (item.pipelineRecord?.corrections || []).some(correction => correction.field === correctionField)
-  if (hasActiveCorrection) return 'Confirmed by you'
-  const observation = [...(item.pipelineRecord?.fieldObservations || [])].reverse().find(entry => entry.field === field)
-  const state = observation?.provenance || item.pipelineRecord?.confidence?.state
-  if (state === 'confirmed') return `Confirmed from ${item.source}`
-  if (state === 'inferred') return `Inferred from ${item.source}`
-  return `Source: ${item.source || 'Not provided'}`
-}
 
 const formatDate = (value) => {
   const date = new Date(value)
@@ -213,10 +211,13 @@ export const renderDetail = (root, item) => {
   renderHistory(root.querySelector('[data-price-history]'), item.history)
   renderHistory(root.querySelector('[data-billing-history]'), item.bills)
 
-  // FEATURE-002: corrections and "Not a subscription" only apply to real,
-  // backend-derived records - manual entries have no server-side subscription
-  // to correct or reject.
-  root.querySelector('[data-detail-corrections]').hidden = !item.remoteId
+  // FEATURE-002's "This looks wrong"/"Not a subscription" apply to real,
+  // backend-derived records; a manually-added item (no remoteId) gets the
+  // same edit/remove capability under "Edit subscription"/"Remove
+  // subscription" instead - same section, source-appropriate action row.
+  const isManual = !item.remoteId
+  root.querySelector('[data-gmail-actions]').hidden = isManual
+  root.querySelector('[data-manual-actions]').hidden = !isManual
   if (item.remoteId) {
     const conflicts = item.pipelineRecord?.conflicts || []
     const conflictNotice = root.querySelector('[data-conflict-notice]')
@@ -227,8 +228,17 @@ export const renderDetail = (root, item) => {
 
 // Populates every field with Subtle AI's current value and stamps each
 // control with its starting value (data-initial) so collectChangedCorrections
-// can tell a genuine edit from an untouched field later.
-export const renderCorrectionDialog = (root, item) => {
+// can tell a genuine edit from an untouched field later. `isManual` swaps the
+// dialog's copy for a manually-added item: it's a plain "Edit subscription"
+// form, not a Gmail-evidence correction, so the eyebrow/title/subtitle read
+// accordingly and the "we'll keep the original receipt evidence" hint - which
+// wouldn't be true for an item with no receipt evidence - is hidden.
+export const renderCorrectionDialog = (root, item, { isManual = false } = {}) => {
+  root.querySelector('[data-correction-eyebrow]').textContent = isManual ? 'Manual entry' : 'Correct subscription information'
+  root.querySelector('[data-correction-title]').textContent = isManual ? 'Edit subscription' : 'Update the details below'
+  root.querySelector('[data-correction-subtitle]').textContent = isManual ? 'Change the service, plan, price, currency, billing cadence, or renewal date.' : 'Your changes will be saved.'
+  root.querySelector('[data-correction-hint]').hidden = isManual
+
   const serviceSelect = root.querySelector('[data-correction-service]')
   const serviceIconEl = root.querySelector('[data-correction-service-icon]')
   const planInput = root.querySelector('[data-correction-plan]')
