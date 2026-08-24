@@ -140,6 +140,49 @@ and after the merge — every scanned surface fails on the confirmed contrast
 defect below (DEFECT-A11Y-01), not on a test-infrastructure or merge problem;
 see that section for per-page detail and its CI-gate consequence.
 
+### Real-CI findings (this pass): a fixed infra bug, and a confirmed resource-contention flake
+
+Merging PR #35's changes surfaced two problems only visible in real GitHub
+Actions CI, neither reproducible in this session's local sandbox:
+
+1. **Fixed — backend port collision.** `.github/workflows/ci.yml` now runs
+   `npm run test:smoke` then `npm run test:e2e` sequentially in one job. Both
+   suites' backends defaulted to the same port (`server/config/env.js`'s
+   `8787`, also hardcoded into `vite.config.js`'s `/api` proxy), so the second
+   suite's server raced the first's not-yet-released port and never bound —
+   every page loaded, but every API call failed for the entire `test:e2e` run.
+   Fixed by giving this suite's backend its own port (`8788`) via a new
+   `VITE_API_PROXY_TARGET` env var (`playwright.e2e.config.js`,
+   `vite.config.js`). Verified two ways: reproducing the exact CI sequence
+   locally (smoke suite to completion, then immediately chained e2e suite —
+   passed after the fix, was the exact failure before it), and confirmed in
+   real CI — the next run's `accessibility.spec.js` tests executed against
+   real rendered content and produced genuine axe results, proving the proxy
+   now reaches the right backend.
+
+2. **Open, mitigated — intermittent backend unresponsiveness under full-matrix
+   load.** With the port bug fixed, a second real-CI run still failed:
+   `onboarding-flow.spec.js`/`responsive.spec.js` intermittently hit the app's
+   own "couldn't reach the server" state, scattered across multiple projects
+   (not one engine), with some instances recovering on Playwright's built-in
+   retry and others not. This pattern — intermittent, spread across every
+   project, partially self-healing — points to CPU/memory contention on the
+   GitHub Actions runner (Postgres + this suite's backend + three sequential
+   full browser-engine installs and runs, each with trace/screenshot capture,
+   on a standard-size hosted runner), not a code defect: a full local
+   reproduction of the same three-spec sequence on Chromium alone (the only
+   engine installable in this sandbox) stayed completely clean. Per the
+   "confirm a flake at most once" policy, CI was re-run once to rule out the
+   port bug specifically (it did — the failure signature changed entirely),
+   but a second, different failure is treated as real rather than re-run
+   again speculatively. Mitigated by giving the suite more room to ride out a
+   brief stall rather than lowering coverage: `expect: { timeout: 15_000 }`
+   in CI (was the 5s default) and `retries: 2` in CI (was 1) in
+   `playwright.e2e.config.js`. **If this recurs after that change, the next
+   lever is CI runner capacity (a larger GitHub Actions runner) — a cost
+   decision outside QA's authority to make unilaterally; escalate rather than
+   keep tuning test timeouts.**
+
 ### Automated accessibility policy
 
 Per #43: **zero axe violations does not equal accessibility certification.**

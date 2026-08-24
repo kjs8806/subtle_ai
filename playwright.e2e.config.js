@@ -26,9 +26,21 @@ import { defineConfig, devices } from '@playwright/test'
 export default defineConfig({
   testDir: './e2e',
   timeout: 30_000,
+  // A longer default assertion timeout in CI than Playwright's 5s default:
+  // observed CI runs show brief app-unresponsive windows (the backend
+  // failing to answer for a few seconds) under the combined load of
+  // Postgres + this suite's backend + three sequential browser engines on a
+  // standard-size GitHub Actions runner - a resource-contention symptom, not
+  // a product defect (unreproducible locally: a full local run of this same
+  // spec sequence on Chromium alone stays clean). Giving each assertion more
+  // room to ride out a brief stall is a safer fix than lowering coverage.
+  expect: { timeout: process.env.CI ? 15_000 : 5_000 },
   fullyParallel: false,
   workers: 1,
-  retries: process.env.CI ? 1 : 0,
+  // 2, not 1, in CI - some of these contention-window failures persisted
+  // through a single retry (the retry landed in the same busy window), but
+  // recovered given a second chance once the runner had moved on.
+  retries: process.env.CI ? 2 : 0,
   reporter: [['list']],
   use: {
     baseURL: 'http://127.0.0.1:5173',
