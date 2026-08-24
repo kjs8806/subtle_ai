@@ -13,8 +13,8 @@
     "test:server": "node --test test/server.test.js",
     "test:postgres": "node --test test/postgres.integration.test.js",
     "test:runtime": "node --test test/runtimePersistence.integration.test.js",
-    "test:smoke": "playwright test --project=desktop-chromium --project=mobile-chromium",
-    "test:e2e": "playwright test --project=desktop --project=mobile"
+    "test:smoke": "playwright test",
+    "test:e2e": "playwright test --config=playwright.e2e.config.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",
