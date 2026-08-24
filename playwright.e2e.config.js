@@ -44,6 +44,16 @@ export default defineConfig({
       GMAIL_PROVIDER: 'mock',
       PERSISTENCE_PROVIDER: 'memory',
       MOCK_GMAIL_SCENARIO: 'success',
+      // A distinct backend port from the smoke suite's hardcoded 8787
+      // (playwright.config.js), not the shared server/config/env.js default -
+      // CI now runs both suites sequentially in one job
+      // (.github/workflows/ci.yml), and reusing 8787 here risked this suite's
+      // backend racing the smoke suite's not-yet-released port and failing to
+      // bind, which silently broke every test in this suite (every page load
+      // showed the app's own "couldn't reach the server" error state instead
+      // of real content - see vite.config.js).
+      PORT: '8788',
+      VITE_API_PROXY_TARGET: 'http://127.0.0.1:8788',
     },
   },
   projects: [
