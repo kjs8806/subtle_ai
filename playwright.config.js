@@ -36,10 +36,18 @@ export default defineConfig({
     {
       name: 'desktop-chromium',
       use: { ...devices['Desktop Chrome'] },
+      // @mobile-tagged tests exercise mobile-only layout (the slide-out menu,
+      // viewport-dependent affordances) and have no meaningful desktop
+      // equivalent - they belong solely to the mobile project below.
+      // @critical and untagged tests still run here.
+      grepInvert: /@mobile/,
     },
     {
       name: 'mobile-chromium',
       use: { ...devices['Pixel 5'] },
+      // Only @mobile (mobile-specific) and @critical (must pass on both
+      // viewports) tests run here - untagged tests are covered once by
+      // desktop and don't need a second, viewport-identical run.
       grep: /@mobile|@critical/,
     },
   ],

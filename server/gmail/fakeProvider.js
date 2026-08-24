@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 // The default scan scenario models a small but varied inbox - one receipt per
 // service, each with its own sender domain, price, and renewal date - so a
 // fresh mock sign-in has something to show instead of a single Netflix row.
@@ -37,13 +39,25 @@ const scenarios = {
   failure: null,
 }
 
+// The real "Continue with Google" browser flow (start -> Google's mocked
+// redirect -> callback) mints a fresh mock-success:<uuid> code on every
+// invocation, so every real sign-in resolves (via resolveOrCreateIdentity)
+// to its own brand-new internal user - this is what gives the Playwright
+// smoke suite per-test account isolation without a test-only reset endpoint
+// or any change to the real (gmailProvider === 'google') path. It changes
+// nothing for callers that bypass this generated URL and hit the callback
+// with their own hardcoded literal 'mock-success' code directly (most
+// existing Node-level tests do exactly that) - exchangeAuthorizationCode
+// below only extracts a subject when the 'mock-success:' prefix is present,
+// so a bare 'mock-success' still resolves with no subject exactly as before.
 export const createFakeGmailProvider = () => ({
-  createAuthorizationRequest: ({ state }) => ({ url: `/api/v1/auth/google/callback?state=${encodeURIComponent(state)}&code=mock-success` }),
+  createAuthorizationRequest: ({ state }) => ({ url: `/api/v1/auth/google/callback?state=${encodeURIComponent(state)}&code=${encodeURIComponent(`mock-success:${randomUUID()}`)}` }),
   createGmailAuthorizationRequest: ({ state }) => ({ url: `/api/v1/sources/gmail/callback?state=${encodeURIComponent(state)}&code=mock-success` }),
   exchangeAuthorizationCode: async ({ code }) => {
     if (code === 'mock-cancel') return { status: 'cancelled' }
     if (code === 'mock-error') throw new Error('Mock authorization failed')
-    return { status: 'authorized', refreshToken: 'mock-refresh-token' }
+    const subject = typeof code === 'string' && code.startsWith('mock-success:') ? code.slice('mock-success:'.length) : undefined
+    return { status: 'authorized', subject, refreshToken: 'mock-refresh-token' }
   },
   exchangeGmailAuthorizationCode: async ({ code }) => ({ status: code === 'mock-cancel' ? 'cancelled' : 'authorized', refreshToken: 'mock-refresh-token' }),
   listCandidateMessages: async () => scenarios[process.env.MOCK_GMAIL_SCENARIO || 'success'],
