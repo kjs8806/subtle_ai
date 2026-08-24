@@ -72,9 +72,27 @@ export const createMemoryRepository = () => {
       return publicConnection(connection)
     },
     getEncryptedRefreshToken: (userId) => connections.get(userId)?.encryptedRefreshToken || null,
+    // MVP-BETA-004 (#41, Product Owner policy on issue #41): disconnecting
+    // Gmail purges every Gmail-derived record but preserves the user,
+    // identity, and connection row itself (reset to not_connected, so it can
+    // be reconnected later). Before this fix, only `evidence`/`subscriptions`/
+    // `scans` were cleared - `corrections`, `conflicts`, `candidates`, their
+    // evidence references, `attentionDismissals`, and the `billingEvents`
+    // dedupe Set were left as permanently orphaned entries, since this
+    // backend has no real garbage collection or FK cascade to catch what the
+    // application code doesn't explicitly delete (unlike postgresRepository.js,
+    // where a missed table is at least visible as a foreign-key error - see
+    // that file's disconnectConnection for the real bug that surfaced this).
     disconnectConnection: (userId) => {
       const connection = connections.get(userId)
       if (!connection) return clone({ status: 'not_connected', scanStatus: 'idle' })
+      const subscriptionIds = new Set([...subscriptions.values()].filter((item) => item.userId === userId).map((item) => item.id))
+      const correctionIds = new Set([...corrections.values()].filter((item) => item.userId === userId).map((item) => item.id))
+      for (const [id, item] of conflicts) if (correctionIds.has(item.correctionId)) conflicts.delete(id)
+      for (const id of correctionIds) corrections.delete(id)
+      for (const [id, item] of candidates) if (item.userId === userId) candidates.delete(id)
+      for (const [id, item] of attentionDismissals) if (id.startsWith(`${userId}:`)) attentionDismissals.delete(id)
+      for (const key of billingEvents) if (subscriptionIds.has(key.split(':')[0])) billingEvents.delete(key)
       for (const [id, item] of evidence) if (item.userId === userId) evidence.delete(id)
       for (const [id, item] of subscriptions) if (item.userId === userId) subscriptions.delete(id)
       for (const id of scans.keys()) if (scans.get(id).userId === userId) scans.delete(id)
@@ -83,6 +101,28 @@ export const createMemoryRepository = () => {
       connection.encryptedRefreshToken = null
       connections.set(userId, connection)
       return clone(connection)
+    },
+    // MVP-BETA-004 (#41): full account deletion - every top-level Map/Set
+    // this backend holds is user-scoped (directly, or via subscriptionIds/
+    // correctionIds for the tables that don't carry userId themselves), so
+    // deletion here is disconnectConnection's purge plus the user/identity/
+    // connection rows themselves, which disconnect deliberately preserves.
+    deleteAccount: (userId) => {
+      const existed = users.has(userId)
+      const subscriptionIds = new Set([...subscriptions.values()].filter((item) => item.userId === userId).map((item) => item.id))
+      const correctionIds = new Set([...corrections.values()].filter((item) => item.userId === userId).map((item) => item.id))
+      for (const [id, item] of conflicts) if (correctionIds.has(item.correctionId)) conflicts.delete(id)
+      for (const id of correctionIds) corrections.delete(id)
+      for (const [id, item] of candidates) if (item.userId === userId) candidates.delete(id)
+      for (const [id, item] of attentionDismissals) if (id.startsWith(`${userId}:`)) attentionDismissals.delete(id)
+      for (const key of billingEvents) if (subscriptionIds.has(key.split(':')[0])) billingEvents.delete(key)
+      for (const [id, item] of evidence) if (item.userId === userId) evidence.delete(id)
+      for (const [id, item] of subscriptions) if (item.userId === userId) subscriptions.delete(id)
+      for (const id of scans.keys()) if (scans.get(id).userId === userId) scans.delete(id)
+      connections.delete(userId)
+      for (const [key, identity] of identities) if (identity.userId === userId) identities.delete(key)
+      users.delete(userId)
+      return { deleted: existed }
     },
     beginScan: (userId) => {
       const connection = connections.get(userId)

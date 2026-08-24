@@ -282,6 +282,34 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
   // the client for dismissal, URL-encoded since it contains colons.
   app.get('/api/v1/attention', { preHandler: requireUser }, async (request) => ({ items: await repository.listAttentionItems(request.user.id) }))
   app.post('/api/v1/attention/:itemKey/dismiss', { preHandler: requireUser }, async (request) => repository.dismissAttentionItem(request.user.id, decodeURIComponent(request.params.itemKey)))
+
+  // MVP-BETA-004 (#41): full account deletion. Ownership is exclusively
+  // request.user.id (set by the session preHandler above from the caller's
+  // own cookie) - there is no request body/param to read an id from at all,
+  // so a client can never even attempt to name another account here.
+  //
+  // Gmail revocation is best-effort and never blocks deletion: unlike
+  // POST /sources/gmail/disconnect (which must not report "disconnected"
+  // until Google confirms revocation, since the account and the connection
+  // both keep existing afterward), the account itself is being permanently
+  // destroyed either way - our copy of the refresh token is deleted as part
+  // of repository.deleteAccount regardless of whether Google's revoke call
+  // succeeds, so a flaky revocation call can never leave the user unable to
+  // delete their account. A failure is logged so it's visible operationally,
+  // and the user can separately revoke Subtle AI's access from their Google
+  // account permissions if the automatic revocation didn't go through.
+  app.delete('/api/v1/account', { preHandler: requireUser }, async (request, reply) => {
+    const encryptedToken = repository.getEncryptedRefreshToken ? await repository.getEncryptedRefreshToken(request.user.id) : null
+    const refreshToken = decryptRefreshToken(encryptedToken)
+    if (refreshToken) {
+      try { await provider.revokeConnection({ token: refreshToken }) }
+      catch (error) { request.log.error({ err: error }, 'Gmail token revocation failed during account deletion; proceeding with deletion anyway') }
+    }
+    await repository.deleteAccount(request.user.id)
+    sessions.revokeAllForUser(request.user.id)
+    reply.clearCookie(SESSION_COOKIE, { path: '/' })
+    return { status: 'deleted' }
+  })
   return app
 }
 

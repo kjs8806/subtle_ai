@@ -180,6 +180,32 @@ export const createPostgresRepository = ({ pool }) => {
         return { created: true, evidence: evidence.rows[0], subscription: await this.getSubscription(userId, subscriptionId) }
       } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
     },
+    // MVP-BETA-004 (#41, Product Owner policy on issue #41): disconnecting
+    // Gmail purges every Gmail-derived record but preserves the user, the
+    // auth identity, and (today, since manual subscriptions have no backend
+    // record at all - they live only in browser memory) the rest of the
+    // account is untouched by definition. Every table currently reachable
+    // from a Gmail scan gets an explicit DELETE here rather than relying on
+    // ON DELETE CASCADE alone - this is a surgical purge of one user's data,
+    // not a delete of the `users` row those cascades are rooted on, so
+    // nothing cascades unless it's declared for a table this function
+    // already touches directly.
+    //
+    // Two gaps existed here before this fix, found by inspecting every
+    // table's actual FK behavior rather than assuming CASCADE was enough:
+    // 1. subscription_candidates/candidate_evidence (FEATURE-002's ambiguous-
+    //    candidate review) were never purged. Every candidate is Gmail-
+    //    derived the same as every subscription is (there is no other
+    //    scan source), and a confirmed candidate's resolved_subscription_id
+    //    pointed at a subscription this function was about to delete with no
+    //    ON DELETE behavior on that FK (migration 012 fixes the column to
+    //    SET NULL) - reproduced against a real database, any user who had
+    //    ever confirmed a candidate got a foreign key violation on
+    //    disconnect and the whole transaction rolled back.
+    // 2. attention_item_dismissals (FEATURE-003) has no FK back to
+    //    subscriptions or price_change_events at all (item_key is a
+    //    synthetic string, not a foreign key - see migration 009) so it was
+    //    never cleaned up by any cascade and needs an explicit purge too.
     async disconnectConnection(userId) {
       const client = await pool.connect()
       try {
@@ -187,28 +213,34 @@ export const createPostgresRepository = ({ pool }) => {
         const connections = await client.query('SELECT id FROM source_connections WHERE user_id = $1 AND provider = $2', [userId, 'gmail'])
         const connectionIds = connections.rows.map(({ id }) => id)
         if (connectionIds.length) {
-          const subscriptions = await client.query('SELECT DISTINCT se.subscription_id FROM subscription_evidence se JOIN evidence e ON e.id = se.evidence_id JOIN source_messages sm ON sm.id = e.source_message_id WHERE sm.connection_id = ANY($1::uuid[])', [connectionIds])
-          const subscriptionIds = subscriptions.rows.map(({ subscription_id: id }) => id)
-          if (subscriptionIds.length) {
-            await client.query('DELETE FROM field_observations WHERE subscription_id = ANY($1::uuid[])', [subscriptionIds])
-            await client.query('DELETE FROM price_observations WHERE subscription_id = ANY($1::uuid[])', [subscriptionIds])
-            await client.query('DELETE FROM billing_events WHERE subscription_id = ANY($1::uuid[])', [subscriptionIds])
-            await client.query('DELETE FROM subscription_evidence WHERE subscription_id = ANY($1::uuid[])', [subscriptionIds])
-            await client.query('DELETE FROM subscriptions WHERE id = ANY($1::uuid[]) AND user_id = $2 AND source = $3', [subscriptionIds, userId, 'Gmail receipt'])
-          }
-          await client.query('DELETE FROM evidence WHERE source_message_id IN (SELECT id FROM source_messages WHERE connection_id = ANY($1::uuid[]))', [connectionIds])
-          await client.query('DELETE FROM source_messages WHERE connection_id = ANY($1::uuid[])', [connectionIds])
-          await client.query('DELETE FROM scan_runs WHERE connection_id = ANY($1::uuid[])', [connectionIds])
+          await client.query('DELETE FROM candidate_evidence WHERE candidate_id IN (SELECT id FROM subscription_candidates WHERE user_id = $1)', [userId])
+          await client.query('DELETE FROM subscription_candidates WHERE user_id = $1', [userId])
+          await client.query('DELETE FROM attention_item_dismissals WHERE user_id = $1', [userId])
           await client.query('DELETE FROM field_observations WHERE subscription_id IN (SELECT id FROM subscriptions WHERE user_id = $1 AND source = $2)', [userId, 'Gmail receipt'])
           await client.query('DELETE FROM price_observations WHERE subscription_id IN (SELECT id FROM subscriptions WHERE user_id = $1 AND source = $2)', [userId, 'Gmail receipt'])
           await client.query('DELETE FROM billing_events WHERE subscription_id IN (SELECT id FROM subscriptions WHERE user_id = $1 AND source = $2)', [userId, 'Gmail receipt'])
           await client.query('DELETE FROM subscription_evidence WHERE subscription_id IN (SELECT id FROM subscriptions WHERE user_id = $1 AND source = $2)', [userId, 'Gmail receipt'])
           await client.query('DELETE FROM subscriptions WHERE user_id = $1 AND source = $2', [userId, 'Gmail receipt'])
+          await client.query('DELETE FROM evidence WHERE source_message_id IN (SELECT id FROM source_messages WHERE connection_id = ANY($1::uuid[]))', [connectionIds])
+          await client.query('DELETE FROM source_messages WHERE connection_id = ANY($1::uuid[])', [connectionIds])
+          await client.query('DELETE FROM scan_runs WHERE connection_id = ANY($1::uuid[])', [connectionIds])
           await client.query('DELETE FROM source_connections WHERE id = ANY($1::uuid[])', [connectionIds])
         }
         await client.query('COMMIT')
         return { status: 'not_connected', scanStatus: 'idle' }
       } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+    },
+    // MVP-BETA-004 (#41): full account deletion. Every user-scoped table was
+    // individually verified (not assumed) to cascade from `users` via
+    // ON DELETE CASCADE, directly or transitively, except
+    // subscription_candidates.resolved_subscription_id - migration 012 fixed
+    // that gap the same disconnectConnection needed fixed. A single DELETE
+    // FROM users is therefore both correct and atomic: every dependent
+    // row is removed as part of the same statement's cascade resolution,
+    // so there is no window where a partial purge could be observed.
+    async deleteAccount(userId) {
+      const { rowCount } = await pool.query('DELETE FROM users WHERE id = $1', [userId])
+      return { deleted: rowCount > 0 }
     },
     // Rejected subscriptions are excluded from the default listing (and, by
     // extension, from any spend total derived from it) but are never deleted
