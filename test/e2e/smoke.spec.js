@@ -93,7 +93,12 @@ test('@critical reject subscription → confirm dialog → removed from active l
   const dialog = page.getByRole('dialog', { name: 'Not a subscription?' })
   await expect(dialog).toBeVisible()
   await dialog.getByRole('button', { name: 'Mark as not a subscription' }).click()
-  await expect(page.getByRole('heading', { name: 'Your subscriptions' })).toBeVisible()
+  // exact: true - Overview's first-run panel (rendered whenever
+  // subscriptions are empty, see src/ui/overview.js) has its own heading,
+  // "Let's find your subscriptions", which Playwright's default non-exact
+  // name matching treats as containing this heading's text too, making an
+  // unscoped match ambiguous during/around a route transition.
+  await expect(page.getByRole('heading', { name: 'Your subscriptions', exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: /Review Spotify/ })).toHaveCount(0)
 })
 
@@ -111,7 +116,12 @@ test('@mobile mobile navigation opens, routes, and closes with Escape', async ({
 
   await menuButton.click()
   await page.locator('#mobile-menu').locator('[data-route-link="subscriptions"]').click()
-  await expect(page.getByRole('heading', { name: 'Your subscriptions' })).toBeVisible()
+  // exact: true - Overview's first-run panel (rendered whenever
+  // subscriptions are empty, see src/ui/overview.js) has its own heading,
+  // "Let's find your subscriptions", which Playwright's default non-exact
+  // name matching treats as containing this heading's text too, making an
+  // unscoped match ambiguous during/around a route transition.
+  await expect(page.getByRole('heading', { name: 'Your subscriptions', exact: true })).toBeVisible()
   await expect(page.locator('#mobile-menu')).toBeHidden()
 })
 
