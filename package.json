@@ -12,9 +12,11 @@
     "test": "node --test",
     "test:server": "node --test test/server.test.js",
     "test:postgres": "node --test test/postgres.integration.test.js",
-    "test:runtime": "node --test test/runtimePersistence.integration.test.js"
+    "test:runtime": "node --test test/runtimePersistence.integration.test.js",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.1",
     "concurrently": "^10.0.5",
     "vite": "latest"
   },
