@@ -97,6 +97,22 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/subtle_ai_test
       - name: Run browser smoke suite
         run: npm run test:smoke
+      - name: Print smoke suite failure context to the job log
+        # Artifacts (screenshots/traces) aren't readable from this session -
+        # they land in Azure blob storage behind a URL the sandbox's network
+        # policy blocks. error-context.md is plain text/YAML (an accessibility
+        # snapshot of the page at the moment of failure), so print it directly
+        # into the log where it's actually readable, instead of only kept in
+        # an artifact nobody here can open.
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s globstar nullglob
+          for f in test-results/**/error-context.md; do
+            echo "::group::$f"
+            cat "$f"
+            echo "::endgroup::"
+          done
       - name: Upload smoke suite artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
