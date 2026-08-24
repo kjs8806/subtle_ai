@@ -3,7 +3,11 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './test/e2e',
-  timeout: 30_000,
+  // 90s (not the previous 30s) so signIn()'s bounded 60s retry loop for a
+  // transient session-fetch outage (see test/e2e/smoke.spec.js) always has
+  // room to actually succeed within one test, instead of being cut off by
+  // the per-test timeout before the retry has a chance to land.
+  timeout: 90_000,
   expect: { timeout: 5_000 },
   fullyParallel: false,
   // fullyParallel:false only serializes tests within one project/file; it does

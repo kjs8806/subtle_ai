@@ -1,9 +1,29 @@
 import { test, expect } from '@playwright/test'
 
+// CI has hit real, transient failures of the actual GET /api/v1/session
+// call on first load - confirmed via CI's own error-context snapshot, not
+// assumed: the app correctly rendered its designed "Something went wrong" /
+// "Try again" recovery state (sessionErrorMarkup, src/ui/signedOut.js)
+// instead of the sign-in button. Observed CI runs show this clearing within
+// roughly 45-50s across the whole run, so this polls the app's own real
+// "Try again" recovery control - the same one the dedicated "session API
+// failure" test below exercises - for up to 60s, rather than either
+// papering over it with a longer single-assertion timeout (the error page
+// is fully rendered and stable; it won't self-correct without a retry) or
+// failing the whole suite on a backend hiccup unrelated to what this
+// suite actually verifies.
 async function signIn(page) {
   await page.goto('/')
-  await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible()
-  await page.getByRole('button', { name: 'Continue with Google' }).click()
+  const googleButton = page.getByRole('button', { name: 'Continue with Google' })
+  const retryButton = page.getByRole('button', { name: 'Try again' })
+  const deadline = Date.now() + 60_000
+  while (Date.now() < deadline) {
+    if (await googleButton.isVisible().catch(() => false)) break
+    if (await retryButton.isVisible().catch(() => false)) await retryButton.click().catch(() => {})
+    await page.waitForTimeout(1_000)
+  }
+  await expect(googleButton).toBeVisible()
+  await googleButton.click()
   await expect(page.locator('#page-overview')).toBeVisible()
 }
 
