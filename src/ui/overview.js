@@ -18,6 +18,34 @@ const ICONS = {
 const PREVIEW_LIMIT = 5
 const ATTENTION_PREVIEW_LIMIT = 3
 
+// Shown only while the user has zero subscriptions (manual or Gmail-derived) -
+// once any subscription exists, the subscriptions-preview panel below already
+// gives orientation and this would be redundant. State is derived entirely
+// from the real gmailSource the caller already fetched (never a persisted
+// "hasSeenOnboarding" flag, and never fabricated when the source status is
+// unknown) so it reflects what's actually true on every load, not just once.
+const firstRunPanel = ({ gmailSource, gmailSourceUnavailable }) => {
+  let heading; let body; let primaryHref; let primaryLabel
+  if (gmailSourceUnavailable) {
+    heading = 'Add your first subscription'
+    body = "Add a subscription manually, or check Sources once your Gmail connection status loads."
+    primaryHref = '#/subscriptions'; primaryLabel = 'Add a subscription manually'
+  } else if (gmailSource?.status !== 'connected') {
+    heading = "Let's find your subscriptions"
+    body = 'Subtle AI looks through your Gmail receipts to find recurring subscriptions, shows what it found with the evidence behind it, and flags price changes and renewals worth reviewing.'
+    primaryHref = '#/sources'; primaryLabel = 'Connect Gmail'
+  } else if (!gmailSource.lastScanAt) {
+    heading = 'Scan your Gmail for subscriptions'
+    body = "Gmail is connected. Run a scan to look for subscription receipts."
+    primaryHref = '#/sources'; primaryLabel = 'Scan receipts'
+  } else {
+    heading = 'No subscriptions found yet'
+    body = "Your last scan didn't find any subscription receipts. You can scan again or add one manually."
+    primaryHref = '#/sources'; primaryLabel = 'Scan again'
+  }
+  return `<section class="panel-card first-run-panel" aria-labelledby="first-run-title"><h2 id="first-run-title">${heading}</h2><p>${body}</p><div class="first-run-actions"><a class="primary-button" href="${primaryHref}">${primaryLabel}</a>${primaryHref !== '#/subscriptions' ? '<a class="quiet-button" href="#/subscriptions">Add a subscription manually</a>' : ''}</div></section>`
+}
+
 // Overview's job is orientation, not management: a limited subscriptions
 // preview (full list lives on /subscriptions), a limited attention preview
 // (full review lives on /attention), and one small read-only source-status
@@ -43,6 +71,8 @@ export const overviewMarkup = ({ subscriptions = [], attentionItems = [], overla
   const sourceStatusText = gmailSourceUnavailable ? "Status unavailable" : connected ? (lastScan ? `Last scan ${lastScan}` : 'Connected · ready to scan') : 'Not connected'
 
   return `<div class="main-content wrap" id="page-overview"><header class="overview-header">${dateLabel ? `<p class="eyebrow">${escapeHtml(dateLabel)}</p>` : ''}<h1>${escapeHtml(greeting)}</h1><p>Here’s what your subscriptions are telling you.</p></header>
+
+${activeCount === 0 ? firstRunPanel({ gmailSource, gmailSourceUnavailable }) : ''}
 
 <section class="stat-grid" aria-label="Spending summary">
 <div class="stat-card" aria-labelledby="spending-title"><p id="spending-title">Monthly recurring spend</p><strong data-spend>${money(monthlySpend)}</strong><small><span data-count>${activeCount}</span> subscriptions</small><span class="stat-icon">${ICONS.spend}</span></div>

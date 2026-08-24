@@ -10,11 +10,15 @@ import { createTokenVault } from '../server/security/tokenVault.js'
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 // Both OAuth callbacks are reached via a real top-level browser navigation, so
-// they always redirect back to '/' rather than return a JSON body - the
-// outcome is carried as a query param (auth_error / gmail_error) instead.
+// they always redirect back to '/' (the Gmail callback appends '#/sources' so
+// the user lands on its next-step guidance) rather than return a JSON body -
+// the outcome is carried as a query param (auth_error / gmail_error) instead.
+// A browser's location.search never includes what's after '#', so the hash is
+// stripped here too before parsing, matching how the frontend actually reads it.
 const errorFromRedirect = (response, param) => {
-  const [, query] = (response.headers.location || '').split('?')
-  return new URLSearchParams(query || '').get(param)
+  const [, rest] = (response.headers.location || '').split('?')
+  const query = (rest || '').split('#')[0]
+  return new URLSearchParams(query).get(param)
 }
 
 // Real Google `sub` claims are opaque numeric strings, not UUIDs.
@@ -179,7 +183,7 @@ test('Gmail OAuth with a matching Google subject connects the source', async () 
   const { headers } = await authenticate(app, GOOGLE_SUBJECT_A)
   const response = await connectGmail(app, headers, GOOGLE_SUBJECT_A)
   assert.equal(response.statusCode, 302)
-  assert.equal(response.headers.location, '/')
+  assert.equal(response.headers.location, '/#/sources')
   const source = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
   assert.equal(source.json().status, 'connected')
 })
@@ -387,7 +391,7 @@ test('SEC-005: the real Google provider adapter connects Gmail through the appli
   const { headers, user } = await authenticateReal(app)
   const response = await connectGmailReal(app, headers)
   assert.equal(response.statusCode, 302)
-  assert.equal(response.headers.location, '/')
+  assert.equal(response.headers.location, '/#/sources')
   const source = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
   assert.equal(source.json().status, 'connected')
 
@@ -453,7 +457,7 @@ test('SEC-006: a reconnect where Google omits a new refresh token preserves the 
   const { headers, user } = await authenticateReal(appFirst)
   const first = await connectGmailReal(appFirst, headers)
   assert.equal(first.statusCode, 302)
-  assert.equal(first.headers.location, '/')
+  assert.equal(first.headers.location, '/#/sources')
   assert.equal(tokenVault.decrypt(await repository.getEncryptedRefreshToken(user.id)), 'first-refresh-token')
 
   // A reconnect (e.g. re-consent) where Google legitimately omits refresh_token
@@ -462,7 +466,7 @@ test('SEC-006: a reconnect where Google omits a new refresh token preserves the 
   const appSecond = buildApp({ repository, provider: secondProvider, gmailProvider: 'google', tokenVault, sessions })
   const second = await connectGmailReal(appSecond, headers)
   assert.equal(second.statusCode, 302)
-  assert.equal(second.headers.location, '/')
+  assert.equal(second.headers.location, '/#/sources')
   const source = await appSecond.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
   assert.equal(source.json().status, 'connected')
   assert.equal(tokenVault.decrypt(await repository.getEncryptedRefreshToken(user.id)), 'first-refresh-token')

@@ -5,11 +5,15 @@ import { createFakeGmailProvider } from '../server/gmail/fakeProvider.js'
 import { createMemoryRepository } from '../server/persistence/memoryRepository.js'
 
 // Both OAuth callbacks are reached via a real top-level browser navigation, so
-// they always redirect back to '/' rather than return a JSON body - the
-// outcome is carried as a query param (auth_error / gmail_error) instead.
+// they always redirect back to '/' (the Gmail callback appends '#/sources' so
+// the user lands on its next-step guidance) rather than return a JSON body -
+// the outcome is carried as a query param (auth_error / gmail_error) instead.
+// A browser's location.search never includes what's after '#', so the hash is
+// stripped here too before parsing, matching how the frontend actually reads it.
 const errorFromRedirect = (response, param) => {
-  const [, query] = (response.headers.location || '').split('?')
-  return new URLSearchParams(query || '').get(param)
+  const [, rest] = (response.headers.location || '').split('?')
+  const query = (rest || '').split('#')[0]
+  return new URLSearchParams(query).get(param)
 }
 
 const authorize = async (app) => {
