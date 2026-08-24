@@ -33,7 +33,27 @@ These decisions authorize implementation of the FEATURE-001 vertical slice withi
 
 - AI extraction and recommendations are deferred.
 - Notifications are deferred.
-- A full public retention, export, and deletion policy remains a public-release gate.
+- A full public retention, export, and deletion policy remains a public-release gate. Account deletion and the corrected Gmail-disconnect purge are approved and implemented under MVP-BETA-004 below; export is not.
+
+## MVP-BETA-004 Approved Decisions (#41)
+
+Account & Data Controls: Disconnect Gmail vs. Delete Account, and the public-beta retention/deletion policy. Approved by the Product Owner on issue #41 ([comment](https://github.com/kjs8806/subtle_ai/issues/41#issuecomment-5391360702)); implemented on branch `claude/account-data-controls`.
+
+### Retention And Deletion Policy
+
+- Disconnecting Gmail revokes the stored OAuth/refresh credential, purges every Gmail-derived record (evidence, subscriptions, corrections, ambiguous candidates - confirmed and pending alike, price-change events, attention-item dismissals), and preserves the Subtle AI account, auth identity, and session.
+- Deleting the account is the full-deletion action: every user-scoped record, including the user and auth-identity rows themselves, is removed; the account can no longer be signed into, and re-authenticating with the same provider identity creates a new account rather than resurrecting the deleted one.
+- User-facing access to deleted data ceases immediately (both operations complete synchronously, in one transaction on PostgreSQL); no separate 24-hour deletion job exists because none is needed at current beta scale.
+- Backups and analytics: this repository has neither a backup pipeline nor an analytics system to purge from (`#47` has not yet introduced analytics) - the approved policy's backup/analytics retention limits are recorded as an integration point for whichever system introduces them, not implemented here as dead code.
+
+### Implementation
+
+- Ownership for both operations comes exclusively from the authenticated session (`request.user.id`); neither endpoint accepts or reads any client-supplied account identifier.
+- `DELETE /api/v1/account` performs a best-effort Gmail token revocation (logged, never blocking) then `repository.deleteAccount`, then revokes every session belonging to that user (`sessions.revokeAllForUser` - the session store is authoritative regardless of `PERSISTENCE_PROVIDER`, so repository deletion alone would not end a live session).
+- On PostgreSQL, `deleteAccount` is a single `DELETE FROM users`, relying on `ON DELETE CASCADE` verified table-by-table (not assumed) to reach every dependent row in one atomic statement.
+- Migration 012 fixes a pre-existing bug found during that verification: `subscription_candidates.resolved_subscription_id` had no `ON DELETE` behavior, so deleting a subscription a confirmed candidate resolved to - exactly what Gmail disconnect already did - threw a foreign key violation and rolled back the whole disconnect for any user who had ever confirmed a candidate. Reproduced against a real database before the fix, and covered by a regression test after it.
+- `disconnectConnection` is a surgical purge (the account is not being deleted), so it explicitly deletes every Gmail-derived table rather than relying on cascade from `users`.
+- The in-memory backend has no FK/cascade safety net at all; both operations were audited table-by-table there too and covered by the same contract test suite that runs against PostgreSQL, so both backends are held to identical guarantees.
 
 ## Remaining Broader Release Decisions
 
@@ -41,7 +61,7 @@ The following questions remain open outside the approved FEATURE-001 implementat
 
 ### Authentication And User Accounts
 
-- **Status:** Open beyond FEATURE-001
+- **Status:** Authentication resolved by FEATURE-001 (Google OIDC); account deletion resolved by MVP-BETA-004 above. Open: any authentication method beyond Google OIDC.
 - **Question:** How will users authenticate, and how will account ownership and deletion be represented?
 - **Owner:** Tech Lead with Founder approval
 - **Constraint:** User data must be isolated by account before Gmail evidence or persistence is introduced.
