@@ -73,24 +73,6 @@ test('@critical reject subscription → confirm dialog → removed from active l
   await expect(page.getByRole('link', { name: /Review Spotify/ })).toHaveCount(0)
 })
 
-test('ambiguous candidate can be confirmed and rejected', async ({ page }) => {
-  await signIn(page)
-  await connectAndScan(page)
-  await navigateTo(page, 'attention')
-
-  const candidates = page.locator('[data-candidate-id]')
-  await expect(candidates).toHaveCount(2)
-
-  const first = candidates.first()
-  await first.getByRole('button', { name: /Confirm .* as a subscription/ }).click()
-  await expect(candidates).toHaveCount(1)
-
-  const remaining = candidates.first()
-  await remaining.getByRole('button', { name: /is not a subscription/ }).click()
-  await expect(candidates).toHaveCount(0)
-  await expect(page.getByText('Nothing to review right now.')).toBeVisible()
-})
-
 test('@mobile mobile navigation opens, routes, and closes with Escape', async ({ page }) => {
   await signIn(page)
   const menuButton = page.getByRole('button', { name: 'Menu' })

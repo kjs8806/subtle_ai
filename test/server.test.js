@@ -314,10 +314,11 @@ test('GET /api/v1/attention requires a session, then surfaces a durable price ch
   const unauthenticated = await app.inject({ method: 'GET', url: '/api/v1/attention' })
   assert.equal(unauthenticated.statusCode, 401)
 
-  const session = await authorize(app)
+  const session = await authorizeAndConnect(app)
   const headers = { cookie: `subtle_session=${session}` }
   await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
-  await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
+  const scan = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
+  assert.equal(scan.statusCode, 200)
 
   // The mock mailbox (server/gmail/fakeProvider.js) has a ChatGPT Plus price
   // rise from $16.00 to $20.00 (25%, well past the >=5%-or->=$24/yr
