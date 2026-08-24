@@ -125,6 +125,15 @@ integration('server runtime persists through restart, isolates accounts, purges 
     await direct.query('INSERT INTO subscriptions (user_id, canonical_service, raw_merchant, source) VALUES ($1, $2, $3, $4)', [userId, 'Manual Gym', 'manual', 'Manual entry'])
     await direct.end()
 
+    // FEATURE-003: the ChatGPT Plus receipt pair ($16.00 -> $20.00) is a
+    // material price increase, so it must already have a durable event row
+    // before any restart.
+    const attention = await runtimeA.app.inject({ method: 'GET', url: '/api/v1/attention', headers })
+    const priceItem = attention.json().items.find((item) => item.type === 'price_change')
+    assert.ok(priceItem, 'the ChatGPT Plus price increase surfaces before any restart')
+    const dismiss = await runtimeA.app.inject({ method: 'POST', url: `/api/v1/attention/${encodeURIComponent(priceItem.id)}/dismiss`, headers })
+    assert.equal(dismiss.statusCode, 200)
+
     await runtimeA.close()
   })
 
@@ -148,6 +157,16 @@ integration('server runtime persists through restart, isolates accounts, purges 
     assert.equal(detail.json().evidence[0].currency, 'USD', 'evidence currency survives the restart')
     assert.equal(detail.json().priceHistory[0].currency, 'USD', 'price observation currency survives the restart')
     assert.equal(detail.json().billingHistory[0].currency, 'USD', 'billing event currency survives the restart')
+
+    // FEATURE-003: the durable price_change_events row and the dismissal
+    // recorded in step A both survive the restart - the event is not
+    // re-created, and the dismissed item does not reappear.
+    const eventRows = await waitForPool(runtimeUrl)
+    const priceChangeCount = await eventRows.query('SELECT count(*) FROM price_change_events')
+    assert.equal(priceChangeCount.rows[0].count, '1', 'the price-change event row persists through the restart, not duplicated')
+    await eventRows.end()
+    const attentionAfterRestart = await runtimeB.app.inject({ method: 'GET', url: '/api/v1/attention', headers })
+    assert.equal(attentionAfterRestart.json().items.filter((item) => item.type === 'price_change').length, 0, 'the dismissal survives the restart')
 
     const { headers: otherHeaders } = await authenticate(runtimeB.app, testUsers.b)
     const otherSubs = await runtimeB.app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers: otherHeaders })

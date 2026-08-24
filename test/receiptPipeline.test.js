@@ -9,7 +9,6 @@ import {
   createRecommendationEvidence,
   createSubscriptionRecord,
   createSubscription,
-  detectPriceChange,
   mergeSubscriptionDetections,
   normalizeMerchant,
   parseReceipt,
@@ -165,24 +164,6 @@ test('ignores text without receipt terms', () => {
   const result = parseReceipt({ id: 'message-1', subject: 'Hello', sender: 'friend@example.com', body: 'See you tomorrow.' })
   assert.equal(result.classification, 'not_receipt')
   assert.equal(result.evidence, null)
-})
-
-test('detects only increases in price history when currencies match', () => {
-  assert.deepEqual(detectPriceChange([{ amount: 10, currency: 'USD' }, { amount: 12, currency: 'USD' }]), {
-    type: 'price_increase',
-    previous: 10,
-    current: 12,
-    annualImpact: 24,
-    reason: 'The same subscription was observed at a higher price in a later receipt.',
-  })
-  assert.equal(detectPriceChange([{ amount: 12, currency: 'USD' }, { amount: 10, currency: 'USD' }]), null)
-})
-
-test('never reports a price increase across mismatched or unknown currencies', () => {
-  assert.equal(detectPriceChange([{ amount: 10, currency: 'USD' }, { amount: 12, currency: 'CAD' }]), null, 'mismatched currencies')
-  assert.equal(detectPriceChange([{ amount: 10, currency: null }, { amount: 12, currency: null }]), null, 'both unknown')
-  assert.equal(detectPriceChange([{ amount: 10, currency: 'USD' }, { amount: 12, currency: null }]), null, 'one unknown')
-  assert.equal(detectPriceChange([{ amount: 10 }, { amount: 12 }]), null, 'currency field absent entirely')
 })
 
 test('merges repeated detections and keeps the latest observed price paired with its currency', () => {

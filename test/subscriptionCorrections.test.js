@@ -81,6 +81,48 @@ const runContractTests = (label, createRepository, testFn = test) => {
     assert.equal(afterDismiss.conflicts.length, 0, 'a dismissed conflict is acknowledged, not left open')
   })
 
+  // Tech Lead remediation (GitHub PR #37, second-round review, BLOCKER 2 /
+  // required test "memory and PostgreSQL repository attention results
+  // remain behaviorally equivalent"): the same cadence/currency-correction
+  // scenario against both repositories, asserting identical
+  // listAttentionItems output - memoryRepository.js satisfies this "for
+  // free" (it always recomputes price-change detection fresh from the live
+  // subscription's currency/billingCycle on every call, so a correction is
+  // reflected immediately with no separate invalidation step), while
+  // postgresRepository.js relies on recordPriceChangeEvents' self-heal
+  // (ON CONFLICT ... DO UPDATE) plus listAttentionItems' currency/cadence
+  // eligibility filter - this test is what proves those two different
+  // mechanisms actually converge on the same externally-visible behavior.
+  testFn(`[${label}] a billing_cycle correction updates the live price-change item's annual impact, and a currency correction with no matching history suppresses it`, async () => {
+    const repository = await createRepository()
+    const user = await repository.createUser({ email: `${label}-cadence@example.com`, name: 'Cadence' })
+    await repository.authorizeConnection(user.id)
+
+    const first = await repository.persistParsedEvidence(user.id, receipt('cadence-msg-1', { amount: 10, receivedAt: '2026-01-01T09:00:00.000Z' }))
+    const subscriptionId = first.subscription.id
+    await repository.persistParsedEvidence(user.id, receipt('cadence-msg-2', { amount: 12, receivedAt: '2026-02-01T09:00:00.000Z' }))
+
+    const beforeItems = await repository.listAttentionItems(user.id)
+    const beforeItem = beforeItems.find((item) => item.type === 'price_change' && item.subscriptionId === subscriptionId)
+    assert.ok(beforeItem, `[${label}] the material increase is attention-worthy before any correction`)
+    assert.equal(beforeItem.priceChange.annualImpact, 24, `[${label}] $10->$12/month is $24/year`)
+
+    await repository.applyCorrection(user.id, subscriptionId, 'billing_cycle', 'yearly')
+    const afterCadence = await repository.listAttentionItems(user.id)
+    const afterCadenceItem = afterCadence.find((item) => item.type === 'price_change' && item.subscriptionId === subscriptionId)
+    assert.ok(afterCadenceItem, `[${label}] still attention-worthy via the 20% threshold`)
+    assert.equal(afterCadenceItem.priceChange.annualImpact, 2, `[${label}] the same transition reinterpreted as yearly billing is $2/year, not the stale $24`)
+
+    await repository.applyCorrection(user.id, subscriptionId, 'currency', 'CAD')
+    const afterCurrency = await repository.listAttentionItems(user.id)
+    assert.ok(!afterCurrency.some((item) => item.type === 'price_change' && item.subscriptionId === subscriptionId), `[${label}] no USD-denominated event is shown as current once the subscription's own currency is CAD`)
+
+    // Neither repository ever rewrites the original receipt evidence's
+    // currency just because the live subscription was corrected.
+    const subscription = await repository.getSubscription(user.id, subscriptionId)
+    assert.ok(subscription.priceHistory.filter((entry) => entry.currency).every((entry) => entry.currency === 'USD'), `[${label}] original receipt-derived price observations keep their real, originally-observed currency`)
+  })
+
   testFn(`[${label}] rejecting a subscription is idempotent and non-destructive`, async () => {
     const repository = await createRepository()
     const user = await repository.createUser({ email: `${label}-b@example.com`, name: 'B' })

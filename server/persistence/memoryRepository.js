@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { buildAttentionItems } from '../../src/services/attentionItemBuilder.js'
+import { detectPriceChangeEvents } from '../../src/services/priceChangeService.js'
 
 const clone = (value) => structuredClone(value)
 const publicConnection = (connection) => {
@@ -30,6 +32,10 @@ export const createMemoryRepository = () => {
   const corrections = new Map()
   const conflicts = new Map()
   const candidates = new Map()
+  // FEATURE-003: item_key -> dismissedAt, scoped per user via the key
+  // convention `${userId}:${itemKey}` (memoryRepository has no per-user
+  // table the way Postgres does, so ownership lives in the key itself).
+  const attentionDismissals = new Map()
 
   const activeCorrectionFor = (subscriptionId, field) => [...corrections.values()].find((item) => item.subscriptionId === subscriptionId && item.field === field && !item.supersededAt)
   const hydrateSub = (sub) => sub && {
@@ -122,7 +128,12 @@ export const createMemoryRepository = () => {
       const provenance = Object.fromEntries(Object.entries(parsed.fieldObservations || {}).map(([field, observation]) => [field, observation.provenance]))
       const record = { ...parsed, id: evidenceId, userId, subscriptionId, provenance }
       const previous = candidateSubs[0]
-      const observation = { amount: parsed.amount, currency: parsed.currency ?? null, observedAt: parsed.receivedAt }
+      // Tech Lead remediation (GitHub PR #37, BLOCKER 2): each observation
+      // carries a stable id (here, the evidence row it came from - a 1:1
+      // relationship for a Gmail-derived observation) so
+      // detectPriceChangeEvents can key a transition's identity off real
+      // source provenance instead of price values alone.
+      const observation = { id: evidenceId, amount: parsed.amount, currency: parsed.currency ?? null, observedAt: parsed.receivedAt }
       const billing = { amount: parsed.amount, currency: parsed.currency ?? null, billedAt: parsed.receivedAt, evidenceId }
       const fields = Object.entries(parsed.fieldObservations || {}).map(([field, obs]) => ({ field, value: obs.value ?? null, provenance: obs.provenance, confidence: parsed.confidence.score, evidenceId }))
 
@@ -187,6 +198,13 @@ export const createMemoryRepository = () => {
       const correction = { id: randomUUID(), subscriptionId, userId, field, value: clone(value), createdAt: new Date().toISOString(), supersededAt: null }
       corrections.set(correction.id, correction)
       subscription[CORRECTION_FIELD_TO_PROPERTY[field]] = clone(value)
+      // A price correction has no receipt behind it, but it still needs to
+      // participate in the same observation-pair identity model as every
+      // other price change (Tech Lead remediation, GitHub PR #37) rather
+      // than needing a second, correction-specific identity scheme.
+      if (field === 'current_price') {
+        subscription.priceHistory = [...subscription.priceHistory, { id: correction.id, amount: value, currency: subscription.currency, observedAt: correction.createdAt }]
+      }
       subscriptions.set(subscriptionId, subscription)
       return { subscription: hydrateSub(clone(subscription)) }
     },
@@ -254,7 +272,7 @@ export const createMemoryRepository = () => {
           if (value !== null && value !== undefined) fields.push({ field, value, provenance: 'inferred', confidence: null, evidenceId: ev.id })
         }
       }
-      const priceHistoryAdditions = evidenceRecords.map((ev) => ({ amount: ev.amount, currency: ev.currency, observedAt: ev.receivedAt }))
+      const priceHistoryAdditions = evidenceRecords.map((ev) => ({ id: ev.id, amount: ev.amount, currency: ev.currency, observedAt: ev.receivedAt }))
       const billingHistoryAdditions = evidenceRecords.map((ev) => ({ amount: ev.amount, currency: ev.currency, billedAt: ev.receivedAt, evidenceId: ev.id }))
       const subscription = existingSubscription
         ? {
@@ -308,6 +326,40 @@ export const createMemoryRepository = () => {
       candidate.resolvedAt = new Date().toISOString()
       candidates.set(candidateId, candidate)
       return { candidate: clone(candidate) }
+    },
+
+    // FEATURE-003: price-change/renewal intelligence, mixed with FEATURE-002's
+    // existing ambiguous-candidate review into one Worth-your-attention list.
+    // Recomputed on every call from current state (subscriptions/
+    // priceHistory/candidates), which is naturally idempotent - there's no
+    // separate durable event table to accidentally duplicate in the memory
+    // backend, unlike Postgres's price_change_events (see postgresRepository.js).
+    listAttentionItems: (userId) => {
+      const userSubscriptions = [...subscriptions.values()].filter((item) => item.userId === userId && item.status !== 'rejected').map(hydrateSub)
+      const userCandidates = [...candidates.values()].filter((item) => item.userId === userId && item.status === 'pending')
+      const isDismissed = (itemKey) => attentionDismissals.has(`${userId}:${itemKey}`)
+      // Tech Lead remediation (GitHub PR #37, BLOCKER 1): buildAttentionItems
+      // no longer detects price changes itself - each subscription's current
+      // occurrence (if any) is detected here, from its own priceHistory, the
+      // same way postgresRepository.js's recordPriceChangeEvents does (there
+      // is no separate durable event table to persist against in-memory, so
+      // this recomputes on every call - naturally idempotent, same as the
+      // rest of this backend).
+      const priceChangeEvents = userSubscriptions.flatMap((subscription) => {
+        const latest = detectPriceChangeEvents({ currency: subscription.currency, cadence: subscription.billingCycle, priceHistory: subscription.priceHistory }).at(-1)
+        if (!latest) return []
+        // Strip the raw observation objects - only the derived eventKey
+        // (their identity, not the observations themselves) is part of the
+        // attention-item shape, matching what postgresRepository.js's SQL
+        // read returns.
+        const { previousObservation, currentObservation, ...change } = latest
+        return [{ ...change, subscriptionId: subscription.id, eventKey: `${previousObservation.id}:${currentObservation.id}` }]
+      })
+      return clone(buildAttentionItems({ subscriptions: userSubscriptions, priceChangeEvents, candidates: userCandidates, isDismissed }))
+    },
+    dismissAttentionItem: (userId, itemKey) => {
+      attentionDismissals.set(`${userId}:${itemKey}`, new Date().toISOString())
+      return { itemKey, dismissed: true }
     },
   }
 }

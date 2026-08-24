@@ -1,6 +1,9 @@
+import { CORRECTION_FIELD_FOR, fieldProvenance } from '../services/fieldProvenance.js'
 import { serviceIconFor, serviceIconMarkup } from '../services/serviceIcons.js'
 import { SUBSCRIPTION_TEMPLATES } from '../services/subscriptionTemplates.js'
 import { NAV_ICONS } from './navigation.js'
+
+export { CORRECTION_FIELD_FOR, fieldProvenance }
 
 const money = value => typeof value === 'number' ? `$${value.toFixed(2)}` : 'Price not provided'
 // Currency is shown explicitly whenever it's known (FEATURE-001/002 supports
@@ -15,12 +18,6 @@ const ICON_TRASH = `<svg width="26" height="26" viewBox="0 0 24 24" fill="none" 
 const ICON_RECEIPT = svg('<path d="M9 3h6a1 1 0 0 1 1 1v1h1a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h1V4a1 1 0 0 1 1-1Z"/><path d="M9 12h6M9 16h6"/>')
 const ICON_PERSON = svg('<circle cx="12" cy="8" r="3.5"/><path d="M5 20c1.2-3.5 4-5.5 7-5.5s5.8 2 7 5.5"/>')
 
-// FEATURE-002: maps the UI-facing field keys already used elsewhere in this
-// file to the snake_case field name subscription_corrections/
-// correction_conflicts record server-side (see
-// migrations/008_feature_002_corrections.sql and server/app.js's
-// CORRECTION_FIELD_MAP).
-export const CORRECTION_FIELD_FOR = { canonicalService: 'canonical_service', plan: 'plan', amount: 'current_price', currency: 'currency', cadence: 'billing_cycle', nextRenewal: 'next_renewal' }
 const FRIENDLY_FIELD_LABEL = { canonical_service: 'service', plan: 'plan', current_price: 'price', currency: 'currency', billing_cycle: 'billing cadence', next_renewal: 'next renewal' }
 const KNOWN_SERVICES = [...new Set(SUBSCRIPTION_TEMPLATES.map(({ canonicalService }) => canonicalService))].sort((a, b) => a.localeCompare(b))
 
@@ -97,17 +94,6 @@ const toIsoDate = (value) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 }
 
-export const fieldProvenance = (item, field) => {
-  if (item.source === 'Manual entry') return 'User provided'
-  const correctionField = CORRECTION_FIELD_FOR[field]
-  const hasActiveCorrection = correctionField && (item.pipelineRecord?.corrections || []).some(correction => correction.field === correctionField)
-  if (hasActiveCorrection) return 'Confirmed by you'
-  const observation = [...(item.pipelineRecord?.fieldObservations || [])].reverse().find(entry => entry.field === field)
-  const state = observation?.provenance || item.pipelineRecord?.confidence?.state
-  if (state === 'confirmed') return `Confirmed from ${item.source}`
-  if (state === 'inferred') return `Inferred from ${item.source}`
-  return `Source: ${item.source || 'Not provided'}`
-}
 
 const formatDate = (value) => {
   const date = new Date(value)

@@ -6,7 +6,7 @@ import { currentRoute, routePath } from '../src/ui/router.js'
 import { navigationMarkup } from '../src/ui/navigation.js'
 import { overviewMarkup } from '../src/ui/overview.js'
 import { filterAndSortSubscriptions, subscriptionRow, subscriptionsPageMarkup, subscriptionTableRow } from '../src/ui/subscriptions.js'
-import { actionCard, attentionPageMarkup, candidateRow } from '../src/ui/attention.js'
+import { attentionCardMarkup, attentionDetailMarkup, attentionPageMarkup, candidateRow, countsByFilter, filterAttentionItems, overlapCardMarkup, severityBadgeMarkup, sortAttentionItems } from '../src/ui/attention.js'
 import { sourcesPageMarkup } from '../src/ui/sources.js'
 import { settingsPageMarkup } from '../src/ui/settings.js'
 import { correctionDialogMarkup, detailMarkup, fieldProvenance, rejectConfirmMarkup, renewalLabel } from '../src/ui/subscriptionDetail.js'
@@ -15,6 +15,18 @@ import { signedOutMarkup } from '../src/ui/signedOut.js'
 import { FALLBACK_SERVICE_ICON, serviceIconFor, serviceIconMarkup } from '../src/services/serviceIcons.js'
 
 const candidate = { id: 'cand-1', canonicalService: 'Amazon', rawMerchant: 'AMZN Mktp', evidence: [{ amount: 9.99, currency: 'USD', cadence: 'monthly' }] }
+// FEATURE-003 attention-item fixtures (src/services/attentionItemBuilder.js's output shape).
+const needsReviewAttentionItem = { id: 'needs-review:cand-1', type: 'needs_review', subscriptionId: null, candidateId: 'cand-1', canonicalService: 'Amazon', plan: null, priority: 'low', sortRank: 3, ruleVersion: 1 }
+const priceChangeAttentionItem = {
+  id: 'price-change:sub-1:14.99:17.99:USD', type: 'price_change', subscriptionId: 'sub-1', candidateId: null,
+  canonicalService: 'Canva Pro', plan: 'Pro', priority: 'medium', sortRank: 1, ruleVersion: 1,
+  priceChange: { changeType: 'increase', currency: 'USD', cadence: 'monthly', previousPrice: 14.99, currentPrice: 17.99, perPeriodDelta: 3, percentChange: 20.01, annualImpact: 36, firstSeenAt: '2026-08-12T00:00:00.000Z', isAttentionWorthy: true },
+}
+const renewalAttentionItem = {
+  id: 'renewal:sub-2:2026-08-29', type: 'renewal', subscriptionId: 'sub-2', candidateId: null,
+  canonicalService: 'Spotify', plan: 'Premium Individual', priority: 'high', sortRank: 0, ruleVersion: 1,
+  renewal: { certainty: 'confirmed', date: '2026-08-29', timing: 'soon', daysUntil: 6 },
+}
 
 // ---- Router: a real destination per sidebar item, not anchors into one page.
 test('router maps every sidebar destination to its own path, round-trips through currentRoute, and falls back safely', () => {
@@ -72,7 +84,7 @@ test('the sidebar is real route links with distinct destinations, correct active
 // ---- Overview: orientation only - a preview, not the whole application.
 test('Overview shows previews and links onward, and never contains full management UI', () => {
   const items = demoSubscriptions.slice(0, 8)
-  const overview = overviewMarkup({ subscriptions: items, actions: [], monthlySpend: 108.95, candidates: [candidate], greeting: 'Good morning.', gmailSource: { status: 'connected', lastScanAt: null } })
+  const overview = overviewMarkup({ subscriptions: items, attentionItems: [priceChangeAttentionItem, needsReviewAttentionItem], overlapActions: [], monthlySpend: 108.95, greeting: 'Good morning.', gmailSource: { status: 'connected', lastScanAt: null } })
 
   // Required hierarchy: greeting -> summary cards -> subscriptions preview -> attention preview.
   const order = ['Good morning', 'Monthly recurring spend', 'Annual spend', 'Active subscriptions', 'Worth your attention', 'Your subscriptions']
@@ -92,7 +104,7 @@ test('Overview shows previews and links onward, and never contains full manageme
   assert.doesNotMatch(overview, /data-gmail-action|data-gmail-disconnect|data-confirm-candidate|data-reject-candidate|data-sign-out/)
   assert.match(overview, /href="#\/sources">Manage sources/)
 
-  const empty = overviewMarkup({ subscriptions: [], actions: [], monthlySpend: 0, candidates: [] })
+  const empty = overviewMarkup({ subscriptions: [], attentionItems: [], overlapActions: [], monthlySpend: 0 })
   assert.match(empty, /No subscriptions yet\. Connect Gmail or add one manually\./)
   assert.match(empty, /Nothing needs your attention right now\./)
 })
@@ -144,23 +156,66 @@ test('filterAndSortSubscriptions searches by name/plan, filters by billing caden
 // ---- Worth your attention: its own destination, not a dashboard widget -
 // and it includes ambiguous-candidate review (FEATURE-002), visually distinct
 // from a confirmed subscription.
-test('Worth your attention is a dedicated page combining real signals and ambiguous-candidate review', () => {
-  const action = { id: 'price', label: 'Price increase detected', affectedServices: ['Canva Pro'], body: '$14.99 -> $17.99/month.', saving: '+$36/year', impactLabel: 'Yearly impact' }
-  const page = attentionPageMarkup({ actions: [action], candidates: [candidate] })
+test('Worth your attention (FEATURE-003) is a dedicated page unifying price changes, renewals, and ambiguous-candidate review, prioritized and filterable', () => {
+  const items = [renewalAttentionItem, priceChangeAttentionItem, needsReviewAttentionItem]
+  const page = attentionPageMarkup({ items })
   assert.match(page, /Worth your attention/)
-  assert.match(page, /Needs your review/)
-  assert.match(page, /Items Subtle AI is unsure about won't affect your totals until you decide\./)
+  assert.match(page, /You're in control/)
+  // Filter tabs, one per attention type plus All, each carrying its own count.
+  for (const label of ['All', 'Price changes', 'Renewals', 'Needs review']) assert.match(page, new RegExp(label))
+  assert.match(page, /data-attention-sort/)
+
+  assert.deepEqual(countsByFilter(items), { all: 3, price_change: 1, renewal: 1, needs_review: 1 })
+  assert.deepEqual(filterAttentionItems(items, 'renewal').map(item => item.id), [renewalAttentionItem.id])
+  assert.deepEqual(filterAttentionItems(items, 'all'), items)
+  // Server-provided priority order (renewal soon first) by default; name sort is the only client-side alternative.
+  assert.deepEqual(sortAttentionItems(items, 'priority').map(item => item.id), [renewalAttentionItem.id, priceChangeAttentionItem.id, needsReviewAttentionItem.id])
+  assert.deepEqual(sortAttentionItems(items, 'name').map(item => item.canonicalService), ['Amazon', 'Canva Pro', 'Spotify'])
+
+  // Each card carries a severity badge - a visual aid, not a scoring engine
+  // (Product Owner note, GitHub issue #22) - and opens the detail dialog.
+  const priceCard = attentionCardMarkup(priceChangeAttentionItem)
+  assert.match(priceCard, /data-attention-id="price-change:sub-1:14\.99:17\.99:USD"/)
+  assert.match(priceCard, /severity-medium/)
+  assert.match(priceCard, /USD 14\.99 → USD 17\.99\/mo/)
+  const renewalCard = attentionCardMarkup(renewalAttentionItem)
+  assert.match(renewalCard, /severity-high/)
+  assert.match(renewalCard, /Next renewal/)
 
   const row = candidateRow(candidate)
   assert.match(row, /data-confirm-candidate/)
   assert.match(row, /data-reject-candidate/)
   assert.match(row, /Uncertain/)
   assert.doesNotMatch(row, /subscription-row/, 'a candidate never renders as a confirmed subscription row')
-  assert.match(actionCard(action), /Review subscription/)
 
-  const empty = attentionPageMarkup({ actions: [], candidates: [] })
-  assert.match(empty, /Nothing needs your attention right now\./)
-  assert.match(empty, /Nothing to review right now\./)
+  // Legacy overlap-detection cards (unrelated to FEATURE-003) still render,
+  // with a real "Review subscription" link to the affected subscription and
+  // a "Keep both" button that dismisses the card (both were previously dead
+  // controls with no handler at all).
+  const overlapAction = { id: 'overlap-1', subscriptionId: 'sub-dropbox', label: 'Potential overlap', affectedServices: ['Dropbox', 'Google One'], body: 'Both provide cloud storage.', saving: '$120.00/year', impactLabel: 'Potential savings', secondary: 'Keep both' }
+  const overlapCard = overlapCardMarkup(overlapAction)
+  assert.match(overlapCard, new RegExp(`<a class="primary-button" href="#${routePath('subscription-detail', { id: 'sub-dropbox' }).replace(/\//g, '\\/')}">Review subscription</a>`))
+  assert.match(overlapCard, /data-dismiss-overlap="overlap-1"/)
+  assert.match(attentionPageMarkup({ items: [], overlapActions: [overlapAction] }), /Other suggestions/)
+
+  const empty = attentionPageMarkup({ items: [], overlapActions: [] })
+  assert.match(empty, /You're all caught up/)
+})
+
+test('attentionDetailMarkup shows an impact breakdown for a price change and only "Review subscription"/"Dismiss this item" as actions - never the unauthorized Compare alternatives or Cancel subscription', () => {
+  const body = attentionDetailMarkup(priceChangeAttentionItem)
+  assert.match(body, /USD 14\.99/)
+  assert.match(body, /USD 17\.99/)
+  assert.match(body, /\+USD 36\.00\/yr/)
+  assert.match(body, /Review subscription/)
+  assert.match(body, /Dismiss this item/)
+  assert.doesNotMatch(body, /Compare alternatives/)
+  assert.doesNotMatch(body, /Cancel subscription/)
+  assert.match(body, new RegExp(`href="#${routePath('subscription-detail', { id: priceChangeAttentionItem.subscriptionId }).replace(/\//g, '\\/')}"`))
+
+  const renewalBody = attentionDetailMarkup(renewalAttentionItem)
+  assert.match(renewalBody, /Confirmed/)
+  assert.match(severityBadgeMarkup('high'), /High/)
 })
 
 // ---- Sources: the one place Gmail is actually managed.

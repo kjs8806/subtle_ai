@@ -38,4 +38,8 @@ export const feature001Api = {
   listCandidates: () => request('/api/v1/subscriptions/candidates'),
   confirmCandidate: (id, overrides = {}) => request(`/api/v1/subscriptions/candidates/${encodeURIComponent(id)}/confirm`, { method: 'POST', body: JSON.stringify(overrides) }),
   rejectCandidate: (id) => request(`/api/v1/subscriptions/candidates/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify({}) }),
+  // FEATURE-003: price-change/renewal intelligence, unified with FEATURE-002's
+  // ambiguous-candidate review server-side (see server/app.js).
+  getAttentionItems: () => request('/api/v1/attention'),
+  dismissAttentionItem: (itemKey) => request(`/api/v1/attention/${encodeURIComponent(itemKey)}/dismiss`, { method: 'POST', body: JSON.stringify({}) }),
 }
