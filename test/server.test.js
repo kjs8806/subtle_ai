@@ -25,6 +25,19 @@ const authorize = async (app) => {
   return callback.cookies.find(({ name }) => name === 'subtle_session').value
 }
 
+// Gmail authorization is a separate, explicit step from sign-in (never
+// implied by it - see server/app.js's callback and
+// docs/product/features/FEATURE-001.md), so scan-focused tests that need a
+// connected source as fixture state must ask for it explicitly rather than
+// relying on sign-in to have connected it for them.
+const authorizeAndConnect = async (app) => {
+  const session = await authorize(app)
+  const headers = { cookie: `subtle_session=${session}` }
+  const connect = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/authorize', headers, payload: {} })
+  assert.equal(connect.statusCode, 200)
+  return session
+}
+
 test('health reports the mock provider', async () => {
   const app = buildApp()
   const response = await app.inject({ method: 'GET', url: '/api/v1/health' })
@@ -67,7 +80,7 @@ test('rejects protected routes without a session', async () => {
 
 test('mock authorization and scan create evidence-backed subscriptions idempotently', async () => {
   const app = buildApp()
-  const session = await authorize(app)
+  const session = await authorizeAndConnect(app)
   const headers = { cookie: `subtle_session=${session}` }
   const source = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
   assert.equal(source.json().status, 'connected')
@@ -95,7 +108,7 @@ test('mock authorization and scan create evidence-backed subscriptions idempoten
 
 test('concurrent scans for the same connection are rejected with a conflict', async () => {
   const app = buildApp()
-  const session = await authorize(app)
+  const session = await authorizeAndConnect(app)
   const headers = { cookie: `subtle_session=${session}` }
   await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
 
@@ -122,7 +135,7 @@ test('scan persists only subscription-classified receipts from a mixed mailbox',
   ]
   const provider = { ...createFakeGmailProvider(), listCandidateMessages: async () => messages }
   const app = buildApp({ provider })
-  const session = await authorize(app)
+  const session = await authorizeAndConnect(app)
   const headers = { cookie: `subtle_session=${session}` }
 
   const scan = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
@@ -142,7 +155,7 @@ test('scan persists only subscription-classified receipts from a mixed mailbox',
 const scanSingleMessage = async (message) => {
   const provider = { ...createFakeGmailProvider(), listCandidateMessages: async () => [message] }
   const app = buildApp({ provider })
-  const session = await authorize(app)
+  const session = await authorizeAndConnect(app)
   const headers = { cookie: `subtle_session=${session}` }
   const scan = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
   const subscriptions = await app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })

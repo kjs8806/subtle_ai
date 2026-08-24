@@ -105,7 +105,11 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
       }
       const token = sessions.issue(authenticatedUserId)
       reply.setCookie(SESSION_COOKIE, token, { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: 8 * 60 * 60 })
-      if (gmailProvider === 'mock') await repository.authorizeConnection(authenticatedUserId, tokenVault?.encrypt(result.refreshToken || '') || null)
+      // Gmail authorization is intentionally a separate, explicit step from
+      // application sign-in (see docs/product/features/FEATURE-001.md) - the
+      // real gmailProvider === 'google' branch above never auto-connects
+      // Gmail here, and the mock provider must not either. Connecting only
+      // ever happens via the dedicated POST /sources/gmail/authorize flow.
       return redirectToApp(reply)
     } catch (error) {
       request.log.error(error)
