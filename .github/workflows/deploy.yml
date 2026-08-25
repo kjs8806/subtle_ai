@@ -1,0 +1,176 @@
+name: Deploy (Cloud Run)
+
+# MVP-BETA-007 (#44): manual-dispatch only, deliberately. This never runs on
+# push or pull_request - docs/engineering/DEPLOYMENT.md's existing release
+# gate is explicit that "automation may prepare branches and PRs but may not
+# deploy, merge, release, or bypass protections," and Security-sensitive
+# production release requires Founder approval during the supervised phase.
+# This workflow is the reproducible *mechanism* a human invokes (via the
+# Actions tab, on a specific commit/ref) - it is never triggered by an
+# agent or by CI itself. The `production-beta` GitHub Environment below can
+# additionally be configured with required reviewers, giving a second,
+# platform-enforced approval gate before the deploy job actually runs.
+#
+# This workflow has not been run against a real Google Cloud project or
+# Neon database from this repository - see docs/engineering/DEPLOYMENT.md's
+# "Known limitations" section. Before the first real use: create the
+# Environment, populate the repository variables/secrets it references
+# below, and confirm each job in a low-stakes dry run.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy" to confirm you intend to deploy this exact commit to the public beta environment'
+        required: true
+
+permissions:
+  contents: read
+  id-token: write # required for keyless Workload Identity Federation auth to Google Cloud
+
+concurrency:
+  group: deploy-production-beta
+  cancel-in-progress: false # never cancel a deploy that's already touching the live database/revision
+
+jobs:
+  validate:
+    if: github.event.inputs.confirm == 'deploy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: subtle_ai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d subtle_ai_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --package-lock=false @playwright/test@1.62.1
+      - run: npx playwright install --with-deps chromium
+      - name: Run tests
+        run: npm test
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/subtle_ai_test
+      - name: Run PostgreSQL integration tests
+        run: npm run test:postgres
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/subtle_ai_test
+      - name: Run application-runtime PostgreSQL persistence tests
+        run: npm run test:runtime
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/subtle_ai_test
+      - name: Run browser smoke suite
+        run: npm run test:smoke
+      - name: Build application
+        run: npm run build
+
+  build-and-push:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production-beta
+    # Repository/Environment variables this job reads (Settings -> Environments
+    # -> production-beta -> Variables), none of them secret:
+    #   GCP_PROJECT_ID            e.g. subtle-ai-beta
+    #   GCP_REGION                the Cloud Run region documented in DEPLOYMENT.md
+    #   ARTIFACT_REGISTRY_REPO    e.g. subtle-ai
+    # Secrets this job reads (Settings -> Environments -> production-beta -> Secrets):
+    #   GCP_WORKLOAD_IDENTITY_PROVIDER   full WIF provider resource name
+    #   GCP_SERVICE_ACCOUNT              deploy service account email
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+      - id: image
+        run: echo "image=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.ARTIFACT_REGISTRY_REPO }}/subtle-ai:${{ needs.validate.outputs.sha }}" >> "$GITHUB_OUTPUT"
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+      - name: Build image
+        run: docker build -t "${{ steps.image.outputs.image }}" .
+      - name: Push image
+        run: docker push "${{ steps.image.outputs.image }}"
+
+  migrate:
+    needs: [validate, build-and-push]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production-beta
+    # Secrets: DATABASE_URL (the Neon connection string; see DEPLOYMENT.md
+    # for why this runs as its own step rather than at container boot).
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --omit=dev
+      - run: npm run migrate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+  deploy:
+    needs: [validate, build-and-push, migrate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production-beta
+    steps:
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      # MVP-BETA-007 (#44) cost/scale safeguards: --min-instances=0 (scale to
+      # zero, cold starts accepted for the initial beta) and --max-instances
+      # bounds worst-case concurrent Postgres connections
+      # (max-instances * DB_POOL_MAX, see server/config/env.js) against
+      # Neon's free-tier connection ceiling. --no-cpu-throttling is
+      # deliberately NOT set (default CPU throttling outside request
+      # processing is the cheaper, scale-to-zero-friendly behavior this
+      # beta wants). GMAIL_PROVIDER=google and PERSISTENCE_PROVIDER=postgres
+      # are set explicitly here rather than baked into the image so they're
+      # visible in this workflow, not just implied by the Dockerfile - and
+      # because server/config/env.js's production fail-closed validation
+      # means the revision simply won't start if either is missing or wrong.
+      - name: Deploy Cloud Run revision
+        run: |
+          gcloud run deploy "${{ vars.CLOUD_RUN_SERVICE }}" \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --region "${{ vars.GCP_REGION }}" \
+            --image "${{ needs.build-and-push.outputs.image }}" \
+            --platform managed \
+            --min-instances 0 \
+            --max-instances "${{ vars.CLOUD_RUN_MAX_INSTANCES }}" \
+            --memory 512Mi \
+            --cpu 1 \
+            --allow-unauthenticated \
+            --set-env-vars "NODE_ENV=production,GMAIL_PROVIDER=google,PERSISTENCE_PROVIDER=postgres,PUBLIC_ORIGIN=${{ vars.PUBLIC_ORIGIN }},GOOGLE_OIDC_REDIRECT_URI=${{ vars.GOOGLE_OIDC_REDIRECT_URI }},GOOGLE_GMAIL_REDIRECT_URI=${{ vars.GOOGLE_GMAIL_REDIRECT_URI }}" \
+            --set-secrets "DATABASE_URL=DATABASE_URL:latest,SESSION_SECRET=SESSION_SECRET:latest,TOKEN_ENCRYPTION_KEY=TOKEN_ENCRYPTION_KEY:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest"
+      - name: Smoke-test the deployed revision
+        run: |
+          URL=$(gcloud run services describe "${{ vars.CLOUD_RUN_SERVICE }}" --project "${{ vars.GCP_PROJECT_ID }}" --region "${{ vars.GCP_REGION }}" --format 'value(status.url)')
+          echo "Deployed: $URL"
+          curl -sf "$URL/api/v1/health" | grep -q '"status":"ok"'
+          curl -sf "$URL/api/v1/health/ready" | grep -q '"status":"ok"'
