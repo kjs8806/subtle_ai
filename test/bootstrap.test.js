@@ -99,7 +99,13 @@ integration('SEC-003: GMAIL_PROVIDER=google with PostgreSQL and a complete confi
   assert.notEqual(pool, null)
   const response = await app.inject({ method: 'GET', url: '/api/v1/health' })
   assert.equal(response.statusCode, 200)
-  assert.equal(response.json().provider, 'google')
+  assert.deepEqual(response.json(), { status: 'ok' }, 'liveness must never leak which provider/persistence backend is configured')
+  // Readiness proves the postgres runtime is actually reachable, not just
+  // that buildApp() was called with a truthy pool - a stronger check than
+  // asserting a provider name the health endpoint deliberately no longer exposes.
+  const ready = await app.inject({ method: 'GET', url: '/api/v1/health/ready' })
+  assert.equal(ready.statusCode, 200)
+  assert.deepEqual(ready.json(), { status: 'ok' })
   await close()
 })
 
