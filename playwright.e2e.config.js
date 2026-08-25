@@ -4,43 +4,32 @@ import { defineConfig, devices } from '@playwright/test'
 // server started here never talks to real Google/Gmail - matches the "no
 // real Gmail credentials in CI" requirement. The mock provider also binds
 // every mock sign-in to one fixed backend account (server/app.js's
-// userId = 'mock-user'), so this suite must stay fully serial - concurrent
-// workers or projects would race against the same account's connection/
-// subscription state.
+// userId = 'mock-user'), so each selected Playwright project remains serial
+// internally. CI parallelism is provided at the GitHub Actions job level,
+// where every project gets its own isolated runner/server process.
 //
-// Kept as a separate config file (rather than merged into the top-level
-// playwright.config.js alongside the test/e2e/ smoke suite) so that running
-// either suite only ever starts the dev server(s) that suite actually needs.
-// Playwright starts every entry in a config's `webServer` array up front,
-// regardless of which `--project` is selected - a shared config would make
-// `npm run test:smoke` also boot this suite's dev server on every CI run,
-// for nothing, competing for CPU with the servers it actually uses.
+// Kept as a separate config file from the critical Chromium smoke suite so
+// ordinary PR validation does not start this broader browser matrix at all.
 //
-// #43 Accessibility & Cross-Browser QA Gate: this suite additionally covers
-// the product-approved browser matrix's rendering/runtime engines - Chromium
-// (Chrome/Edge), Firefox, and WebKit (Safari family) - across desktop and a
-// mobile responsive profile. WebKit here is automation evidence only and
-// must never be reported as real Safari macOS/iOS PASS; real Safari/Android
-// evidence remains mandatory manual #43 evidence (see
-// docs/quality/ACCESSIBILITY_QA.md).
+// #43 Accessibility & Cross-Browser QA Gate: this suite covers the approved
+// automated engine matrix - Chromium (Chrome/Edge family), Firefox, and
+// WebKit (Safari family) - across desktop and responsive mobile profiles.
+// WebKit automation is evidence only and must never be reported as real
+// Safari macOS/iOS PASS; real Safari/iOS/Android evidence remains mandatory
+// manual #43 evidence (see docs/quality/ACCESSIBILITY_QA.md).
 export default defineConfig({
   testDir: './e2e',
   timeout: 30_000,
-  // A longer default assertion timeout in CI than Playwright's 5s default:
-  // observed CI runs show brief app-unresponsive windows (the backend
-  // failing to answer for a few seconds) under the combined load of
-  // Postgres + this suite's backend + three sequential browser engines on a
-  // standard-size GitHub Actions runner - a resource-contention symptom, not
-  // a product defect (unreproducible locally: a full local run of this same
-  // spec sequence on Chromium alone stays clean). Giving each assertion more
-  // room to ride out a brief stall is a safer fix than lowering coverage.
+  // Retain a modest CI assertion cushion for runner variance, but browser
+  // engines no longer contend with Postgres + every other engine in one
+  // serial job. Deterministic product/accessibility failures must surface.
   expect: { timeout: process.env.CI ? 15_000 : 5_000 },
   fullyParallel: false,
   workers: 1,
-  // 2, not 1, in CI - some of these contention-window failures persisted
-  // through a single retry (the retry landed in the same busy window), but
-  // recovered given a second chance once the runner had moved on.
-  retries: process.env.CI ? 2 : 0,
+  // Browser projects now execute on isolated runners. One retry is enough to
+  // absorb an occasional runner/transient startup hiccup without tripling the
+  // cost of deterministic accessibility or product failures.
+  retries: process.env.CI ? 1 : 0,
   reporter: [['list']],
   use: {
     baseURL: 'http://127.0.0.1:5173',
@@ -56,22 +45,19 @@ export default defineConfig({
       GMAIL_PROVIDER: 'mock',
       PERSISTENCE_PROVIDER: 'memory',
       MOCK_GMAIL_SCENARIO: 'success',
-      // A distinct backend port from the smoke suite's hardcoded 8787
-      // (playwright.config.js), not the shared server/config/env.js default -
-      // CI now runs both suites sequentially in one job
-      // (.github/workflows/ci.yml), and reusing 8787 here risked this suite's
-      // backend racing the smoke suite's not-yet-released port and failing to
-      // bind, which silently broke every test in this suite (every page load
-      // showed the app's own "couldn't reach the server" error state instead
-      // of real content - see vite.config.js).
+      // The full browser suite creates many short-lived sessions from one
+      // loopback IP. Use a test-only ceiling so responsive/a11y coverage does
+      // not accidentally test the production rate limiter instead. The server
+      // honors this override only when NODE_ENV=test; production remains 60/min.
+      NODE_ENV: 'test',
+      E2E_RATE_LIMIT: '10000',
+      // Keep this suite on a distinct backend port from the Chromium smoke
+      // config so local/manual invocations cannot collide if both are run.
       PORT: '8788',
       VITE_API_PROXY_TARGET: 'http://127.0.0.1:8788',
     },
   },
   projects: [
-    // Desktop engines representing the supported Chrome/Edge (Chromium),
-    // Firefox, and Safari-family (WebKit) rendering/runtime engines. WebKit is
-    // automation evidence only and must never be reported as real Safari PASS.
     {
       name: 'chromium-desktop',
       use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } },
@@ -84,10 +70,6 @@ export default defineConfig({
       name: 'webkit-desktop',
       use: { ...devices['Desktop Safari'], viewport: { width: 1280, height: 800 } },
     },
-
-    // Mobile engine coverage is intentionally limited to the non-destructive
-    // responsive suite while the mock backend uses one shared account. Real
-    // Android Chrome and real iOS Safari remain mandatory manual #43 evidence.
     {
       name: 'chromium-mobile',
       use: { ...devices['Pixel 7'] },
