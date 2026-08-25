@@ -45,6 +45,12 @@ export default defineConfig({
       GMAIL_PROVIDER: 'mock',
       PERSISTENCE_PROVIDER: 'memory',
       MOCK_GMAIL_SCENARIO: 'success',
+      // The full browser suite creates many short-lived sessions from one
+      // loopback IP. Use a test-only ceiling so responsive/a11y coverage does
+      // not accidentally test the production rate limiter instead. The server
+      // honors this override only when NODE_ENV=test; production remains 60/min.
+      NODE_ENV: 'test',
+      E2E_RATE_LIMIT: '10000',
       // Keep this suite on a distinct backend port from the Chromium smoke
       // config so local/manual invocations cannot collide if both are run.
       PORT: '8788',
