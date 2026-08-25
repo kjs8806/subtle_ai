@@ -203,31 +203,56 @@ integration('deleteAccount purges every user-scoped table including the user and
       await repository.confirmCandidate(user.id, confirmable[0].id, {})
     }
 
-    const countAllFor = async (userId) => {
+    // SEC-041-01 (Security Manager remediation, optional test hardening
+    // request): capture the actual row ids for every transitively-related
+    // table *before* deletion, so the after-deletion check queries each
+    // table directly by those specific ids rather than inferring "0" just
+    // because the parent row (subscriptions/source_connections/etc.) is
+    // gone. Migration 012 exists precisely because one such transitive FK
+    // (subscription_candidates.resolved_subscription_id) turned out to have
+    // no ON DELETE behavior at all - inferring purge-by-parent-count-only
+    // would never have caught that class of bug; querying the captured ids
+    // directly does.
+    const captureTransitiveIds = async (userId) => {
+      const subs = await pool.query('SELECT id FROM subscriptions WHERE user_id = $1', [userId])
+      const connections = await pool.query('SELECT id FROM source_connections WHERE user_id = $1', [userId])
+      const subscriptionIds = subs.rows.map((row) => row.id)
+      const correctionsRows = subscriptionIds.length ? await pool.query('SELECT id FROM subscription_corrections WHERE subscription_id = ANY($1::uuid[])', [subscriptionIds]) : { rows: [] }
+      const candidatesRows = await pool.query('SELECT id FROM subscription_candidates WHERE user_id = $1', [userId])
+      return {
+        subscriptionIds,
+        connectionIds: connections.rows.map((row) => row.id),
+        correctionIds: correctionsRows.rows.map((row) => row.id),
+        candidateIds: candidatesRows.rows.map((row) => row.id),
+      }
+    }
+
+    const countAllFor = async (userId, transitiveIds) => {
       const results = {}
       results.users = (await pool.query('SELECT count(*) FROM users WHERE id = $1', [userId])).rows[0].count
       results.auth_identities = (await pool.query('SELECT count(*) FROM auth_identities WHERE user_id = $1', [userId])).rows[0].count
       const directTables = ['source_connections', 'subscriptions', 'evidence', 'subscription_corrections', 'subscription_candidates', 'price_change_events', 'attention_item_dismissals']
       for (const table of directTables) results[table] = (await pool.query(`SELECT count(*) FROM ${table} WHERE user_id = $1`, [userId])).rows[0].count
-      const subs = await pool.query('SELECT id FROM subscriptions WHERE user_id = $1', [userId])
-      const subscriptionIds = subs.rows.map((row) => row.id)
-      for (const table of ['scan_runs']) results[table] = '0' // connection-scoped, checked via source_connections above being zero
-      for (const table of ['source_messages']) results[table] = '0' // connection-scoped, same reasoning
+      const byIds = async (table, column, ids) => ids.length ? (await pool.query(`SELECT count(*) FROM ${table} WHERE ${column} = ANY($1::uuid[])`, [ids])).rows[0].count : '0'
+      results.scan_runs = await byIds('scan_runs', 'connection_id', transitiveIds.connectionIds)
+      results.source_messages = await byIds('source_messages', 'connection_id', transitiveIds.connectionIds)
       for (const table of ['subscription_evidence', 'billing_events', 'price_observations', 'field_observations']) {
-        results[table] = subscriptionIds.length ? (await pool.query(`SELECT count(*) FROM ${table} WHERE subscription_id = ANY($1::uuid[])`, [subscriptionIds])).rows[0].count : '0'
+        results[table] = await byIds(table, 'subscription_id', transitiveIds.subscriptionIds)
       }
-      results.correction_conflicts = '0' // cascades transitively from subscription_corrections, checked above
-      results.candidate_evidence = '0' // cascades transitively from subscription_candidates, checked above
+      results.correction_conflicts = await byIds('correction_conflicts', 'correction_id', transitiveIds.correctionIds)
+      results.candidate_evidence = await byIds('candidate_evidence', 'candidate_id', transitiveIds.candidateIds)
       return results
     }
 
-    const before = await countAllFor(userC.id)
+    const transitiveIds = await captureTransitiveIds(userC.id)
+    assert.ok(transitiveIds.subscriptionIds.length > 0 && transitiveIds.candidateIds.length === 1 && transitiveIds.connectionIds.length === 1, 'test setup did not actually populate userC')
+    const before = await countAllFor(userC.id, transitiveIds)
     assert.ok(Number(before.subscriptions) > 0 && Number(before.subscription_candidates) === 1 && Number(before.auth_identities) === 1, 'test setup did not actually populate userC')
 
     const result = await repository.deleteAccount(userC.id)
     assert.equal(result.deleted, true)
 
-    const after = await countAllFor(userC.id)
+    const after = await countAllFor(userC.id, transitiveIds)
     for (const [table, count] of Object.entries(after)) assert.equal(Number(count), 0, `expected ${table} to be fully purged for userC after deleteAccount, got ${count}`)
 
     // Deleting an already-deleted (or never-existed) account is a safe no-op.
@@ -235,7 +260,7 @@ integration('deleteAccount purges every user-scoped table including the user and
     assert.equal(secondDelete.deleted, false)
 
     // userD is completely untouched.
-    const afterD = await countAllFor(userD.id)
+    const afterD = await countAllFor(userD.id, await captureTransitiveIds(userD.id))
     assert.equal(Number(afterD.users), 1)
     assert.ok(Number(afterD.subscriptions) > 0 && Number(afterD.subscription_candidates) === 1, 'userD\'s data must be untouched by userC\'s deletion')
 
@@ -243,7 +268,7 @@ integration('deleteAccount purges every user-scoped table including the user and
     // genuinely new account, never resurrecting the deleted one.
     const resurrected = await repository.resolveOrCreateIdentity({ provider: 'google', subject: 'sub-delete-c', email: 'c@example.com', name: 'C' })
     assert.notEqual(resurrected.id, userC.id)
-    const resurrectedCounts = await countAllFor(resurrected.id)
+    const resurrectedCounts = await countAllFor(resurrected.id, await captureTransitiveIds(resurrected.id))
     assert.equal(Number(resurrectedCounts.subscriptions), 0)
     assert.equal(Number(resurrectedCounts.subscription_candidates), 0)
   } finally {

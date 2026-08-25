@@ -14,6 +14,7 @@ import { createFakeGmailProvider } from '../server/gmail/fakeProvider.js'
 import { createMemoryRepository } from '../server/persistence/memoryRepository.js'
 import { createPostgresRepository } from '../server/persistence/postgresRepository.js'
 import { runMigrations } from '../server/persistence/migrations.js'
+import { createTokenVault } from '../server/security/tokenVault.js'
 
 const authorize = async (app) => {
   const start = await app.inject({ method: 'GET', url: '/api/v1/auth/google/start' })
@@ -49,6 +50,24 @@ const withFailingPurge = (realRepository, failures = 1) => {
       attempts += 1
       if (attempts <= failures) throw new Error('simulated transient local purge failure')
       return realRepository.disconnectConnection(userId)
+    } },
+    attempts: () => attempts,
+  }
+}
+
+// SEC-041-01 (Security Manager remediation on PR #51): the same technique as
+// withFailingPurge above, one layer earlier - makes
+// repository.markGmailRevoked fail on its first N calls (simulating a
+// transient DB error landing *after* provider.revokeConnection() has already
+// returned successful revocation, but before that confirmation is durably
+// recorded) before delegating to the real implementation.
+const withFailingMarkRevoked = (realRepository, failures = 1) => {
+  let attempts = 0
+  return {
+    repository: { ...realRepository, markGmailRevoked: (userId) => {
+      attempts += 1
+      if (attempts <= failures) throw new Error('simulated transient markGmailRevoked failure')
+      return realRepository.markGmailRevoked(userId)
     } },
     attempts: () => attempts,
   }
@@ -181,6 +200,98 @@ test('CASE C: a normal, first-try-successful disconnect is unchanged', async () 
   assert.deepEqual(after.candidates, [])
 })
 
+// SEC-041-01 (Security Manager remediation on PR #51): CASE A above proved
+// recovery from a *purge* failure after confirmed revocation. This is the
+// gap CASE A's own fix didn't cover - repository.markGmailRevoked, the write
+// that *records* confirmed revocation, can itself fail. Before this fix that
+// silently left the connection back at 'connected' with a token already
+// dead at Google, and a retry would call provider.revokeConnection() again
+// from scratch with no record a disconnect had ever been attempted.
+test('CASE D: a markGmailRevoked failure after confirmed remote revocation is absorbed in-process, without any second provider revocation call', async () => {
+  const realRepository = createMemoryRepository()
+  // Exactly one failure: the in-process retry (server/app.js's withRetries,
+  // 3 attempts) must absorb this within the same request.
+  const { repository, attempts } = withFailingMarkRevoked(realRepository, 1)
+  const revoke = countingRevoke()
+  const provider = { ...createFakeGmailProvider(), revokeConnection: revoke.fn }
+  const app = buildApp({ repository, provider })
+  const token = await authorizeAndConnect(app)
+  const headers = { cookie: `subtle_session=${token}` }
+  await seedGmailDerivedState(app, headers)
+  const before = await gmailState(app, headers)
+  assert.ok(before.subscriptions.length > 0 && before.candidates.length > 0)
+
+  const response = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/disconnect', headers })
+
+  assert.equal(response.statusCode, 200, 'a single transient markGmailRevoked failure must be fully absorbed within one request')
+  assert.equal(response.json().status, 'not_connected')
+  assert.equal(revoke.calls(), 1, 'the in-process retry must never call provider.revokeConnection a second time')
+  assert.equal(attempts(), 2, 'markGmailRevoked was attempted twice within the one request (once failed, once succeeded)')
+
+  // Full verification, matching the required post-recovery checklist.
+  const after = await gmailState(app, headers)
+  assert.equal(after.source.status, 'not_connected', 'source no longer connected')
+  const session = (await app.inject({ method: 'GET', url: '/api/v1/session', headers })).json()
+  assert.equal(session.authenticated, true, 'the account itself remains')
+  assert.equal(await realRepository.getEncryptedRefreshToken(session.user.id), null, 'stored Gmail credentials are gone')
+  const scanAttempt = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
+  assert.equal(scanAttempt.statusCode, 409, 'scanning cannot run until explicit reconnection')
+  assert.equal(scanAttempt.json().error.code, 'source_not_connected')
+  assert.deepEqual(after.subscriptions, [], 'Gmail subscriptions/evidence gone')
+  assert.deepEqual(after.candidates, [], 'candidates/corrections gone')
+  assert.deepEqual(after.attention, [], 'FEATURE-003 dependent state gone')
+})
+
+// The complementary crash-boundary case: the in-process retry budget itself
+// is exhausted (modeling a markGmailRevoked failure that outlives the whole
+// request, or the process crashing before any retry can run at all). The
+// connection must land somewhere safe and recoverable - never silently back
+// at 'connected' - and a *subsequent* request must still be able to finish,
+// even though that now requires a second (safe, idempotent) provider call.
+test('CASE E: exhausting the markGmailRevoked retry budget leaves the connection safely recoverable on a subsequent request', async () => {
+  const realRepository = createMemoryRepository()
+  // 3 failures exactly fills the in-process retry budget (3 attempts) on the
+  // first request; the 4th attempt (on a second, separate request) succeeds.
+  const { repository, attempts } = withFailingMarkRevoked(realRepository, 3)
+  const revoke = countingRevoke()
+  const provider = { ...createFakeGmailProvider(), revokeConnection: revoke.fn }
+  const app = buildApp({ repository, provider })
+  const token = await authorizeAndConnect(app)
+  const headers = { cookie: `subtle_session=${token}` }
+  await seedGmailDerivedState(app, headers)
+  const before = await gmailState(app, headers)
+
+  const first = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/disconnect', headers })
+  assert.equal(first.statusCode, 502)
+  assert.equal(first.json().error.code, 'revocation_confirmation_failed')
+  assert.equal(revoke.calls(), 1, 'the first request must not fall back to a second provider call on its own')
+  assert.equal(attempts(), 3, 'all 3 in-process retry attempts were exhausted')
+
+  // A failed-but-confirmed-revocation must never look like a successful,
+  // still-usable connection, and must never partially delete data.
+  const afterFirst = await gmailState(app, headers)
+  assert.notEqual(afterFirst.source.status, 'connected', 'the connection must not look normal/still-connected after a confirmed-but-unrecorded revocation')
+  const scanAttempt = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
+  assert.equal(scanAttempt.statusCode, 409, 'scanning must already be blocked in this ambiguous window, before the write that records confirmed revocation ever succeeds')
+  assert.equal(afterFirst.subscriptions.length, before.subscriptions.length, 'no partial deletion')
+  assert.equal(afterFirst.candidates.length, before.candidates.length, 'no partial deletion')
+
+  const retry = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/disconnect', headers })
+  assert.equal(retry.statusCode, 200, 'a subsequent request must still be able to complete recovery')
+  assert.equal(retry.json().status, 'not_connected')
+  assert.equal(revoke.calls(), 2, 'recovery from an exhausted retry budget may safely call the provider again - it is designed to be a safe no-op on an already-revoked token')
+  assert.equal(attempts(), 4)
+
+  const after = await gmailState(app, headers)
+  assert.equal(after.source.status, 'not_connected')
+  const session = (await app.inject({ method: 'GET', url: '/api/v1/session', headers })).json()
+  assert.equal(session.authenticated, true, 'the account itself remains')
+  assert.equal(await realRepository.getEncryptedRefreshToken(session.user.id), null, 'stored Gmail credentials are gone')
+  assert.deepEqual(after.subscriptions, [], 'Gmail subscriptions/evidence gone')
+  assert.deepEqual(after.candidates, [], 'candidates/corrections gone')
+  assert.deepEqual(after.attention, [], 'FEATURE-003 dependent state gone')
+})
+
 // Reconnecting is the *other* legitimate way a stuck 'revoked_pending_purge'
 // connection gets finished, in addition to retrying disconnect directly -
 // repository.authorizeConnection self-heals it before establishing the new
@@ -292,6 +403,70 @@ integration('CASE A against PostgreSQL: local purge failure after confirmed remo
     assert.deepEqual(candidates.json().candidates, [])
     assert.equal((await pgPool.query('SELECT count(*) FROM source_connections')).rows[0].count, '0')
     assert.equal((await pgPool.query('SELECT count(*) FROM users')).rows[0].count, '1', 'the account itself remains')
+  } finally {
+    await pgPool.end()
+  }
+})
+
+// SEC-041-01, against a real PostgreSQL-backed repository: proves recovery
+// from a repository.markGmailRevoked failure (the confirmed-revocation
+// write itself, not the purge that follows it) holds for the backend where
+// migration 012's original FK gap actually lived, and that a second,
+// completely unrelated account's connection and Gmail-derived data are
+// entirely unaffected by userA's recovery.
+integration('CASE D against PostgreSQL: a markGmailRevoked failure after confirmed remote revocation recovers without corrupting another account', async () => {
+  const admin = await waitForPool(baseConnectionString)
+  try {
+    const exists = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [DB_NAME])
+    if (!exists.rowCount) await admin.query(`CREATE DATABASE "${DB_NAME}"`)
+  } finally { await admin.end() }
+  const pgPool = await waitForPool(withDatabaseName(baseConnectionString, DB_NAME))
+  try {
+    await pgPool.query('DROP SCHEMA public CASCADE')
+    await pgPool.query('CREATE SCHEMA public')
+    await runMigrations({ pool: pgPool })
+    const realRepository = createPostgresRepository({ pool: pgPool })
+    const { repository, attempts } = withFailingMarkRevoked(realRepository, 1)
+    const revoke = countingRevoke()
+    const provider = { ...createFakeGmailProvider(), exchangeAuthorizationCode: async () => ({ status: 'authorized', subject: 'pg-recovery-subject-d', email: 'pg-recovery-d@example.com', name: 'PG Recovery D', refreshToken: 'mock-refresh-token' }), revokeConnection: revoke.fn }
+    const app = buildApp({ repository, provider })
+    const token = await authorizeAndConnect(app)
+    const headers = { cookie: `subtle_session=${token}` }
+    await seedGmailDerivedState(app, headers)
+    const userA = (await app.inject({ method: 'GET', url: '/api/v1/session', headers })).json().user
+
+    // A completely separate account, created directly through the
+    // repository (bypassing the single-mock-subject HTTP OAuth stub above),
+    // with its own Gmail-derived data - to prove userA's recovery cannot
+    // touch it.
+    const userB = await realRepository.createUser({ email: 'userb-secd@example.com', name: 'User B' })
+    await realRepository.authorizeConnection(userB.id, createTokenVault({ secret: 'b'.repeat(32) }).encrypt('userb-refresh-token'))
+    await realRepository.persistParsedEvidence(userB.id, { sourceId: 'userb-msg-1', canonicalService: 'Netflix', rawMerchant: 'billing', amount: 15, currency: 'USD', cadence: 'monthly', nextRenewal: '2026-09-15', receivedAt: '2026-08-19T09:00:00.000Z', confidence: { score: 0.9, state: 'confirmed' }, fieldObservations: { canonicalService: { value: 'Netflix', provenance: 'confirmed' }, amount: { value: 15, provenance: 'confirmed' }, currency: { value: 'USD', provenance: 'confirmed' }, cadence: { value: 'monthly', provenance: 'confirmed' } }, excerpt: 'userB receipt' })
+    const userBBefore = { connection: await realRepository.getConnection(userB.id), subscriptions: await realRepository.listSubscriptions(userB.id) }
+    assert.equal(userBBefore.connection.status, 'connected')
+    assert.equal(userBBefore.subscriptions.length, 1)
+
+    const response = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/disconnect', headers })
+    assert.equal(response.statusCode, 200, 'a single transient markGmailRevoked failure must be fully absorbed within one request')
+    assert.equal(response.json().status, 'not_connected')
+    assert.equal(revoke.calls(), 1, 'the in-process retry must never call provider.revokeConnection a second time')
+    assert.equal(attempts(), 2)
+
+    // Full verification for userA, matching the required post-recovery checklist.
+    const subs = await app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })
+    assert.deepEqual(subs.json().subscriptions, [], 'userA Gmail subscriptions/evidence gone')
+    const candidates = await app.inject({ method: 'GET', url: '/api/v1/subscriptions/candidates', headers })
+    assert.deepEqual(candidates.json().candidates, [], 'userA candidates/corrections gone')
+    const scanAttempt = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
+    assert.equal(scanAttempt.statusCode, 409, 'scanning cannot run until explicit reconnection')
+    assert.equal((await pgPool.query('SELECT count(*) FROM source_connections WHERE user_id = $1', [userA.id])).rows[0].count, '0', 'userA Gmail credentials gone')
+    assert.equal((await pgPool.query('SELECT count(*) FROM users WHERE id = $1', [userA.id])).rows[0].count, '1', 'the account itself remains')
+
+    // userB's connection and data are completely untouched.
+    const userBAfter = { connection: await realRepository.getConnection(userB.id), subscriptions: await realRepository.listSubscriptions(userB.id) }
+    assert.equal(userBAfter.connection.status, 'connected', 'userB\'s connection must be untouched by userA\'s recovery')
+    assert.equal(userBAfter.subscriptions.length, 1, 'userB\'s subscriptions must be untouched by userA\'s recovery')
+    assert.equal(await realRepository.getEncryptedRefreshToken(userB.id) !== null, true, 'userB\'s Gmail credentials must be untouched by userA\'s recovery')
   } finally {
     await pgPool.end()
   }

@@ -85,20 +85,50 @@ export const createMemoryRepository = () => {
       return clone(user)
     },
     getConnection: (userId) => publicConnection(connections.get(userId) || { status: 'not_connected', scanStatus: 'idle' }),
-    // MVP-BETA-004 (#41, Tech Lead remediation on PR #51): a connection
-    // stuck in 'revoked_pending_purge' (Google-side revocation already
-    // confirmed on a previous disconnect attempt, but the local purge
-    // hadn't completed yet) must finish that purge before a new connection
-    // is established here - otherwise the old, now-orphaned Gmail-derived
-    // data would silently persist alongside data from the new connection
-    // instead of ever being cleaned up. This makes reconnecting a second,
-    // equally valid way to complete a stuck purge, in addition to retrying
-    // disconnect directly.
+    // MVP-BETA-004 (#41, Tech Lead remediation on PR #51; extended for
+    // SEC-041-01, Security Manager remediation on PR #51): a connection
+    // stuck in 'revoked_pending_purge' (Google-side revocation confirmed on
+    // a previous disconnect attempt, but the local purge hadn't completed
+    // yet) or 'revoke_requested' (a disconnect was requested but never
+    // durably confirmed either way before a crash/failure) must finish
+    // purging before a new connection is established here - otherwise old,
+    // now-orphaned Gmail-derived data would silently persist alongside data
+    // from the new connection instead of ever being cleaned up. This makes
+    // reconnecting a second, equally valid way to complete a stuck purge, in
+    // addition to retrying disconnect directly.
     authorizeConnection: (userId, encryptedRefreshToken = null) => {
-      if (connections.get(userId)?.status === 'revoked_pending_purge') purgeGmailData(userId)
+      if (['revoked_pending_purge', 'revoke_requested'].includes(connections.get(userId)?.status)) purgeGmailData(userId)
       const connection = { id: connections.get(userId)?.id || randomUUID(), userId, provider: 'gmail', status: 'connected', scanStatus: 'idle', lastScanAt: null, encryptedRefreshToken }
       connections.set(userId, connection)
       return publicConnection(connection)
+    },
+    // SEC-041-01 (Security Manager remediation on PR #51): durably records
+    // that a Gmail disconnect has begun *before* provider.revokeConnection()
+    // is ever called - see server/app.js for the full state-machine
+    // rationale, and the matching Postgres implementation for why the token
+    // is deliberately left in place here (only markGmailRevoked clears it).
+    // Idempotent: a retry finding the connection already in
+    // 'revoke_requested' is a harmless no-op returning true; any other state
+    // (absent, already past this point) is a no-op returning false.
+    beginGmailDisconnect: (userId) => {
+      const connection = connections.get(userId)
+      if (!connection || !['connected', 'revoke_requested'].includes(connection.status)) return false
+      connection.status = 'revoke_requested'
+      connections.set(userId, connection)
+      return true
+    },
+    // SEC-041-01: reverts beginGmailDisconnect's marker back to 'connected'
+    // when provider.revokeConnection() comes back with a definitive
+    // negative answer, preserving the pre-existing "a genuine revocation
+    // failure never purges data and leaves the connection usable for a
+    // retry" guarantee (Tech Lead remediation, PR #51) - see the matching
+    // Postgres implementation for the full rationale.
+    cancelGmailDisconnect: (userId) => {
+      const connection = connections.get(userId)
+      if (connection?.status === 'revoke_requested') {
+        connection.status = 'connected'
+        connections.set(userId, connection)
+      }
     },
     getEncryptedRefreshToken: (userId) => connections.get(userId)?.encryptedRefreshToken || null,
     // Persists that Google-side revocation is confirmed, *before* the local

@@ -27,6 +27,26 @@ const validateCorrectionValue = (apiField, value) => {
   else { if (typeof value !== 'string' || !value.trim()) throw invalidRequest(`${apiField} must be a non-empty string`) }
 }
 
+// SEC-041-01 (Security Manager remediation on #41/PR #51): a small, bounded,
+// immediate in-process retry for operations that must not be treated as
+// having "failed" over one transient blip - specifically
+// repository.markGmailRevoked, called only after Google has already
+// confirmed revocation, where a failure means the fact isn't durably
+// recorded yet, not that anything is actually wrong with the connection.
+// Retrying locally, inside the same request, absorbs the common transient
+// case without ever depending on a second call to Google - see the Gmail
+// disconnect route below for the full rationale.
+const withRetries = async (fn, attempts = 3, delayMs = 25) => {
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try { return await fn() } catch (error) {
+      lastError = error
+      if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, delayMs))
+    }
+  }
+  throw lastError
+}
+
 export const buildApp = ({ repository = createMemoryRepository(), provider = config.gmailProvider === 'google' ? createGoogleProvider({ clientId: config.googleClientId, clientSecret: config.googleClientSecret, oidcRedirectUri: config.googleOidcRedirectUri, gmailRedirectUri: config.googleGmailRedirectUri }) : createFakeGmailProvider(), gmailProvider = config.gmailProvider, sessions = createSessionManager(), tokenVault = config.tokenEncryptionKey ? createTokenVault({ secret: config.tokenEncryptionKey }) : null, production = config.production, publicOrigin = config.publicOrigin, now = () => Date.now() } = {}) => {
   // Real Google auth is always served over HTTPS (Codespaces' forwarded-port proxy
   // included), regardless of NODE_ENV, so cookie/origin hardening must not be gated
@@ -220,27 +240,79 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
       return reply.code(502).send({ error: { code: 'scan_failed', message: 'Gmail receipts could not be scanned' } })
     }
   })
-  // MVP-BETA-004 (#41, Tech Lead remediation on PR #51): ordering matters -
-  // revoke with Google first, verify the provider actually confirmed
-  // revocation, persist that confirmation, and only then purge locally. A
-  // failed or unverifiable revocation must never be reported as
-  // disconnected, and must leave the encrypted token in place so a retry can
-  // revoke it (CASE B below).
+  // MVP-BETA-004 (#41, Tech Lead remediation on PR #51; extended by
+  // SEC-041-01, Security Manager remediation on PR #51): a four-state
+  // durable machine over source_connections.authorization_state -
+  // 'connected' (not attempted) -> 'revoke_requested' (attempt in
+  // progress/outcome uncertain) -> 'revoked_pending_purge' (revocation
+  // confirmed, local purge pending) -> row deleted (purge completed, see
+  // disconnectConnection). Ordering matters at every step: record intent
+  // with Google first, verify the provider actually confirmed revocation,
+  // persist that confirmation, and only then purge locally. A failed or
+  // unverifiable revocation must never be reported as disconnected, and
+  // must leave the encrypted token in place so a retry can revoke it
+  // (CASE B).
   //
-  // The reliability gap this closes: if remote revocation succeeds but the
-  // local purge transaction then fails (a transient DB error, not a security
-  // failure), the token is already dead at Google - a naive retry that calls
-  // provider.revokeConnection() again would be revoking an already-revoked
-  // token, which a real provider can legitimately reject as invalid,
-  // permanently blocking the user from ever finishing disconnect. Once
-  // revocation is confirmed, repository.markGmailRevoked persists that fact
-  // (and clears the now-dead token) *before* attempting the purge, so a
+  // Gap 1 (Tech Lead remediation, PR #51): if remote revocation succeeds but
+  // the local purge transaction then fails (a transient DB error, not a
+  // security failure), the token is already dead at Google - a naive retry
+  // that calls provider.revokeConnection() again would be revoking an
+  // already-revoked token, which a real provider can legitimately reject as
+  // invalid, permanently blocking the user from ever finishing disconnect.
+  // Once revocation is confirmed, repository.markGmailRevoked persists that
+  // fact (and clears the now-dead token) *before* attempting the purge, so a
   // retry - detected by the connection already being in
   // 'revoked_pending_purge' - skips straight to retrying the purge without
   // depending on a second successful provider call at all (CASE A).
+  //
+  // Gap 2 (SEC-041-01): Gap 1's fix assumed repository.markGmailRevoked's own
+  // write always succeeds once called. It can fail too (the same class of
+  // transient DB error, now landing between "Google confirmed revocation"
+  // and "we recorded that fact"). Before this fix, that left the connection
+  // silently back at 'connected' - looking exactly like a healthy,
+  // still-scannable connection, with a token that was actually already dead
+  // at Google - and a retry would call provider.revokeConnection() again
+  // from scratch, which a real provider is not guaranteed to accept safely
+  // twice. Two changes close this: (1) repository.beginGmailDisconnect
+  // durably records 'revoke_requested' *before* Google is ever contacted, so
+  // scanning is blocked (repository.beginScan requires authorization_state
+  // = 'connected') and the connection can never look "normal" again from
+  // this point forward, whatever crashes or fails next; (2) the write that
+  // records confirmed revocation is retried a bounded number of times
+  // in-process, immediately, so a single transient blip - the common case -
+  // is absorbed without any second call to Google at all. If those retries
+  // are exhausted (or the process crashes outright), the connection simply
+  // stays at 'revoke_requested': still safe, still scan-blocked, still
+  // recoverable on the next request via CASE A's existing retry path, which
+  // is fine to call provider.revokeConnection() again since revoking an
+  // already-revoked token is specifically designed to be a safe no-op, not a
+  // rejected operation.
+  //
+  // A *definitive* negative answer from the provider (it threw, or
+  // explicitly returned something other than 'disconnected') is different
+  // from that ambiguous crash window - we know with certainty revocation
+  // never happened, so repository.cancelGmailDisconnect reverts
+  // beginGmailDisconnect's marker back to 'connected', preserving CASE B's
+  // pre-existing, unrelated guarantee: a genuine revocation failure never
+  // purges data and leaves the connection fully usable for a retry.
   app.post('/api/v1/sources/gmail/disconnect', { preHandler: requireUser }, async (request, reply) => {
+    // Best-effort revert of beginGmailDisconnect's marker on a *definitive*
+    // provider failure - repository methods here may be sync (memory) or
+    // async (Postgres), so this always goes through try/catch rather than
+    // promise chaining, and a failure to revert is logged but never allowed
+    // to mask the real 502 being returned to the client.
+    const tryCancelGmailDisconnect = async () => {
+      try { await repository.cancelGmailDisconnect(request.user.id) }
+      catch (cancelError) { request.log.error({ err: cancelError }, 'Failed to revert Gmail disconnect request marker') }
+    }
     const connection = await repository.getConnection(request.user.id)
     if (connection.status !== 'revoked_pending_purge') {
+      try {
+        await repository.beginGmailDisconnect(request.user.id)
+      } catch (error) {
+        request.log.error({ err: error }, 'Failed to record Gmail disconnect request')
+        return reply.code(502).send({ error: { code: 'revocation_failed', message: 'Gmail could not be disconnected. Please try again.' } })
+      }
       const encryptedToken = repository.getEncryptedRefreshToken ? await repository.getEncryptedRefreshToken(request.user.id) : null
       const refreshToken = decryptRefreshToken(encryptedToken)
       let revocation
@@ -248,10 +320,24 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
         revocation = await provider.revokeConnection({ token: refreshToken })
       } catch (error) {
         request.log.error({ err: error }, 'Gmail token revocation failed')
+        await tryCancelGmailDisconnect()
         return reply.code(502).send({ error: { code: 'revocation_failed', message: 'Gmail could not be disconnected. Please try again.' } })
       }
-      if (revocation?.status !== 'disconnected') return reply.code(502).send({ error: { code: 'revocation_failed', message: 'Gmail could not be disconnected. Please try again.' } })
-      await repository.markGmailRevoked(request.user.id)
+      if (revocation?.status !== 'disconnected') {
+        // A definitive negative answer from the provider - not an ambiguous
+        // crash - so it's safe (and matches the pre-existing CASE B
+        // guarantee) to revert beginGmailDisconnect's marker: the connection
+        // stays fully usable for a retry rather than sitting scan-blocked
+        // over a revocation that we know, with certainty, never happened.
+        await tryCancelGmailDisconnect()
+        return reply.code(502).send({ error: { code: 'revocation_failed', message: 'Gmail could not be disconnected. Please try again.' } })
+      }
+      try {
+        await withRetries(() => repository.markGmailRevoked(request.user.id))
+      } catch (error) {
+        request.log.error({ err: error }, 'Failed to record confirmed Gmail revocation')
+        return reply.code(502).send({ error: { code: 'revocation_confirmation_failed', message: 'Gmail access was revoked, but this could not be recorded yet. Please try again.' } })
+      }
     }
     // Do not report success until the local purge has actually completed -
     // a thrown error here (e.g. a transient DB failure) must surface as a
