@@ -33,3 +33,46 @@ test('real Gmail provider requires PostgreSQL persistence', () => {
   assert.throws(() => validateConfig(googleSettings), /PERSISTENCE_PROVIDER must be postgres when GMAIL_PROVIDER=google/)
   assert.doesNotThrow(() => validateConfig({ ...googleSettings, persistenceProvider: 'postgres', databaseUrl: 'postgresql://localhost/test' }))
 })
+
+// MVP-BETA-007 (#44): production beta deployment must fail closed - it must
+// never silently boot with ephemeral memory persistence or the mock Gmail
+// provider, since either would look "healthy" while actually being an unsafe
+// fake beta. These are the release-check tests for that guarantee.
+const productionGoogleSettings = {
+  ...base,
+  production: true,
+  gmailProvider: 'google',
+  persistenceProvider: 'postgres',
+  databaseUrl: 'postgresql://localhost/test',
+  sessionSecret: 'a'.repeat(32),
+  tokenEncryptionKey: 'a'.repeat(32),
+  googleClientId: 'id',
+  googleClientSecret: 'secret',
+  googleOidcRedirectUri: 'https://app.example/oidc',
+  googleGmailRedirectUri: 'https://app.example/gmail',
+}
+
+test('production rejects memory persistence even with the real Gmail provider', () => {
+  assert.throws(
+    () => validateConfig({ ...productionGoogleSettings, persistenceProvider: 'memory' }),
+    /PERSISTENCE_PROVIDER must be postgres when NODE_ENV=production/
+  )
+})
+
+test('production rejects the mock Gmail provider even with PostgreSQL persistence', () => {
+  assert.throws(
+    () => validateConfig({ ...productionGoogleSettings, gmailProvider: 'mock' }),
+    /GMAIL_PROVIDER must be google when NODE_ENV=production/
+  )
+})
+
+test('production rejects memory persistence and mock Gmail provider together', () => {
+  assert.throws(
+    () => validateConfig({ ...productionGoogleSettings, gmailProvider: 'mock', persistenceProvider: 'memory', tokenEncryptionKey: '', googleClientId: '', googleClientSecret: '', googleOidcRedirectUri: '', googleGmailRedirectUri: '' }),
+    /PERSISTENCE_PROVIDER must be postgres when NODE_ENV=production/
+  )
+})
+
+test('a complete, valid production configuration passes validation', () => {
+  assert.doesNotThrow(() => validateConfig({ ...productionGoogleSettings }))
+})

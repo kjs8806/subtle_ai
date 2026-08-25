@@ -1,6 +1,9 @@
 import Fastify from 'fastify'
 import cookie from '@fastify/cookie'
+import fastifyStatic from '@fastify/static'
+import { existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { config } from './config/env.js'
 import { validateConfig } from './config/env.js'
 import { createGoogleProvider } from './auth/googleProvider.js'
@@ -47,7 +50,7 @@ const withRetries = async (fn, attempts = 3, delayMs = 25) => {
   throw lastError
 }
 
-export const buildApp = ({ repository = createMemoryRepository(), provider = config.gmailProvider === 'google' ? createGoogleProvider({ clientId: config.googleClientId, clientSecret: config.googleClientSecret, oidcRedirectUri: config.googleOidcRedirectUri, gmailRedirectUri: config.googleGmailRedirectUri }) : createFakeGmailProvider(), gmailProvider = config.gmailProvider, sessions = createSessionManager(), tokenVault = config.tokenEncryptionKey ? createTokenVault({ secret: config.tokenEncryptionKey }) : null, production = config.production, publicOrigin = config.publicOrigin, now = () => Date.now() } = {}) => {
+export const buildApp = ({ repository = createMemoryRepository(), provider = config.gmailProvider === 'google' ? createGoogleProvider({ clientId: config.googleClientId, clientSecret: config.googleClientSecret, oidcRedirectUri: config.googleOidcRedirectUri, gmailRedirectUri: config.googleGmailRedirectUri }) : createFakeGmailProvider(), gmailProvider = config.gmailProvider, sessions = createSessionManager(), tokenVault = config.tokenEncryptionKey ? createTokenVault({ secret: config.tokenEncryptionKey }) : null, production = config.production, publicOrigin = config.publicOrigin, now = () => Date.now(), pool = null } = {}) => {
   // Real Google auth is always served over HTTPS (Codespaces' forwarded-port proxy
   // included), regardless of NODE_ENV, so cookie/origin hardening must not be gated
   // solely on the NODE_ENV=production flag - GMAIL_PROVIDER=google activates it too.
@@ -56,6 +59,31 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
   const app = Fastify({ logger, bodyLimit: 64 * 1024 })
   const oauthStates = new Map()
   app.register(cookie)
+  // MVP-BETA-007 (#44): approved architecture is ONE Cloud Run container
+  // serving both the built Vite PWA and the /api/v1 API same-origin (no
+  // CORS/session-domain complexity). `dist/` is a gitignored build artifact
+  // (see .gitignore) that doesn't exist until `npm run build` has run - it's
+  // absent during `npm test` in CI (which runs before the build step) and in
+  // any test that constructs the app directly, so this only registers static
+  // serving when the directory is actually present, never a hard dependency
+  // for the API itself. The production container image always runs `vite
+  // build` before starting the server (see Dockerfile), so `dist/` is
+  // guaranteed to exist there.
+  const distDir = fileURLToPath(new URL('../dist', import.meta.url))
+  const serveStaticApp = existsSync(distDir)
+  if (serveStaticApp) {
+    app.register(fastifyStatic, { root: distDir, wildcard: true })
+    // Client-side (hash-based) routing means a path like /subscriptions/xyz
+    // has no matching static file - fastifyStatic's wildcard route 404s for
+    // that (correctly - it's not a real asset), which lands here. Any GET
+    // that isn't under /api/v1 and isn't a real static file falls back to
+    // index.html so the SPA router can take over; /api/v1 requests that
+    // genuinely don't match a route keep the normal JSON 404 they already get.
+    app.setNotFoundHandler((request, reply) => {
+      if (request.method === 'GET' && !request.url.startsWith('/api/v1/')) return reply.sendFile('index.html')
+      return reply.code(404).send({ error: { code: 'not_found', message: 'Not found' } })
+    })
+  }
   app.decorateRequest('user', null)
   app.addHook('onRequest', securityHeaders)
   app.addHook('onRequest', createRateLimiter())
@@ -81,7 +109,31 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
     }
   }
 
-  app.get('/api/v1/health', async () => ({ status: 'ok', provider: gmailProvider }))
+  // MVP-BETA-007 (#44): liveness only - "the process is running and can
+  // answer HTTP requests." Never exposes which provider/persistence backend
+  // is configured (that was previously leaked here as `provider`) - that's
+  // operational configuration, not something an unauthenticated caller needs
+  // to learn. Cloud Run (or any load balancer) can hit this cheaply and
+  // often without ever touching the database.
+  app.get('/api/v1/health', async () => ({ status: 'ok' }))
+  // Readiness - "the process is running AND its critical dependencies are
+  // reachable." For a postgres-backed runtime that means the pool can
+  // actually reach the database right now; for memory persistence there is
+  // no external dependency, so readiness reduces to liveness. A failure here
+  // is real operational signal (Cloud Run should stop routing traffic to
+  // this instance) but must never leak *why* - no connection string, no
+  // driver error message, no stack trace - only a generic unavailable
+  // response to the caller, with the real error logged server-side only.
+  app.get('/api/v1/health/ready', async (request, reply) => {
+    if (!pool) return { status: 'ok' }
+    try {
+      await pool.query('SELECT 1')
+      return { status: 'ok' }
+    } catch (error) {
+      request.log.error({ err: error }, 'Readiness check failed: database unreachable')
+      return reply.code(503).send({ status: 'unavailable' })
+    }
+  })
   app.get('/api/v1/session', async (request) => ({ authenticated: Boolean(request.user), user: request.user }))
   app.get('/api/v1/auth/google/start', async (request, reply) => {
     const state = randomUUID()

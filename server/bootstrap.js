@@ -30,7 +30,27 @@ export const createRuntime = async (buildApp, settings = config, overrides = {},
     return { app, pool: null, close: async () => { await app.close() } }
   }
 
-  const pool = new Pool({ connectionString: settings.databaseUrl })
+  // MVP-BETA-007 (#44): Cloud Run is elastic - it can run several instances
+  // concurrently, each with its own independent pool - so the per-instance
+  // pool size has to be conservative, not a single-server default. `pg`'s
+  // own default (max: 10) times an uncapped instance count could exhaust a
+  // free-tier Neon project's connection ceiling on its own, with no actual
+  // traffic misbehaving. `max: 5` per instance, paired with Cloud Run's
+  // documented `--max-instances` limit (see DEPLOYMENT.md) bounding how many
+  // instances can exist at once, keeps the worst-case total connection count
+  // small and predictable. `idleTimeoutMillis` releases connections back
+  // promptly during Cloud Run's normal scale-to-zero idle periods rather
+  // than holding them open against nothing; `connectionTimeoutMillis` fails
+  // a request fast (surfacing as a real error) instead of hanging when the
+  // database is genuinely unreachable. All three are env-overridable
+  // (DB_POOL_MAX / DB_POOL_IDLE_TIMEOUT_MS / DB_POOL_CONNECTION_TIMEOUT_MS)
+  // for a future environment with different constraints, without a code change.
+  const pool = new Pool({
+    connectionString: settings.databaseUrl,
+    max: settings.dbPoolMax,
+    idleTimeoutMillis: settings.dbPoolIdleTimeoutMs,
+    connectionTimeoutMillis: settings.dbPoolConnectionTimeoutMs,
+  })
   try {
     await pool.query('SELECT 1')
   } catch (error) {
@@ -44,6 +64,8 @@ export const createRuntime = async (buildApp, settings = config, overrides = {},
     throw new Error(`PostgreSQL migration failed: ${error.message}`)
   }
   const repository = createPostgresRepository({ pool })
-  const app = buildApp({ repository, ...runtimeOverrides })
+  // Passed through so /api/v1/health/ready can verify actual database
+  // connectivity, not just that the process is running - see server/app.js.
+  const app = buildApp({ repository, pool, ...runtimeOverrides })
   return { app, pool, close: async () => { await app.close(); await pool.end() } }
 }

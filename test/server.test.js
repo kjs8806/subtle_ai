@@ -42,11 +42,39 @@ const authorizeAndConnect = async (app) => {
   return session
 }
 
-test('health reports the mock provider', async () => {
+// MVP-BETA-007 (#44): the liveness response deliberately no longer includes
+// `provider` - which Gmail provider/persistence backend is configured is
+// operational configuration, not something a health check should expose to
+// an unauthenticated caller. See test/bootstrap.test.js for the readiness
+// endpoint (/api/v1/health/ready), which verifies actual database
+// connectivity rather than reporting configuration.
+test('health reports ok without leaking provider/persistence configuration', async () => {
   const app = buildApp()
   const response = await app.inject({ method: 'GET', url: '/api/v1/health' })
   assert.equal(response.statusCode, 200)
-  assert.deepEqual(response.json(), { status: 'ok', provider: 'mock' })
+  assert.deepEqual(response.json(), { status: 'ok' })
+})
+
+test('readiness reports ok when no pool is configured (memory persistence)', async () => {
+  const app = buildApp()
+  const response = await app.inject({ method: 'GET', url: '/api/v1/health/ready' })
+  assert.equal(response.statusCode, 200)
+  assert.deepEqual(response.json(), { status: 'ok' })
+})
+
+test('readiness reports ok when the configured pool is reachable', async () => {
+  const app = buildApp({ pool: { query: async () => ({ rows: [{ '?column?': 1 }] }) } })
+  const response = await app.inject({ method: 'GET', url: '/api/v1/health/ready' })
+  assert.equal(response.statusCode, 200)
+  assert.deepEqual(response.json(), { status: 'ok' })
+})
+
+test('readiness reports 503 without leaking connection details when the database is unreachable', async () => {
+  const app = buildApp({ pool: { query: async () => { throw new Error('connection to server at "10.0.0.1", port 5432 failed: password authentication failed for user "prod_app"') } } })
+  const response = await app.inject({ method: 'GET', url: '/api/v1/health/ready' })
+  assert.equal(response.statusCode, 503)
+  assert.deepEqual(response.json(), { status: 'unavailable' })
+  assert.doesNotMatch(JSON.stringify(response.json()), /10\.0\.0\.1|password|prod_app/)
 })
 
 test('sets browser security headers', async () => {
