@@ -89,6 +89,8 @@ SEC-055-01 (Security Manager remediation, PR #55): `deploy.yml` uses **two disti
 
 `gcloud run deploy`'s `--service-account` flag (SEC-055-01) pins the runtime identity explicitly; omitting it would silently fall back to the project's default compute service account, which typically holds broad Editor-equivalent permissions the running application must never have. Create both service accounts and grant exactly the roles above before the first deploy - see "Release gates" below.
 
+**SEC-055-05 (Security Manager remediation, PR #55):** `google-github-actions/auth` writes a temporary Application Default Credentials file into `$GITHUB_WORKSPACE` (the repo root) by default, matching `gha-creds-*.json`, and the Dockerfile's build stage does `COPY . .`. `build-and-push` now **builds the image before authenticating to Google at all** - building never needs GCP credentials, so the credential file simply does not exist on disk yet when `docker build .` runs. Authentication happens only immediately before the Artifact Registry push that actually needs it. `.dockerignore` and `.gitignore` both exclude `gha-creds-*.json` as defense in depth, in case a future edit ever reorders these steps again. `id-token: write` (required to mint the OIDC token WIF auth needs) is granted only on the three jobs that actually authenticate to Google (`build-and-push`, `migrate`, `deploy`), not workflow-wide.
+
 ## Database - Neon PostgreSQL
 
 1. Create a Neon project in the region selected above.

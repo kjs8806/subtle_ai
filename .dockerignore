@@ -11,3 +11,10 @@ docs
 .env
 .env.*
 npm-debug.log
+# SEC-055-05: google-github-actions/auth writes a temporary Application
+# Default Credentials file into $GITHUB_WORKSPACE (the repo root) by
+# default, matching this glob - it must never be readable by `docker build .`
+# even if the build ever ran after authentication. Belt-and-suspenders
+# alongside deploy.yml's step ordering (build before auth); see
+# docs/engineering/DEPLOYMENT.md "Service accounts".
+gha-creds-*.json
