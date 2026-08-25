@@ -107,6 +107,12 @@ const createRealGoogleProvider = ({ signInSubject = GOOGLE_SUBJECT_A, gmailSubje
     if (url === 'https://oauth2.googleapis.com/revoke') {
       const response = revokeResponses[revokeCallIndex] || { ok: true }
       revokeCallIndex += 1
+      // SEC-041-02: models a real network/transport failure (DNS, connection
+      // reset, timeout) - fetchImpl throwing, not returning a response at
+      // all - which is exactly what the real fetch() does in that case, and
+      // exactly what createGoogleProvider's revokeConnection must turn into
+      // {status: 'revocation_ambiguous'} rather than 'revocation_failed'.
+      if (response.networkError) throw new Error('simulated network failure')
       return response
     }
     throw new Error(`Unexpected fetch to ${url}`)
@@ -347,7 +353,16 @@ test('SEC-004: a failed provider revocation does not report disconnected and pre
   assert.notEqual(await repository.getEncryptedRefreshToken(user.id), null)
 })
 
-test('SEC-004: a network exception during revocation does not report disconnected and preserves the token for retry', async () => {
+// SEC-041-02: a thrown/network exception during revocation is an AMBIGUOUS
+// outcome, not a definitive one - the request may have reached Google and
+// been processed successfully with the confirmation lost in transit. It
+// must therefore never be treated as "revocation definitely failed" (which
+// would reactivate the connection as 'connected' and re-allow scanning) -
+// see test/gmailDisconnectRecovery.test.js's CASE F for the full recovery
+// story (retry, purge, user isolation). This test only proves the
+// immediate response: not reported disconnected, not reverted to
+// 'connected', scanning stays blocked, and the token is preserved.
+test('SEC-004/SEC-041-02: a network exception during revocation is ambiguous, never reports disconnected, never reactivates the connection, and preserves the token for retry', async () => {
   const repository = createMemoryRepository()
   const tokenVault = createTokenVault({ secret: 'a'.repeat(32) })
   const provider = createTestProvider({ revokeConnection: async () => { throw new Error('network unreachable') } })
@@ -357,10 +372,13 @@ test('SEC-004: a network exception during revocation does not report disconnecte
 
   const response = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/disconnect', headers: { ...headers, ...sameOrigin } })
   assert.notEqual(response.statusCode, 200)
-  assert.equal(response.json().error.code, 'revocation_failed')
+  assert.equal(response.json().error.code, 'revocation_uncertain')
   const connection = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
-  assert.equal(connection.json().status, 'connected')
+  assert.equal(connection.json().status, 'revoke_requested', 'an ambiguous outcome must never reactivate the connection back to connected')
   assert.notEqual(await repository.getEncryptedRefreshToken(user.id), null)
+
+  const scan = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers: { ...headers, ...sameOrigin } })
+  assert.equal(scan.statusCode, 409, 'scanning must remain blocked while the revocation outcome is ambiguous')
 })
 
 test('SEC-004: a retried disconnect after a failed revocation can still succeed', async () => {
@@ -501,6 +519,48 @@ test('SEC-006: disconnect with an encrypted empty refresh token fails closed and
   assert.equal(calls.includes('https://oauth2.googleapis.com/revoke'), false, 'Google must not be contacted with an empty token')
   const connection = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
   assert.equal(connection.json().status, 'connected', 'a failed/unverifiable revocation must not purge the connection')
+})
+
+// SEC-041-02: this exercises the REAL createGoogleProvider() adapter end to
+// end (through connectGmailReal's actual OAuth callback and the real
+// disconnect route), not a fake/test-double provider - the finding this
+// remediates is specifically that the real adapter collapsed a network
+// failure and an HTTP failure into the identical 'revocation_failed'
+// status, letting server/app.js wrongly treat an unknown outcome as a
+// confirmed rejection and reactivate the connection. revokeResponses[0]'s
+// {networkError: true} makes the stubbed fetchImpl throw exactly as the
+// real fetch() would on a DNS failure, connection reset, or timeout - the
+// adapter must turn that into 'revocation_ambiguous', and the disconnect
+// route must never call cancelGmailDisconnect for it.
+test('SEC-041-02: the real Google provider adapter turns a network failure into an ambiguous outcome that never reactivates the connection, and a retry against a real confirmed revocation completes disconnect and purge', async () => {
+  const repository = createMemoryRepository()
+  const tokenVault = createTokenVault({ secret: 'a'.repeat(32) })
+  const { provider, calls } = createRealGoogleProvider({ signInSubject: GOOGLE_SUBJECT_A, revokeResponses: [{ networkError: true }, { ok: true }] })
+  const app = buildApp({ repository, provider, gmailProvider: 'google', tokenVault })
+  const { headers, user } = await authenticateReal(app)
+  const connect = await connectGmailReal(app, headers)
+  assert.equal(connect.statusCode, 302)
+  assert.notEqual(await repository.getEncryptedRefreshToken(user.id), null, 'test setup did not actually connect Gmail')
+
+  // First attempt: the real adapter's fetchImpl throws on the revoke call.
+  const first = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/disconnect', headers: { ...headers, ...sameOrigin } })
+  assert.equal(first.statusCode, 502)
+  assert.equal(first.json().error.code, 'revocation_uncertain')
+  assert.ok(calls.includes('https://oauth2.googleapis.com/revoke'), 'the real revoke endpoint must have been contacted')
+
+  const afterFirst = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
+  assert.equal(afterFirst.json().status, 'revoke_requested', 'an ambiguous outcome from the real adapter must never reactivate the connection back to connected')
+  assert.notEqual(await repository.getEncryptedRefreshToken(user.id), null, 'the encrypted refresh token must remain available server-side for recovery')
+  const scan = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers: { ...headers, ...sameOrigin } })
+  assert.equal(scan.statusCode, 409, 'scanning must remain blocked while the revocation outcome is ambiguous')
+
+  // Retry: the real adapter's second revoke call gets a genuine, confirmed
+  // {ok: true} HTTP response - recovery completes.
+  const retry = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/disconnect', headers: { ...headers, ...sameOrigin } })
+  assert.equal(retry.statusCode, 200)
+  const after = await app.inject({ method: 'GET', url: '/api/v1/sources/gmail', headers })
+  assert.equal(after.json().status, 'not_connected')
+  assert.equal(await repository.getEncryptedRefreshToken(user.id), null, 'local Gmail credentials are gone after recovery completes')
 })
 
 test('SEC-006: a failed disconnect purges neither the subscriptions nor the evidence created from a connected Gmail source', async () => {

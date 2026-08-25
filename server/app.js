@@ -288,13 +288,28 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
   // already-revoked token is specifically designed to be a safe no-op, not a
   // rejected operation.
   //
-  // A *definitive* negative answer from the provider (it threw, or
-  // explicitly returned something other than 'disconnected') is different
-  // from that ambiguous crash window - we know with certainty revocation
-  // never happened, so repository.cancelGmailDisconnect reverts
+  // A *definitive* negative answer from the provider - a completed exchange
+  // with Google that came back rejected (revocation_failed), or no usable
+  // token to send at all - is different from an *ambiguous* one. Only a
+  // definitive answer lets us say with certainty that revocation never
+  // happened, so only then does repository.cancelGmailDisconnect revert
   // beginGmailDisconnect's marker back to 'connected', preserving CASE B's
   // pre-existing, unrelated guarantee: a genuine revocation failure never
   // purges data and leaves the connection fully usable for a retry.
+  //
+  // Gap 3 (SEC-041-02): a network/transport failure - the provider itself
+  // throwing, or returning 'revocation_ambiguous' (see
+  // server/auth/googleProvider.js's revokeConnection) - is NOT a definitive
+  // answer, even though it also isn't 'disconnected'. The request may never
+  // have reached Google, or it may have been processed successfully with
+  // the confirmation lost in transit - we cannot tell which. Treating this
+  // the same as a definitive rejection (reverting to 'connected' and
+  // allowing scanning again) risked exactly the scenario this whole state
+  // machine exists to prevent: a connection that looks healthy and
+  // still-usable while its token may already be dead at Google. An
+  // ambiguous outcome therefore never calls cancelGmailDisconnect - the
+  // connection stays at 'revoke_requested' (scan-blocked, token retained)
+  // until a definitive answer, in either direction, is actually obtained.
   app.post('/api/v1/sources/gmail/disconnect', { preHandler: requireUser }, async (request, reply) => {
     // Best-effort revert of beginGmailDisconnect's marker on a *definitive*
     // provider failure - repository methods here may be sync (memory) or
@@ -315,20 +330,42 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
       }
       const encryptedToken = repository.getEncryptedRefreshToken ? await repository.getEncryptedRefreshToken(request.user.id) : null
       const refreshToken = decryptRefreshToken(encryptedToken)
+      // SEC-041-02: an ambiguous transport outcome (the provider itself
+      // threw, meaning the request may never have reached Google or its
+      // response was lost in transit) is not the same thing as a definitive
+      // rejection. We genuinely do not know whether Google already
+      // processed the revocation, so this must be treated exactly like the
+      // 'revocation_ambiguous' status below: never cancel the pending
+      // marker, never purge, keep the token, return a retryable error.
       let revocation
       try {
         revocation = await provider.revokeConnection({ token: refreshToken })
       } catch (error) {
-        request.log.error({ err: error }, 'Gmail token revocation failed')
-        await tryCancelGmailDisconnect()
-        return reply.code(502).send({ error: { code: 'revocation_failed', message: 'Gmail could not be disconnected. Please try again.' } })
+        request.log.error({ err: error }, 'Gmail token revocation could not be confirmed (provider threw)')
+        return reply.code(502).send({ error: { code: 'revocation_uncertain', message: 'Gmail disconnect could not be confirmed. Please try again.' } })
+      }
+      if (revocation?.status === 'revocation_ambiguous') {
+        // A network/transport failure inside the provider (see
+        // server/auth/googleProvider.js's revokeConnection): the request may
+        // have reached Google and been processed successfully with the
+        // response simply lost, or it may never have arrived at all. Either
+        // way, reactivating the connection (cancelGmailDisconnect) would
+        // risk reporting "connected" for a token Google may have already
+        // revoked - so the connection stays at 'revoke_requested' (still
+        // scan-blocked, token still retained for a retry that can safely
+        // re-attempt revocation, since revoking an already-revoked token is
+        // a documented no-op) rather than being reverted.
+        request.log.error({ revocation }, 'Gmail token revocation outcome is ambiguous')
+        return reply.code(502).send({ error: { code: 'revocation_uncertain', message: 'Gmail disconnect could not be confirmed. Please try again.' } })
       }
       if (revocation?.status !== 'disconnected') {
-        // A definitive negative answer from the provider - not an ambiguous
-        // crash - so it's safe (and matches the pre-existing CASE B
-        // guarantee) to revert beginGmailDisconnect's marker: the connection
-        // stays fully usable for a retry rather than sitting scan-blocked
-        // over a revocation that we know, with certainty, never happened.
+        // A *definitive* negative answer from the provider - a completed
+        // exchange with Google that came back rejected, or no usable token
+        // to send at all - not an ambiguous transport failure, so it's safe
+        // (and matches the pre-existing CASE B guarantee) to revert
+        // beginGmailDisconnect's marker: the connection stays fully usable
+        // for a retry rather than sitting scan-blocked over a revocation
+        // that we know, with certainty, never happened.
         await tryCancelGmailDisconnect()
         return reply.code(502).send({ error: { code: 'revocation_failed', message: 'Gmail could not be disconnected. Please try again.' } })
       }

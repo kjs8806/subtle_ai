@@ -145,7 +145,16 @@ test('CASE A: a local purge failure after confirmed remote revocation is recover
   assert.equal(session.json().authenticated, true, 'the account itself remains')
 })
 
-test('CASE B: a genuine provider revocation failure never purges local data', async () => {
+// SEC-041-02 (Security Manager remediation on PR #51): a provider that
+// THROWS represents an ambiguous transport/network outcome, not a
+// definitive one - the request may never have reached Google, or it may
+// have been processed successfully with the response lost in transit. This
+// used to be conflated with a genuine rejection and reverted the connection
+// to 'connected' (cancelGmailDisconnect), which risked reporting a healthy,
+// scannable connection for a token that might already be dead at Google.
+// See CASE F below for the full ambiguous-outcome recovery story (retry,
+// purge, user isolation) - this test only proves the immediate response.
+test('CASE B: an ambiguous (thrown) provider outcome never purges local data and never reactivates the connection', async () => {
   const realRepository = createMemoryRepository()
   const { repository, attempts } = withFailingPurge(realRepository, 0)
   const provider = { ...createFakeGmailProvider(), revokeConnection: async () => { throw new Error('Google is unreachable') } }
@@ -157,15 +166,24 @@ test('CASE B: a genuine provider revocation failure never purges local data', as
 
   const response = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/disconnect', headers })
   assert.equal(response.statusCode, 502)
-  assert.equal(response.json().error.code, 'revocation_failed')
-  assert.equal(attempts(), 0, 'local purge must never run when revocation genuinely failed')
+  assert.equal(response.json().error.code, 'revocation_uncertain')
+  assert.equal(attempts(), 0, 'local purge must never run while the revocation outcome is ambiguous')
 
   const after = await gmailState(app, headers)
-  assert.equal(after.source.status, 'connected', 'the source remains available for a retry')
+  assert.equal(after.source.status, 'revoke_requested', 'an ambiguous outcome must never reactivate the connection back to connected')
   assert.equal(after.subscriptions.length, before.subscriptions.length, 'data is untouched')
+
+  const scan = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
+  assert.equal(scan.statusCode, 409, 'scanning must remain blocked while the revocation outcome is ambiguous')
 })
 
-test('CASE B (variant): a non-throwing but unsuccessful revocation result never purges local data either', async () => {
+// The counterpart to CASE B: a provider that returns a normal, explicit
+// {status: 'revocation_failed'} result (not a throw) is giving a genuinely
+// definitive answer - a completed exchange with Google that came back
+// rejected. This is "an explicit provider failure case" the fix must still
+// let follow the pre-existing, safe behavior: revert to 'connected' so the
+// connection remains usable for a retry, exactly as before SEC-041-02.
+test('CASE B (variant): a non-throwing, explicit unsuccessful revocation result is definitive and never purges local data, and correctly reverts to connected', async () => {
   const realRepository = createMemoryRepository()
   const { repository, attempts } = withFailingPurge(realRepository, 0)
   const provider = { ...createFakeGmailProvider(), revokeConnection: async () => ({ status: 'revocation_failed' }) }
@@ -176,9 +194,10 @@ test('CASE B (variant): a non-throwing but unsuccessful revocation result never 
 
   const response = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/disconnect', headers })
   assert.equal(response.statusCode, 502)
+  assert.equal(response.json().error.code, 'revocation_failed')
   assert.equal(attempts(), 0)
   const after = await gmailState(app, headers)
-  assert.equal(after.source.status, 'connected')
+  assert.equal(after.source.status, 'connected', 'a definitive rejection safely reverts to connected, unlike an ambiguous outcome')
 })
 
 test('CASE C: a normal, first-try-successful disconnect is unchanged', async () => {
@@ -290,6 +309,68 @@ test('CASE E: exhausting the markGmailRevoked retry budget leaves the connection
   assert.deepEqual(after.subscriptions, [], 'Gmail subscriptions/evidence gone')
   assert.deepEqual(after.candidates, [], 'candidates/corrections gone')
   assert.deepEqual(after.attention, [], 'FEATURE-003 dependent state gone')
+})
+
+// SEC-041-02 (Security Manager remediation on PR #51): the provider's own
+// contract for an ambiguous transport outcome (see
+// server/auth/googleProvider.js's revokeConnection: a thrown fetch
+// exception, not a completed HTTP response) is `{status:
+// 'revocation_ambiguous'}` - distinct from both 'disconnected' and the
+// definitive 'revocation_failed'. This models "network response loss after
+// a simulated successful provider-side revocation": Google may well have
+// processed the revocation, but the confirmation never made it back, so the
+// application must treat this exactly as uncertain, never as either
+// outcome.
+test('CASE F: an ambiguous transport outcome (network response lost) leaves the source in revoke_requested, never connected, and a retry completes disconnect and purge', async () => {
+  const realRepository = createMemoryRepository()
+  let calls = 0
+  const provider = { ...createFakeGmailProvider(), revokeConnection: async () => { calls += 1; return calls === 1 ? { status: 'revocation_ambiguous' } : { status: 'disconnected' } } }
+  const app = buildApp({ repository: realRepository, provider })
+  const token = await authorizeAndConnect(app)
+  const headers = { cookie: `subtle_session=${token}` }
+  await seedGmailDerivedState(app, headers)
+  const session = (await app.inject({ method: 'GET', url: '/api/v1/session', headers })).json()
+  // authorizeAndConnect's mock-provider shortcut (server/app.js's
+  // gmailProvider === 'mock' path) never actually stores a token - seed a
+  // known one directly so this test can meaningfully assert it is *retained*
+  // through the ambiguous outcome, not just trivially absent throughout.
+  await realRepository.authorizeConnection(session.user.id, 'ambiguous-case-refresh-token')
+  const before = await gmailState(app, headers)
+  assert.ok(before.subscriptions.length > 0 && before.candidates.length > 0)
+  assert.equal(await realRepository.getEncryptedRefreshToken(session.user.id), 'ambiguous-case-refresh-token', 'test setup did not actually seed a token')
+
+  // First attempt: the provider-side outcome is genuinely ambiguous.
+  const first = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/disconnect', headers })
+  assert.equal(first.statusCode, 502, 'an ambiguous outcome must return a retryable error, not success')
+  assert.equal(first.json().error.code, 'revocation_uncertain')
+  assert.equal(calls, 1)
+
+  // Never falsely reported as disconnected, never reactivated to connected,
+  // scanning stays blocked, and the credential is retained server-side.
+  const afterFirst = await gmailState(app, headers)
+  assert.equal(afterFirst.source.status, 'revoke_requested', 'an ambiguous outcome must never be reported as connected or disconnected')
+  assert.notEqual(afterFirst.source.status, 'connected')
+  assert.notEqual(afterFirst.source.status, 'not_connected')
+  const scanAttempt = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
+  assert.equal(scanAttempt.statusCode, 409, 'scanning must remain blocked while the revocation outcome is ambiguous')
+  assert.equal(scanAttempt.json().error.code, 'source_not_connected')
+  assert.equal(await realRepository.getEncryptedRefreshToken(session.user.id), 'ambiguous-case-refresh-token', 'the encrypted refresh token must remain available server-side for recovery')
+  assert.equal(afterFirst.subscriptions.length, before.subscriptions.length, 'no partial deletion while ambiguous')
+  assert.equal(afterFirst.candidates.length, before.candidates.length, 'no partial deletion while ambiguous')
+
+  // Retry: this time the provider gives a confirmed answer, and recovery completes.
+  const retry = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/disconnect', headers })
+  assert.equal(retry.statusCode, 200)
+  assert.equal(retry.json().status, 'not_connected')
+  assert.equal(calls, 2, 'the retry is expected to call the provider again - safe, since revoking an already-revoked token is a documented no-op')
+
+  const after = await gmailState(app, headers)
+  assert.equal(after.source.status, 'not_connected', 'source disconnected')
+  assert.equal(await realRepository.getEncryptedRefreshToken(session.user.id), null, 'local Gmail credentials gone')
+  assert.deepEqual(after.subscriptions, [], 'Gmail subscriptions gone')
+  assert.deepEqual(after.candidates, [], 'candidates gone')
+  assert.deepEqual(after.attention, [], 'dependent FEATURE-003 attention state gone')
+  assert.equal(session.authenticated, true, 'the account itself remains')
 })
 
 // Reconnecting is the *other* legitimate way a stuck 'revoked_pending_purge'
@@ -459,6 +540,73 @@ integration('CASE D against PostgreSQL: a markGmailRevoked failure after confirm
     assert.deepEqual(candidates.json().candidates, [], 'userA candidates/corrections gone')
     const scanAttempt = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
     assert.equal(scanAttempt.statusCode, 409, 'scanning cannot run until explicit reconnection')
+    assert.equal((await pgPool.query('SELECT count(*) FROM source_connections WHERE user_id = $1', [userA.id])).rows[0].count, '0', 'userA Gmail credentials gone')
+    assert.equal((await pgPool.query('SELECT count(*) FROM users WHERE id = $1', [userA.id])).rows[0].count, '1', 'the account itself remains')
+
+    // userB's connection and data are completely untouched.
+    const userBAfter = { connection: await realRepository.getConnection(userB.id), subscriptions: await realRepository.listSubscriptions(userB.id) }
+    assert.equal(userBAfter.connection.status, 'connected', 'userB\'s connection must be untouched by userA\'s recovery')
+    assert.equal(userBAfter.subscriptions.length, 1, 'userB\'s subscriptions must be untouched by userA\'s recovery')
+    assert.equal(await realRepository.getEncryptedRefreshToken(userB.id) !== null, true, 'userB\'s Gmail credentials must be untouched by userA\'s recovery')
+  } finally {
+    await pgPool.end()
+  }
+})
+
+// SEC-041-02, against a real PostgreSQL-backed repository: proves the
+// ambiguous-transport-outcome recovery holds against the actual database
+// backend (authorization_state, the encrypted token column), not only the
+// in-memory model, and that a second, completely unrelated account is
+// entirely unaffected throughout.
+integration('CASE F against PostgreSQL: an ambiguous transport outcome leaves the source in revoke_requested, retains the credential, and a retry completes disconnect and purge without corrupting another account', async () => {
+  const admin = await waitForPool(baseConnectionString)
+  try {
+    const exists = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [DB_NAME])
+    if (!exists.rowCount) await admin.query(`CREATE DATABASE "${DB_NAME}"`)
+  } finally { await admin.end() }
+  const pgPool = await waitForPool(withDatabaseName(baseConnectionString, DB_NAME))
+  try {
+    await pgPool.query('DROP SCHEMA public CASCADE')
+    await pgPool.query('CREATE SCHEMA public')
+    await runMigrations({ pool: pgPool })
+    const realRepository = createPostgresRepository({ pool: pgPool })
+    let calls = 0
+    const provider = { ...createFakeGmailProvider(), exchangeAuthorizationCode: async () => ({ status: 'authorized', subject: 'pg-recovery-subject-f', email: 'pg-recovery-f@example.com', name: 'PG Recovery F', refreshToken: 'mock-refresh-token' }), revokeConnection: async () => { calls += 1; return calls === 1 ? { status: 'revocation_ambiguous' } : { status: 'disconnected' } } }
+    const app = buildApp({ repository: realRepository, provider })
+    const token = await authorizeAndConnect(app)
+    const headers = { cookie: `subtle_session=${token}` }
+    await seedGmailDerivedState(app, headers)
+    const userA = (await app.inject({ method: 'GET', url: '/api/v1/session', headers })).json().user
+    // authorizeAndConnect's mock-provider shortcut never stores a real
+    // token - seed a known one directly so retention can be meaningfully
+    // asserted (see the memory-backend CASE F for the same reasoning).
+    const vault = createTokenVault({ secret: 'f'.repeat(32) })
+    await realRepository.authorizeConnection(userA.id, vault.encrypt('ambiguous-case-pg-refresh-token'))
+
+    // A completely separate account, unaffected throughout.
+    const userB = await realRepository.createUser({ email: 'userb-secf@example.com', name: 'User B' })
+    await realRepository.authorizeConnection(userB.id, vault.encrypt('userb-refresh-token'))
+    await realRepository.persistParsedEvidence(userB.id, { sourceId: 'userb-msg-1', canonicalService: 'Netflix', rawMerchant: 'billing', amount: 15, currency: 'USD', cadence: 'monthly', nextRenewal: '2026-09-15', receivedAt: '2026-08-19T09:00:00.000Z', confidence: { score: 0.9, state: 'confirmed' }, fieldObservations: { canonicalService: { value: 'Netflix', provenance: 'confirmed' }, amount: { value: 15, provenance: 'confirmed' }, currency: { value: 'USD', provenance: 'confirmed' }, cadence: { value: 'monthly', provenance: 'confirmed' } }, excerpt: 'userB receipt' })
+
+    // First attempt: ambiguous outcome.
+    const first = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/disconnect', headers })
+    assert.equal(first.statusCode, 502)
+    assert.equal(first.json().error.code, 'revocation_uncertain')
+    assert.equal(calls, 1)
+
+    const stateRow = await pgPool.query('SELECT authorization_state, encrypted_refresh_token, token_key_version FROM source_connections WHERE user_id = $1', [userA.id])
+    assert.equal(stateRow.rows[0].authorization_state, 'revoke_requested', 'an ambiguous outcome must never be reported as connected or disconnected')
+    assert.equal(vault.decrypt({ ciphertext: stateRow.rows[0].encrypted_refresh_token, keyVersion: stateRow.rows[0].token_key_version }), 'ambiguous-case-pg-refresh-token', 'the encrypted refresh token must remain available server-side for recovery')
+    const scanAttempt = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/scan', headers })
+    assert.equal(scanAttempt.statusCode, 409, 'scanning must remain blocked while the revocation outcome is ambiguous')
+
+    // Retry: this time the provider gives a confirmed answer, and recovery completes.
+    const retry = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/disconnect', headers })
+    assert.equal(retry.statusCode, 200)
+    assert.equal(calls, 2, 'the retry is expected to call the provider again - safe, since revoking an already-revoked token is a documented no-op')
+
+    const subs = await app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers })
+    assert.deepEqual(subs.json().subscriptions, [], 'userA Gmail subscriptions/evidence gone')
     assert.equal((await pgPool.query('SELECT count(*) FROM source_connections WHERE user_id = $1', [userA.id])).rows[0].count, '0', 'userA Gmail credentials gone')
     assert.equal((await pgPool.query('SELECT count(*) FROM users WHERE id = $1', [userA.id])).rows[0].count, '1', 'the account itself remains')
 
