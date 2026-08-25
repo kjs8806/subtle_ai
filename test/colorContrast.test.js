@@ -35,4 +35,3 @@ test('small-text color token pairings meet WCAG AA contrast', () => {
     assert.ok(ratio >= 4.5, `${usage} contrast is ${ratio.toFixed(2)}:1; expected at least 4.5:1`)
   }
 })
-
