@@ -2,10 +2,11 @@ import { expect, test } from '@playwright/test'
 import { signIn } from './helpers.js'
 
 // MVP-BETA-005 (#42, C1-C4): required viewport coverage - ~360px and
-// ~390/430px phones, ~768px tablet, ~1024px, and desktop. Runs on both the
-// 'desktop' and 'mobile' Playwright projects (see playwright.config.js).
-// Non-mutating (no connect/scan/disconnect) so it never races the shared
-// mock account other specs mutate.
+// ~390/430px phones, ~768px tablet, ~1024px, and desktop. Runs on every
+// desktop project plus the two mobile responsive projects (see
+// playwright.e2e.config.js). Non-mutating (no connect/scan/disconnect), so
+// it's safe regardless of what other specs do with their own signIn()'d
+// account.
 const WIDTHS = [
   { label: 'small phone (360px)', width: 360, height: 780 },
   { label: 'large phone (390px)', width: 390, height: 844 },

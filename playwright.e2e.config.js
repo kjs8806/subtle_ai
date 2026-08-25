@@ -15,30 +15,88 @@ import { defineConfig, devices } from '@playwright/test'
 // regardless of which `--project` is selected - a shared config would make
 // `npm run test:smoke` also boot this suite's dev server on every CI run,
 // for nothing, competing for CPU with the servers it actually uses.
+//
+// #43 Accessibility & Cross-Browser QA Gate: this suite additionally covers
+// the product-approved browser matrix's rendering/runtime engines - Chromium
+// (Chrome/Edge), Firefox, and WebKit (Safari family) - across desktop and a
+// mobile responsive profile. WebKit here is automation evidence only and
+// must never be reported as real Safari macOS/iOS PASS; real Safari/Android
+// evidence remains mandatory manual #43 evidence (see
+// docs/quality/ACCESSIBILITY_QA.md).
 export default defineConfig({
   testDir: './e2e',
   timeout: 30_000,
+  // A longer default assertion timeout in CI than Playwright's 5s default:
+  // observed CI runs show brief app-unresponsive windows (the backend
+  // failing to answer for a few seconds) under the combined load of
+  // Postgres + this suite's backend + three sequential browser engines on a
+  // standard-size GitHub Actions runner - a resource-contention symptom, not
+  // a product defect (unreproducible locally: a full local run of this same
+  // spec sequence on Chromium alone stays clean). Giving each assertion more
+  // room to ride out a brief stall is a safer fix than lowering coverage.
+  expect: { timeout: process.env.CI ? 15_000 : 5_000 },
   fullyParallel: false,
   workers: 1,
-  retries: 0,
+  // 2, not 1, in CI - some of these contention-window failures persisted
+  // through a single retry (the retry landed in the same busy window), but
+  // recovered given a second chance once the runner had moved on.
+  retries: process.env.CI ? 2 : 0,
   reporter: [['list']],
   use: {
     baseURL: 'http://127.0.0.1:5173',
     trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
   },
   webServer: {
     command: 'npm run dev',
     url: 'http://127.0.0.1:5173',
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
-    env: { GMAIL_PROVIDER: 'mock', PERSISTENCE_PROVIDER: 'memory', MOCK_GMAIL_SCENARIO: 'success' },
+    env: {
+      GMAIL_PROVIDER: 'mock',
+      PERSISTENCE_PROVIDER: 'memory',
+      MOCK_GMAIL_SCENARIO: 'success',
+      // A distinct backend port from the smoke suite's hardcoded 8787
+      // (playwright.config.js), not the shared server/config/env.js default -
+      // CI now runs both suites sequentially in one job
+      // (.github/workflows/ci.yml), and reusing 8787 here risked this suite's
+      // backend racing the smoke suite's not-yet-released port and failing to
+      // bind, which silently broke every test in this suite (every page load
+      // showed the app's own "couldn't reach the server" error state instead
+      // of real content - see vite.config.js).
+      PORT: '8788',
+      VITE_API_PROXY_TARGET: 'http://127.0.0.1:8788',
+    },
   },
   projects: [
-    // The full connect/scan/disconnect golden path only needs to prove the
-    // flow works once - it mutates the one shared mock account, so it runs
-    // on a single project. Responsive checks run on both, since they're the
-    // part C1-C4 actually cares about per-viewport.
-    { name: 'desktop', use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } } },
-    { name: 'mobile', use: { ...devices['Pixel 7'] }, testMatch: /responsive\.spec\.js/ },
+    // Desktop engines representing the supported Chrome/Edge (Chromium),
+    // Firefox, and Safari-family (WebKit) rendering/runtime engines. WebKit is
+    // automation evidence only and must never be reported as real Safari PASS.
+    {
+      name: 'chromium-desktop',
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } },
+    },
+    {
+      name: 'firefox-desktop',
+      use: { ...devices['Desktop Firefox'], viewport: { width: 1280, height: 800 } },
+    },
+    {
+      name: 'webkit-desktop',
+      use: { ...devices['Desktop Safari'], viewport: { width: 1280, height: 800 } },
+    },
+
+    // Mobile engine coverage is intentionally limited to the non-destructive
+    // responsive suite while the mock backend uses one shared account. Real
+    // Android Chrome and real iOS Safari remain mandatory manual #43 evidence.
+    {
+      name: 'chromium-mobile',
+      use: { ...devices['Pixel 7'] },
+      testMatch: /responsive\.spec\.js/,
+    },
+    {
+      name: 'webkit-mobile',
+      use: { ...devices['iPhone 15'] },
+      testMatch: /responsive\.spec\.js/,
+    },
   ],
 })

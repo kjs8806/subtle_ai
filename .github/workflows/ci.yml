@@ -15,7 +15,16 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Real CI run #92 (head 943eda2) was killed by this job timeout, not a
+    # hang: "Run Playwright cross-browser suite" was still actively passing/
+    # failing individual tests (reached #116 of the full desktop x3 +
+    # mobile x2 matrix, including accessibility.spec.js's 6 real, currently-
+    # failing checks x 3 desktop engines x the suite's retries:2, which
+    # triples their cost since a genuine defect never passes on retry) when
+    # the 20-minute ceiling force-killed it mid-run. 45 minutes gives real
+    # margin over the observed pace (roughly 15 minutes to reach test 116 of
+    # ~150) plus setup/install/smoke-suite/build overhead.
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:16
@@ -81,8 +90,8 @@ jobs:
         run: npm ci
       - name: Install Playwright test runner
         run: npm install --no-save --package-lock=false @playwright/test@1.62.1
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install Playwright browser engines
+        run: npx playwright install --with-deps chromium firefox webkit
       - name: Run tests
         run: npm test
         env:
@@ -97,13 +106,16 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/subtle_ai_test
       - name: Run browser smoke suite
         run: npm run test:smoke
-      - name: Print smoke suite failure context to the job log
+      - name: Run Playwright cross-browser suite
+        run: npm run test:e2e
+      - name: Print failure context to the job log
         # Artifacts (screenshots/traces) aren't readable from this session -
         # they land in Azure blob storage behind a URL the sandbox's network
         # policy blocks. error-context.md is plain text/YAML (an accessibility
         # snapshot of the page at the moment of failure), so print it directly
         # into the log where it's actually readable, instead of only kept in
-        # an artifact nobody here can open.
+        # an artifact nobody here can open. Covers both suites - each writes
+        # into its own test-results/ subdirectory.
         if: failure()
         shell: bash
         run: |
@@ -113,11 +125,11 @@ jobs:
             cat "$f"
             echo "::endgroup::"
           done
-      - name: Upload smoke suite artifacts on failure
+      - name: Upload browser test artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-suite-results
+          name: browser-test-results
           path: |
             test-results/
             playwright-report/
