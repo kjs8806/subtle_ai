@@ -220,22 +220,50 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
       return reply.code(502).send({ error: { code: 'scan_failed', message: 'Gmail receipts could not be scanned' } })
     }
   })
+  // MVP-BETA-004 (#41, Tech Lead remediation on PR #51): ordering matters -
+  // revoke with Google first, verify the provider actually confirmed
+  // revocation, persist that confirmation, and only then purge locally. A
+  // failed or unverifiable revocation must never be reported as
+  // disconnected, and must leave the encrypted token in place so a retry can
+  // revoke it (CASE B below).
+  //
+  // The reliability gap this closes: if remote revocation succeeds but the
+  // local purge transaction then fails (a transient DB error, not a security
+  // failure), the token is already dead at Google - a naive retry that calls
+  // provider.revokeConnection() again would be revoking an already-revoked
+  // token, which a real provider can legitimately reject as invalid,
+  // permanently blocking the user from ever finishing disconnect. Once
+  // revocation is confirmed, repository.markGmailRevoked persists that fact
+  // (and clears the now-dead token) *before* attempting the purge, so a
+  // retry - detected by the connection already being in
+  // 'revoked_pending_purge' - skips straight to retrying the purge without
+  // depending on a second successful provider call at all (CASE A).
   app.post('/api/v1/sources/gmail/disconnect', { preHandler: requireUser }, async (request, reply) => {
-    // Ordering matters: revoke with Google first, verify the provider actually
-    // confirmed revocation, and only then purge locally. A failed or unverifiable
-    // revocation must never be reported as disconnected, and must leave the
-    // encrypted token in place so a retry can revoke it.
-    const encryptedToken = repository.getEncryptedRefreshToken ? await repository.getEncryptedRefreshToken(request.user.id) : null
-    const refreshToken = decryptRefreshToken(encryptedToken)
-    let revocation
-    try {
-      revocation = await provider.revokeConnection({ token: refreshToken })
-    } catch (error) {
-      request.log.error({ err: error }, 'Gmail token revocation failed')
-      return reply.code(502).send({ error: { code: 'revocation_failed', message: 'Gmail could not be disconnected. Please try again.' } })
+    const connection = await repository.getConnection(request.user.id)
+    if (connection.status !== 'revoked_pending_purge') {
+      const encryptedToken = repository.getEncryptedRefreshToken ? await repository.getEncryptedRefreshToken(request.user.id) : null
+      const refreshToken = decryptRefreshToken(encryptedToken)
+      let revocation
+      try {
+        revocation = await provider.revokeConnection({ token: refreshToken })
+      } catch (error) {
+        request.log.error({ err: error }, 'Gmail token revocation failed')
+        return reply.code(502).send({ error: { code: 'revocation_failed', message: 'Gmail could not be disconnected. Please try again.' } })
+      }
+      if (revocation?.status !== 'disconnected') return reply.code(502).send({ error: { code: 'revocation_failed', message: 'Gmail could not be disconnected. Please try again.' } })
+      await repository.markGmailRevoked(request.user.id)
     }
-    if (revocation?.status !== 'disconnected') return reply.code(502).send({ error: { code: 'revocation_failed', message: 'Gmail could not be disconnected. Please try again.' } })
-    return repository.disconnectConnection(request.user.id)
+    // Do not report success until the local purge has actually completed -
+    // a thrown error here (e.g. a transient DB failure) must surface as a
+    // recoverable failure, not a silent 500, so the frontend's existing
+    // retry path (the disconnect button remains available on any failure)
+    // reaches this same recovery logic on the next attempt.
+    try {
+      return await repository.disconnectConnection(request.user.id)
+    } catch (error) {
+      request.log.error({ err: error }, 'Local Gmail data purge failed after confirmed revocation')
+      return reply.code(502).send({ error: { code: 'purge_failed', message: 'Gmail access was revoked, but some local data could not be cleared yet. Please try again.' } })
+    }
   })
   app.get('/api/v1/subscriptions', { preHandler: requireUser }, async (request) => ({ subscriptions: await repository.listSubscriptions(request.user.id) }))
   app.get('/api/v1/subscriptions/:subscriptionId', { preHandler: requireUser }, async (request, reply) => {
@@ -286,6 +314,34 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
   // the client for dismissal, URL-encoded since it contains colons.
   app.get('/api/v1/attention', { preHandler: requireUser }, async (request) => ({ items: await repository.listAttentionItems(request.user.id) }))
   app.post('/api/v1/attention/:itemKey/dismiss', { preHandler: requireUser }, async (request) => repository.dismissAttentionItem(request.user.id, decodeURIComponent(request.params.itemKey)))
+
+  // MVP-BETA-004 (#41): full account deletion. Ownership is exclusively
+  // request.user.id (set by the session preHandler above from the caller's
+  // own cookie) - there is no request body/param to read an id from at all,
+  // so a client can never even attempt to name another account here.
+  //
+  // Gmail revocation is best-effort and never blocks deletion: unlike
+  // POST /sources/gmail/disconnect (which must not report "disconnected"
+  // until Google confirms revocation, since the account and the connection
+  // both keep existing afterward), the account itself is being permanently
+  // destroyed either way - our copy of the refresh token is deleted as part
+  // of repository.deleteAccount regardless of whether Google's revoke call
+  // succeeds, so a flaky revocation call can never leave the user unable to
+  // delete their account. A failure is logged so it's visible operationally,
+  // and the user can separately revoke Subtle AI's access from their Google
+  // account permissions if the automatic revocation didn't go through.
+  app.delete('/api/v1/account', { preHandler: requireUser }, async (request, reply) => {
+    const encryptedToken = repository.getEncryptedRefreshToken ? await repository.getEncryptedRefreshToken(request.user.id) : null
+    const refreshToken = decryptRefreshToken(encryptedToken)
+    if (refreshToken) {
+      try { await provider.revokeConnection({ token: refreshToken }) }
+      catch (error) { request.log.error({ err: error }, 'Gmail token revocation failed during account deletion; proceeding with deletion anyway') }
+    }
+    await repository.deleteAccount(request.user.id)
+    sessions.revokeAllForUser(request.user.id)
+    reply.clearCookie(SESSION_COOKIE, { path: '/' })
+    return { status: 'deleted' }
+  })
   return app
 }
 
