@@ -11,6 +11,20 @@ name: Deploy (Cloud Run)
 # additionally be configured with required reviewers, giving a second,
 # platform-enforced approval gate before the deploy job actually runs.
 #
+# SEC-055-02 (Security Manager remediation on PR #55, review of head
+# 96c3662): workflow_dispatch lets a human pick ANY branch, tag, or commit
+# to run from - without an explicit check, a feature branch whose tests
+# happen to pass could reach production the same way an approved main
+# commit would. The `authorize` job below runs first and hard-fails (not
+# silently skips) unless the dispatched ref is exactly the protected
+# `main` branch, before any job that touches the production-beta
+# environment. It also captures github.sha exactly once, as the single
+# immutable commit identity every later job (validate, build-and-push,
+# migrate, deploy) checks out, tags its image with, or labels its
+# revision with - so a branch update mid-run can never cause a later job
+# to silently pick up a different commit than the one that was actually
+# authorized.
+#
 # This workflow has not been run against a real Google Cloud project or
 # Neon database from this repository - see docs/engineering/DEPLOYMENT.md's
 # "Known limitations" section. Before the first real use: create the
@@ -32,8 +46,25 @@ concurrency:
   cancel-in-progress: false # never cancel a deploy that's already touching the live database/revision
 
 jobs:
-  validate:
+  authorize:
     if: github.event.inputs.confirm == 'deploy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      sha: ${{ steps.capture.outputs.sha }}
+    steps:
+      - name: Require the protected main branch
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "::error::Refusing to deploy: this workflow was dispatched against '${{ github.ref }}', not the protected 'main' branch. Only commits on main may reach production-beta - re-run workflow_dispatch with 'main' selected as the branch."
+            exit 1
+          fi
+      - name: Capture the immutable deploy commit
+        id: capture
+        run: echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+  validate:
+    needs: authorize
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -49,13 +80,11 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-    outputs:
-      sha: ${{ steps.sha.outputs.sha }}
     steps:
-      - uses: actions/checkout@v7
-      - id: sha
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
@@ -80,7 +109,7 @@ jobs:
         run: npm run build
 
   build-and-push:
-    needs: validate
+    needs: [authorize, validate]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production-beta
@@ -90,21 +119,24 @@ jobs:
     #   GCP_REGION                the Cloud Run region documented in DEPLOYMENT.md
     #   ARTIFACT_REGISTRY_REPO    e.g. subtle-ai
     # Secrets this job reads (Settings -> Environments -> production-beta -> Secrets):
-    #   GCP_WORKLOAD_IDENTITY_PROVIDER   full WIF provider resource name
-    #   GCP_SERVICE_ACCOUNT              deploy service account email
+    #   GCP_WORKLOAD_IDENTITY_PROVIDER   full WIF provider resource name for the DEPLOY service account
+    #   GCP_SERVICE_ACCOUNT              deploy service account email - build/push/deploy/migrate only.
+    #                                    Distinct from the Cloud Run RUNTIME service account (see the
+    #                                    `deploy` job below and DEPLOYMENT.md "Service accounts") - this
+    #                                    identity is never used to run the application itself.
     outputs:
       image: ${{ steps.image.outputs.image }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.validate.outputs.sha }}
+          ref: ${{ needs.authorize.outputs.sha }}
       - id: image
-        run: echo "image=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.ARTIFACT_REGISTRY_REPO }}/subtle-ai:${{ needs.validate.outputs.sha }}" >> "$GITHUB_OUTPUT"
-      - uses: google-github-actions/auth@v3
+        run: echo "image=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.ARTIFACT_REGISTRY_REPO }}/subtle-ai:${{ needs.authorize.outputs.sha }}" >> "$GITHUB_OUTPUT"
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2.2.1
       - run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
       - name: Build image
         run: docker build -t "${{ steps.image.outputs.image }}" .
@@ -112,36 +144,71 @@ jobs:
         run: docker push "${{ steps.image.outputs.image }}"
 
   migrate:
-    needs: [validate, build-and-push]
+    needs: [authorize, validate, build-and-push]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production-beta
-    # Secrets: DATABASE_URL (the Neon connection string; see DEPLOYMENT.md
-    # for why this runs as its own step rather than at container boot).
+    # SEC-055-04 (Security Manager remediation): DATABASE_URL is fetched
+    # directly from Secret Manager, in-step, using this job's own WIF
+    # identity (the same deploy service account as build-and-push/deploy,
+    # which already requires roles/secretmanager.secretAccessor on
+    # DATABASE_URL to reference it in the deploy job's --set-secrets) -
+    # never persisted as a second, separately-rotated long-lived Neon
+    # credential in GitHub Environment Secrets. See DEPLOYMENT.md
+    # "Database secret custody" for the accepted decision and rationale.
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.validate.outputs.sha }}
-      - uses: actions/setup-node@v7
+          ref: ${{ needs.authorize.outputs.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
       - run: npm ci --omit=dev
-      - run: npm run migrate
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-
-  deploy:
-    needs: [validate, build-and-push, migrate]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    environment: production-beta
-    steps:
-      - uses: google-github-actions/auth@v3
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2.2.1
+      - name: Run database migrations
+        run: |
+          DATABASE_URL="$(gcloud secrets versions access latest --secret=DATABASE_URL --project "${{ vars.GCP_PROJECT_ID }}")"
+          echo "::add-mask::$DATABASE_URL"
+          export DATABASE_URL
+          npm run migrate
+
+  deploy:
+    needs: [authorize, validate, build-and-push, migrate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production-beta
+    # Additional Environment variable this job reads:
+    #   CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT   email of the dedicated Cloud Run RUNTIME service account
+    #                                        (SEC-055-01) - see DEPLOYMENT.md "Service accounts". Never
+    #                                        the same identity as GCP_SERVICE_ACCOUNT above.
+    steps:
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2.2.1
+      # SEC-055-01 (Security Manager remediation): --service-account pins
+      # the Cloud Run RUNTIME identity to a dedicated, least-privilege
+      # service account (CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT) that is
+      # distinct from GCP_SERVICE_ACCOUNT above (the deploy/WIF identity
+      # GitHub Actions authenticates as, used only to build/push/deploy/
+      # migrate). Omitting --service-account would fall back to the
+      # project's default compute service account, which typically holds
+      # broad Editor-equivalent project permissions - the running
+      # application must never hold more than
+      # roles/secretmanager.secretAccessor on its own five runtime
+      # secrets. See DEPLOYMENT.md "Service accounts".
+      #
+      # --update-labels records the exact deployed commit on the Cloud Run
+      # service/revision, matching what DEPLOYMENT.md's "Rollback" section
+      # already documents reading back via `gcloud run services describe
+      # --format 'value(metadata.labels.commit-sha)'`.
+      #
       # MVP-BETA-007 (#44) cost/scale safeguards: --min-instances=0 (scale to
       # zero, cold starts accepted for the initial beta) and --max-instances
       # bounds worst-case concurrent Postgres connections
@@ -161,11 +228,13 @@ jobs:
             --region "${{ vars.GCP_REGION }}" \
             --image "${{ needs.build-and-push.outputs.image }}" \
             --platform managed \
+            --service-account "${{ vars.CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}" \
             --min-instances 0 \
             --max-instances "${{ vars.CLOUD_RUN_MAX_INSTANCES }}" \
             --memory 512Mi \
             --cpu 1 \
             --allow-unauthenticated \
+            --update-labels "commit-sha=${{ needs.authorize.outputs.sha }}" \
             --set-env-vars "NODE_ENV=production,GMAIL_PROVIDER=google,PERSISTENCE_PROVIDER=postgres,PUBLIC_ORIGIN=${{ vars.PUBLIC_ORIGIN }},GOOGLE_OIDC_REDIRECT_URI=${{ vars.GOOGLE_OIDC_REDIRECT_URI }},GOOGLE_GMAIL_REDIRECT_URI=${{ vars.GOOGLE_GMAIL_REDIRECT_URI }}" \
             --set-secrets "DATABASE_URL=DATABASE_URL:latest,SESSION_SECRET=SESSION_SECRET:latest,TOKEN_ENCRYPTION_KEY=TOKEN_ENCRYPTION_KEY:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest"
       - name: Smoke-test the deployed revision

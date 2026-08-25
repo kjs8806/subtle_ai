@@ -72,19 +72,49 @@ Optional, with safe defaults (see "Database connection pool" below): `DB_POOL_MA
 
 Production/beta secrets are never committed to Git and never appear in Vite-bundled client code (Vite environment variables are compiled into browser JavaScript - server secrets must never be prefixed for Vite exposure, and none currently are).
 
-Store the sensitive values listed above in **Google Cloud Secret Manager**, one secret per value, and inject them into the Cloud Run revision with `--set-secrets` (see `.github/workflows/deploy.yml`'s `deploy` job) rather than `--set-env-vars`. Grant the Cloud Run service's runtime service account `roles/secretmanager.secretAccessor` scoped to exactly those secrets, nothing broader.
+Store the sensitive values listed above in **Google Cloud Secret Manager**, one secret per value, and inject them into the Cloud Run revision with `--set-secrets` (see `.github/workflows/deploy.yml`'s `deploy` job) rather than `--set-env-vars`.
 
 `server/app.js`'s Fastify logger redacts `req.headers.authorization`, `req.headers.cookie`, `res.headers.set-cookie`, and any `refreshToken`/`ciphertext`/`body` field whenever `NODE_ENV=production` (or `GMAIL_PROVIDER=google`). Never log `DATABASE_URL`, OAuth authorization codes, access/refresh tokens, encrypted token ciphertext, or receipt body content beyond what evidence provenance already records deliberately.
+
+### Service accounts
+
+SEC-055-01 (Security Manager remediation, PR #55): `deploy.yml` uses **two distinct Google Cloud service accounts**, never one shared identity. Neither is granted broad project-wide Editor/Owner permissions.
+
+| | **Deploy service account** (`GCP_SERVICE_ACCOUNT` secret) | **Runtime service account** (`CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT` variable) |
+| --- | --- | --- |
+| Used by | GitHub Actions, via Workload Identity Federation (`google-github-actions/auth`), in the `build-and-push`, `migrate`, and `deploy` jobs | The running Cloud Run container only, via `gcloud run deploy --service-account` |
+| Purpose | Build and push the image, run migrations, deploy the revision | Serve the application at runtime - read its own runtime secrets, connect to Neon |
+| Exact roles | `roles/run.admin` on the Cloud Run service (deploying with `--allow-unauthenticated` requires `run.services.setIamPolicy`, which the narrower `roles/run.developer` does not grant); `roles/artifactregistry.writer` on the `ARTIFACT_REGISTRY_REPO` repository; `roles/secretmanager.secretAccessor` on each of the five runtime secrets below (required both to reference them in the `deploy` job's `--set-secrets` and for the `migrate` job to read `DATABASE_URL` directly); `roles/iam.serviceAccountUser` granted **on the runtime service account resource specifically** (required for `--service-account` to deploy as it) | `roles/secretmanager.secretAccessor` on exactly `DATABASE_URL`, `SESSION_SECRET`, `TOKEN_ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` - nothing else |
+| Never used for | Running the application | Building, pushing, migrating, or deploying anything |
+
+`gcloud run deploy`'s `--service-account` flag (SEC-055-01) pins the runtime identity explicitly; omitting it would silently fall back to the project's default compute service account, which typically holds broad Editor-equivalent permissions the running application must never have. Create both service accounts and grant exactly the roles above before the first deploy - see "Release gates" below.
 
 ## Database - Neon PostgreSQL
 
 1. Create a Neon project in the region selected above.
 2. Create a database and a role with least-privilege access to it (not the Neon project's admin role).
-3. Copy the pooled connection string Neon provides (see "Database connection pool" - Neon's pooled endpoint, backed by PgBouncer, is appropriate for Cloud Run's elastic instance model) into Secret Manager as `DATABASE_URL`.
+3. Copy the pooled connection string Neon provides (see "Database connection pool" - Neon's pooled endpoint, backed by PgBouncer, is appropriate for Cloud Run's elastic instance model) into **Secret Manager only**, as `DATABASE_URL` - see "Database secret custody" immediately below for why this is the *sole* place it is stored.
 4. TLS is enforced by Neon's connection string (`sslmode=require`) automatically - `pg`'s `Pool` honors this without additional code.
 5. Run `npm run migrate` against it (see "Migrations" below) before the first deploy.
 
 The application speaks ordinary PostgreSQL throughout (`server/persistence/postgresRepository.js`, `pg`) - nothing is coupled to a Neon-specific API. Neon is interchangeable with any TLS-reachable PostgreSQL 16 instance without an application code change, should that ever be needed.
+
+### Database secret custody
+
+SEC-055-04 (Security Manager remediation, PR #55): **Google Secret Manager is the sole authoritative store for the production `DATABASE_URL`.** It is not duplicated as a GitHub Environment Secret. Earlier revisions of `deploy.yml` read `DATABASE_URL` from a GitHub Environment Secret in the `migrate` job - that meant the same long-lived Neon credential existed in two independently-rotated places, doubling the credential's exposure surface and rotation burden without a corresponding benefit.
+
+`migrate` now authenticates to Google Cloud via the same Workload Identity Federation deploy service account as `build-and-push`/`deploy` (see "Service accounts" above, which already needs `roles/secretmanager.secretAccessor` on `DATABASE_URL` to reference it in the `deploy` job's `--set-secrets`), and fetches the value directly and in-step:
+
+```yaml
+- name: Run database migrations
+  run: |
+    DATABASE_URL="$(gcloud secrets versions access latest --secret=DATABASE_URL --project "${{ vars.GCP_PROJECT_ID }}")"
+    echo "::add-mask::$DATABASE_URL"
+    export DATABASE_URL
+    npm run migrate
+```
+
+The value is masked in the log immediately after being read, exported only into that step's own shell environment, and never written to a job output or any other durable location. If this custody model is ever revisited (for example, to support a migration runner outside GitHub Actions that cannot assume the WIF identity), duplicating the credential into a second store must be an explicit, documented decision - not a default.
 
 ### Database connection pool
 
@@ -187,9 +217,16 @@ Target: **approximately $0/month** while the beta stays small, per Founder-appro
 ## CI/CD
 
 - **`.github/workflows/ci.yml`** (existing, unchanged by this work): runs on every PR and push to `main` - unit/integration tests, PostgreSQL integration tests, application-runtime persistence tests, the Playwright smoke suite, the cross-browser suite, `npm run build`, and a whitespace check. This is the gate that already prevents a broken commit from reaching `main`.
-- **`.github/workflows/deploy.yml`** (new, MVP-BETA-007): `workflow_dispatch`-only (see "Known limitations" for why this has not been run). Four sequential jobs: `validate` (re-runs the same test/build gate as `ci.yml`, against the exact commit being deployed), `build-and-push` (builds the container, tags it with that exact commit SHA - never only `latest` - and pushes to Artifact Registry), `migrate` (runs `npm run migrate` against the real database; a failure here blocks the deploy job entirely), `deploy` (`gcloud run deploy` with the new image, then smoke-tests the deployed revision's health/readiness endpoints). Each job requires the `production-beta` GitHub Environment, which should be configured with required reviewers for an additional human-approval gate beyond the `workflow_dispatch` trigger itself.
+- **`.github/workflows/deploy.yml`** (new, MVP-BETA-007): `workflow_dispatch`-only (see "Known limitations" for why this has not been run). Five sequential jobs:
+  1. **`authorize`** (SEC-055-02, Security Manager remediation): hard-fails, before any other job runs, unless the dispatched ref is exactly the protected `main` branch - `workflow_dispatch` otherwise lets a human pick any branch, tag, or commit, and a feature branch whose tests happen to pass must never be able to reach production the same way an approved `main` commit can. This job also captures `github.sha` exactly once as `needs.authorize.outputs.sha`; every later job checks out, tags its image with, or labels its revision with that same immutable value, so a `main` push mid-run can never cause a later job to silently deploy a different commit than the one actually authorized.
+  2. **`validate`** - re-runs the same test/build gate as `ci.yml`, against the exact authorized commit.
+  3. **`build-and-push`** - builds the container, tags it with that exact commit SHA (never only `latest`), and pushes to Artifact Registry, authenticated as the deploy service account (see "Service accounts" above).
+  4. **`migrate`** - runs `npm run migrate` against the real database, with `DATABASE_URL` fetched directly from Secret Manager (see "Database secret custody" above); a failure here blocks the `deploy` job entirely.
+  5. **`deploy`** - `gcloud run deploy` with the new image, running the revision as the dedicated runtime service account (SEC-055-01, see "Service accounts" above), then smoke-tests the deployed revision's health/readiness endpoints.
 
-Failing tests, at any stage, block the pipeline - there is no path from a red `validate` job to a deployed revision.
+  Every job but `authorize` requires the `production-beta` GitHub Environment, which should be configured with required reviewers for an additional human-approval gate beyond both the `workflow_dispatch` trigger and the branch restriction. Every third-party Action this workflow calls (`actions/checkout`, `actions/setup-node`, `google-github-actions/auth`, `google-github-actions/setup-gcloud`) is pinned to a reviewed full commit SHA rather than a mutable version tag (SEC-055-03) - a version comment sits beside each SHA so the intended release stays legible; bumping any of them is a deliberate, reviewed edit to that SHA, never something a tag's owner can silently change out from under this workflow.
+
+Failing tests, at any stage, block the pipeline - there is no path from a red `validate` job to a deployed revision. Neither is there a path from a non-`main` ref to a deployed revision.
 
 ## Rollback
 
@@ -214,7 +251,7 @@ This work was implemented in a sandboxed session with **no Google Cloud or Neon 
 - No Neon project or database has been created; the region pairing above is a documented recommendation, not a verified/provisioned choice.
 - No real Google OAuth client (with the actual Cloud Run origin registered as a redirect URI) exists yet.
 - `docker build`/`docker run` have not been executed against the real `Dockerfile` - its runtime file closure was instead verified by reproducing it directly on disk (see "Container" above), which is strong but not equivalent evidence.
-- `.github/workflows/deploy.yml` has never actually fired - its `google-github-actions/auth`, Artifact Registry push, `npm run migrate` against a real `DATABASE_URL`, and `gcloud run deploy` steps are unverified against real infrastructure.
+- `.github/workflows/deploy.yml` has never actually fired - its `google-github-actions/auth`, Artifact Registry push, `npm run migrate` against a real `DATABASE_URL`, and `gcloud run deploy` steps (including the SEC-055-01 dedicated runtime service account, the SEC-055-02 `authorize` branch gate, and the SEC-055-04 in-step Secret Manager fetch) are unverified against real infrastructure. Neither service account described in "Service accounts" above has actually been created.
 - The full "Deployed acceptance" checklist (real sign-in, real Gmail connect and scan, a real discovered receipt, restart persistence, correction, disconnect, delete account, all against the live Cloud Run + Neon environment) has not been executed, because no live environment exists to execute it against. Some of these steps (real sign-in with a controlled Google account, real Gmail authorization) should be performed by a human either way, not by an automated agent, regardless of credential access.
 - Neon's actual backup/PITR retention behavior for the selected plan is unverified (see "Backup / retention" above - flagged as a `TECHNICAL / PRODUCT DECISION REQUIRED` item).
 
@@ -227,10 +264,12 @@ Before the first real deployment from this runbook:
 - [ ] Google Cloud project created, billing linked (even for a $0-target beta, Cloud Run requires an active billing account).
 - [ ] Neon project created in the region confirmed closest to `us-central1` at that time.
 - [ ] Artifact Registry Docker repository created in `us-central1`.
-- [ ] Workload Identity Federation configured for GitHub Actions (or a scoped service account key, if WIF isn't set up yet) with exactly the IAM roles `deploy.yml` needs (Cloud Run deployer, Artifact Registry writer, Secret Manager accessor for the deploy-time secrets it reads) - nothing broader.
-- [ ] Secret Manager populated with `DATABASE_URL`, `SESSION_SECRET`, `TOKEN_ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`.
+- [ ] **Deploy service account** created and Workload Identity Federation configured for GitHub Actions to authenticate as it, with exactly: `roles/run.admin` on the Cloud Run service, `roles/artifactregistry.writer` on the Artifact Registry repository, `roles/secretmanager.secretAccessor` on each of the five runtime secrets, and `roles/iam.serviceAccountUser` granted on the runtime service account resource specifically (see "Service accounts" above) - nothing broader, no project-wide Editor/Owner role.
+- [ ] **Runtime service account** created, separate from the deploy service account, holding only `roles/secretmanager.secretAccessor` on the same five runtime secrets - no other project roles. Its email is set as the `production-beta` Environment's `CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT` variable.
+- [ ] Secret Manager populated with `DATABASE_URL`, `SESSION_SECRET`, `TOKEN_ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`. No copy of `DATABASE_URL` is stored as a GitHub Environment Secret (see "Database secret custody" above).
 - [ ] Google OAuth client created and its redirect URIs registered against the real Cloud Run origin (after the first deploy establishes what that origin is).
 - [ ] `production-beta` GitHub Environment created with the variables/secrets `deploy.yml` references, and required reviewers configured.
+- [ ] Branch protection on `main` (existing repository setting, unrelated to this deployment work) stays enabled - `deploy.yml`'s `authorize` job trusts that a commit on `main` went through the normal PR/CI gate, it does not re-verify that independently.
 - [ ] A real `docker build .` succeeds locally or in CI before the first `workflow_dispatch` run.
 - [ ] The "Deployed acceptance" checklist above is executed and passes.
 - [ ] Independent Security review (public exposure boundary, environment validation, Secret Manager, OAuth configuration, token storage, session cookies, database TLS, logs, error responses, health endpoints, mock-provider prohibition, account isolation, account deletion) - not self-certified by whoever implements this.
