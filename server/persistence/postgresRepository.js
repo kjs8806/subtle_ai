@@ -123,29 +123,76 @@ export const createPostgresRepository = ({ pool }) => {
       return winner.rows[0]
     },
     async getConnection(userId) { const { rows } = await pool.query('SELECT * FROM source_connections WHERE user_id = $1 AND provider = $2', [userId, 'gmail']); return rowConnection(rows[0]) || { status: 'not_connected', scanStatus: 'idle' } },
-    // MVP-BETA-004 (#41, Tech Lead remediation on PR #51): a connection
-    // stuck in 'revoked_pending_purge' (Google-side revocation already
-    // confirmed on a previous disconnect attempt, but the local purge
-    // hadn't completed yet) must finish that purge before a new connection
-    // is established here - otherwise the old, now-orphaned Gmail-derived
-    // data would silently persist alongside data from the new connection
-    // instead of ever being cleaned up. This makes reconnecting a second,
-    // equally valid way to complete a stuck purge, in addition to retrying
-    // disconnect directly.
+    // MVP-BETA-004 (#41, Tech Lead remediation on PR #51; extended for
+    // SEC-041-01, Security Manager remediation on PR #51): a connection
+    // stuck in 'revoked_pending_purge' (Google-side revocation confirmed on
+    // a previous disconnect attempt, but the local purge hadn't completed
+    // yet) or 'revoke_requested' (a disconnect was requested - Google may or
+    // may not have been reached before a crash/failure - but that was never
+    // durably confirmed either way) must finish purging before a new
+    // connection is established here - otherwise old, now-orphaned
+    // Gmail-derived data would silently persist alongside data from the new
+    // connection instead of ever being cleaned up. This makes reconnecting a
+    // second, equally valid way to complete a stuck purge, in addition to
+    // retrying disconnect directly.
     async authorizeConnection(userId, token = null) {
       const existing = await pool.query('SELECT authorization_state FROM source_connections WHERE user_id = $1 AND provider = $2', [userId, 'gmail'])
-      if (existing.rows[0]?.authorization_state === 'revoked_pending_purge') await this.disconnectConnection(userId)
+      if (['revoked_pending_purge', 'revoke_requested'].includes(existing.rows[0]?.authorization_state)) await this.disconnectConnection(userId)
       const ciphertext = token?.ciphertext || token || null
       const keyVersion = token?.keyVersion || null
       const { rows } = await pool.query('INSERT INTO source_connections (user_id, provider, authorization_state, encrypted_refresh_token, token_key_version) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, provider) DO UPDATE SET authorization_state = $3, encrypted_refresh_token = COALESCE($4, source_connections.encrypted_refresh_token), token_key_version = COALESCE($5, source_connections.token_key_version), scan_state = $6 RETURNING *', [userId, 'gmail', 'connected', ciphertext, keyVersion, 'idle'])
       return rowConnection(rows[0])
     },
-    async getEncryptedRefreshToken(userId) { const { rows } = await pool.query('SELECT encrypted_refresh_token AS ciphertext, token_key_version AS "keyVersion" FROM source_connections WHERE user_id = $1 AND provider = $2 AND authorization_state = $3', [userId, 'gmail', 'connected']); return rows[0]?.ciphertext ? rows[0] : null },
+    // SEC-041-01 (Security Manager remediation on PR #51): durably records
+    // that a Gmail disconnect has begun *before* provider.revokeConnection()
+    // is ever called - see server/app.js for the full state-machine
+    // rationale. The token is intentionally left in place (only
+    // markGmailRevoked clears it) so a retry from this exact state still has
+    // a token to send to the provider. Idempotent: a retry that finds the
+    // connection already in 'revoke_requested' is a harmless no-op. Never
+    // touches a connection already at 'revoked_pending_purge' (or absent) -
+    // callers only reach this once they've established the connection isn't
+    // already past this point.
+    async beginGmailDisconnect(userId) {
+      const { rows } = await pool.query("UPDATE source_connections SET authorization_state = 'revoke_requested' WHERE user_id = $1 AND provider = $2 AND authorization_state IN ('connected', 'revoke_requested') RETURNING authorization_state", [userId, 'gmail'])
+      return rows[0]?.authorization_state === 'revoke_requested'
+    },
+    // SEC-041-01: the counterpart to beginGmailDisconnect, for when
+    // provider.revokeConnection() comes back with a *definitive* negative
+    // answer (it threw, or explicitly returned something other than
+    // 'disconnected') rather than an ambiguous one (a crash with no response
+    // at all). This is the pre-existing "a genuine revocation failure never
+    // purges local data and leaves the connection usable for a retry"
+    // guarantee (Tech Lead remediation, PR #51) - reverting the marker here
+    // keeps that guarantee intact rather than leaving the connection
+    // scan-blocked over a failure that we know, with certainty, never
+    // reached Google successfully. Only reverts a connection that is
+    // currently 'revoke_requested' - never touches 'revoked_pending_purge',
+    // so it can never resurrect one that's actually mid-purge.
+    async cancelGmailDisconnect(userId) {
+      await pool.query("UPDATE source_connections SET authorization_state = 'connected' WHERE user_id = $1 AND provider = $2 AND authorization_state = 'revoke_requested'", [userId, 'gmail'])
+    },
+    // The token remains readable through 'revoke_requested' (not just
+    // 'connected') - see beginGmailDisconnect above - so a retry that finds
+    // the connection already mid-disconnect can still fetch it to re-attempt
+    // provider.revokeConnection(). It stops being readable the moment
+    // markGmailRevoked nulls it.
+    async getEncryptedRefreshToken(userId) { const { rows } = await pool.query("SELECT encrypted_refresh_token AS ciphertext, token_key_version AS \"keyVersion\" FROM source_connections WHERE user_id = $1 AND provider = $2 AND authorization_state IN ('connected', 'revoke_requested')", [userId, 'gmail']); return rows[0]?.ciphertext ? rows[0] : null },
     // Persists that Google-side revocation is confirmed, *before* the local
     // purge is attempted - see disconnectConnection below and the matching
     // comment in server/app.js for why this ordering is the whole point of
     // this remediation. Clearing the token here too means it can never be
     // reused even if the purge that follows fails and is retried later.
+    //
+    // SEC-041-01: this write itself can still fail (a transient DB error
+    // between Google confirming revocation and this UPDATE committing). When
+    // it does, this is a plain no-op UPDATE with no state precondition - the
+    // caller (server/app.js) wraps it in a bounded number of immediate
+    // retries to absorb that without a second call to Google, and if those
+    // are also exhausted, the connection simply stays at 'revoke_requested'
+    // (written by beginGmailDisconnect before Google was ever contacted),
+    // which is itself a safe, recoverable, scan-blocked state - never
+    // 'connected' with a token that's secretly already dead at Google.
     async markGmailRevoked(userId) {
       await pool.query("UPDATE source_connections SET authorization_state = 'revoked_pending_purge', encrypted_refresh_token = NULL, token_key_version = NULL WHERE user_id = $1 AND provider = $2", [userId, 'gmail'])
     },

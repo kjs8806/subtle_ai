@@ -84,12 +84,25 @@ export const createGoogleProvider = ({ clientId, clientSecret, oidcRedirectUri, 
     revokeConnection: async ({ token }) => {
       // A missing/empty token means Google revocation was never attempted, so it
       // can never be treated as verified - that would let an absent or corrupted
-      // credential silently count as a successful disconnect.
+      // credential silently count as a successful disconnect. This is a
+      // definitive failure: there is no ambiguity about a call that was never made.
       if (!token) return { status: 'revocation_failed' }
-      // Google's revocation result must be verified, not assumed: a non-2xx
-      // response or a network failure both mean the token was NOT revoked, and the
-      // token must be sent in the POST body rather than a query string to avoid it
-      // landing in access/proxy logs.
+      // SEC-041-02: a completed HTTP exchange and a network/transport failure
+      // are different outcomes and must not collapse into the same status.
+      // A non-2xx response IS Google's actual answer - RFC 7009 requires the
+      // revoke endpoint to return 200 even for an already-invalid/expired
+      // token, so a genuine non-2xx here is a real, definitive rejection the
+      // caller can safely act on (e.g. by reverting a pending-disconnect
+      // marker). The token must be sent in the POST body rather than a query
+      // string to avoid it landing in access/proxy logs.
+      //
+      // A thrown exception (DNS failure, connection reset, timeout, an
+      // aborted request) is different in kind: the request may never have
+      // reached Google, or it may have reached Google and been processed
+      // successfully with the response simply lost on the way back. The
+      // caller cannot tell which, and must never treat this the same as a
+      // confirmed failure (which would license reactivating the connection)
+      // or a confirmed success (which would license purging local data).
       try {
         const response = await fetchImpl('https://oauth2.googleapis.com/revoke', {
           method: 'POST',
@@ -99,7 +112,7 @@ export const createGoogleProvider = ({ clientId, clientSecret, oidcRedirectUri, 
         if (!response.ok) return { status: 'revocation_failed' }
         return { status: 'disconnected' }
       } catch {
-        return { status: 'revocation_failed' }
+        return { status: 'revocation_ambiguous' }
       }
     },
   }

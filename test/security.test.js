@@ -48,7 +48,7 @@ test('real provider requests only the approved OIDC and Gmail scopes', () => {
   assert.equal(gmail.searchParams.get('redirect_uri'), 'https://app.example/gmail')
 })
 
-test('SEC-004: revokeConnection verifies the HTTP result, sends the token in the POST body, and treats network errors as failure', async () => {
+test('SEC-004: revokeConnection verifies the HTTP result, sends the token in the POST body, and distinguishes a definitive HTTP rejection from an ambiguous network/transport failure', async () => {
   const provider = (fetchImpl) => createGoogleProvider({ clientId: 'client', clientSecret: 'secret', oidcRedirectUri: 'https://app.example/oidc', gmailRedirectUri: 'https://app.example/gmail', fetchImpl })
 
   let calledUrl = null
@@ -60,13 +60,22 @@ test('SEC-004: revokeConnection verifies the HTTP result, sends the token in the
   assert.match(calledBody, /token=refresh-token/)
   assert.equal(calledUrl.includes('refresh-token'), false, 'the token must not be sent in the URL')
 
+  // A completed HTTP exchange with a non-2xx response is Google's actual,
+  // definitive answer - the caller (server/app.js) can safely treat this as
+  // a genuine rejection and revert a pending-disconnect marker.
   const httpFailure = provider(async () => ({ ok: false, status: 400 }))
   const failedResult = await httpFailure.revokeConnection({ token: 'refresh-token' })
   assert.equal(failedResult.status, 'revocation_failed')
 
+  // SEC-041-02: a thrown exception (DNS failure, connection reset, timeout,
+  // an aborted request) is NOT the same outcome as a definitive rejection -
+  // the request may never have reached Google, or it may have been
+  // processed successfully with the response lost in transit. Collapsing
+  // this into 'revocation_failed' let the caller wrongly treat an unknown
+  // outcome as a confirmed failure and reactivate the connection.
   const networkFailure = provider(async () => { throw new Error('network unreachable') })
   const exceptionResult = await networkFailure.revokeConnection({ token: 'refresh-token' })
-  assert.equal(exceptionResult.status, 'revocation_failed')
+  assert.equal(exceptionResult.status, 'revocation_ambiguous')
 })
 
 test('SEC-006: revokeConnection treats a missing or empty token as unverified, never as disconnected, and never contacts Google', async () => {
