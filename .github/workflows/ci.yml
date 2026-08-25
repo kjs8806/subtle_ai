@@ -15,7 +15,16 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Real CI run #92 (head 943eda2) was killed by this job timeout, not a
+    # hang: "Run Playwright cross-browser suite" was still actively passing/
+    # failing individual tests (reached #116 of the full desktop x3 +
+    # mobile x2 matrix, including accessibility.spec.js's 6 real, currently-
+    # failing checks x 3 desktop engines x the suite's retries:2, which
+    # triples their cost since a genuine defect never passes on retry) when
+    # the 20-minute ceiling force-killed it mid-run. 45 minutes gives real
+    # margin over the observed pace (roughly 15 minutes to reach test 116 of
+    # ~150) plus setup/install/smoke-suite/build overhead.
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:16
