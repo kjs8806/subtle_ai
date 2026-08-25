@@ -8,7 +8,7 @@ import { overviewMarkup } from '../src/ui/overview.js'
 import { filterAndSortSubscriptions, subscriptionRow, subscriptionsPageMarkup, subscriptionTableRow } from '../src/ui/subscriptions.js'
 import { attentionCardMarkup, attentionDetailMarkup, attentionPageMarkup, candidateRow, countsByFilter, filterAttentionItems, overlapCardMarkup, severityBadgeMarkup, sortAttentionItems } from '../src/ui/attention.js'
 import { sourcesPageMarkup } from '../src/ui/sources.js'
-import { settingsPageMarkup } from '../src/ui/settings.js'
+import { deleteAccountConfirmMarkup, settingsPageMarkup } from '../src/ui/settings.js'
 import { correctionDialogMarkup, detailMarkup, fieldProvenance, rejectConfirmMarkup, renewalLabel } from '../src/ui/subscriptionDetail.js'
 import { gmailDisclosureMarkup } from '../src/ui/gmailDisclosure.js'
 import { signedOutMarkup } from '../src/ui/signedOut.js'
@@ -234,6 +234,25 @@ test('Settings is intentionally sparse: only real, currently-supported controls'
   assert.match(page, /jun@example\.com/)
   assert.match(page, /data-sign-out/)
   assert.match(page, /href="#\/sources"/)
+  assert.match(page, /data-open-delete-account/)
+})
+
+// MVP-BETA-004 (#41): Delete Account is the app's most destructive action -
+// it must at minimum match "Not a subscription"'s existing consequence-
+// checklist confirmation pattern (DES-021), explicitly distinguish itself
+// from Disconnect Gmail and Sign out (both preserve data this does not), and
+// never claim more or less than what server/app.js's DELETE /api/v1/account
+// + repository.deleteAccount actually do.
+test('the delete-account confirmation dialog explains the real consequences and is distinct from disconnect/sign-out', () => {
+  const dialog = deleteAccountConfirmMarkup()
+  assert.match(dialog, /data-delete-account-dialog/)
+  assert.match(dialog, /role="dialog"/)
+  assert.match(dialog, /data-confirm-delete-account/)
+  assert.match(dialog, /data-delete-account-error/)
+  assert.match(dialog, /disconnecting gmail/i)
+  assert.match(dialog, /signing out/i)
+  assert.match(dialog, /cannot be undone/i)
+  assert.match(dialog, /brand-new account|new account/i)
 })
 
 // ---- Subscription Detail: full page, matching the approved hierarchy.

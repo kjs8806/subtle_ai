@@ -123,8 +123,32 @@ export const createPostgresRepository = ({ pool }) => {
       return winner.rows[0]
     },
     async getConnection(userId) { const { rows } = await pool.query('SELECT * FROM source_connections WHERE user_id = $1 AND provider = $2', [userId, 'gmail']); return rowConnection(rows[0]) || { status: 'not_connected', scanStatus: 'idle' } },
-    async authorizeConnection(userId, token = null) { const ciphertext = token?.ciphertext || token || null; const keyVersion = token?.keyVersion || null; const { rows } = await pool.query('INSERT INTO source_connections (user_id, provider, authorization_state, encrypted_refresh_token, token_key_version) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, provider) DO UPDATE SET authorization_state = $3, encrypted_refresh_token = COALESCE($4, source_connections.encrypted_refresh_token), token_key_version = COALESCE($5, source_connections.token_key_version), scan_state = $6 RETURNING *', [userId, 'gmail', 'connected', ciphertext, keyVersion, 'idle']); return rowConnection(rows[0]) },
+    // MVP-BETA-004 (#41, Tech Lead remediation on PR #51): a connection
+    // stuck in 'revoked_pending_purge' (Google-side revocation already
+    // confirmed on a previous disconnect attempt, but the local purge
+    // hadn't completed yet) must finish that purge before a new connection
+    // is established here - otherwise the old, now-orphaned Gmail-derived
+    // data would silently persist alongside data from the new connection
+    // instead of ever being cleaned up. This makes reconnecting a second,
+    // equally valid way to complete a stuck purge, in addition to retrying
+    // disconnect directly.
+    async authorizeConnection(userId, token = null) {
+      const existing = await pool.query('SELECT authorization_state FROM source_connections WHERE user_id = $1 AND provider = $2', [userId, 'gmail'])
+      if (existing.rows[0]?.authorization_state === 'revoked_pending_purge') await this.disconnectConnection(userId)
+      const ciphertext = token?.ciphertext || token || null
+      const keyVersion = token?.keyVersion || null
+      const { rows } = await pool.query('INSERT INTO source_connections (user_id, provider, authorization_state, encrypted_refresh_token, token_key_version) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, provider) DO UPDATE SET authorization_state = $3, encrypted_refresh_token = COALESCE($4, source_connections.encrypted_refresh_token), token_key_version = COALESCE($5, source_connections.token_key_version), scan_state = $6 RETURNING *', [userId, 'gmail', 'connected', ciphertext, keyVersion, 'idle'])
+      return rowConnection(rows[0])
+    },
     async getEncryptedRefreshToken(userId) { const { rows } = await pool.query('SELECT encrypted_refresh_token AS ciphertext, token_key_version AS "keyVersion" FROM source_connections WHERE user_id = $1 AND provider = $2 AND authorization_state = $3', [userId, 'gmail', 'connected']); return rows[0]?.ciphertext ? rows[0] : null },
+    // Persists that Google-side revocation is confirmed, *before* the local
+    // purge is attempted - see disconnectConnection below and the matching
+    // comment in server/app.js for why this ordering is the whole point of
+    // this remediation. Clearing the token here too means it can never be
+    // reused even if the purge that follows fails and is retried later.
+    async markGmailRevoked(userId) {
+      await pool.query("UPDATE source_connections SET authorization_state = 'revoked_pending_purge', encrypted_refresh_token = NULL, token_key_version = NULL WHERE user_id = $1 AND provider = $2", [userId, 'gmail'])
+    },
     async beginScan(userId) { const client = await pool.connect(); try { await client.query('BEGIN'); const connection = await client.query('SELECT * FROM source_connections WHERE user_id = $1 AND provider = $2 AND authorization_state = $3 FOR UPDATE', [userId, 'gmail', 'connected']); if (!connection.rows[0]) { await client.query('ROLLBACK'); return null } if (connection.rows[0].scan_state === 'scanning') { await client.query('ROLLBACK'); return { conflict: true } } const scan = await client.query('INSERT INTO scan_runs (connection_id, status) VALUES ($1, $2) RETURNING *', [connection.rows[0].id, 'scanning']); await client.query('UPDATE source_connections SET scan_state = $1 WHERE id = $2', ['scanning', connection.rows[0].id]); await client.query('COMMIT'); return { id: scan.rows[0].id, userId, status: 'scanning', startedAt: scan.rows[0].started_at, completedAt: null, found: 0 } } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() } },
     async completeScan(userId, scanId, found, status = 'complete') { const { rows } = await pool.query('UPDATE scan_runs s SET status = $1, found_count = $2, completed_at = now() FROM source_connections c WHERE s.id = $3 AND s.connection_id = c.id AND c.user_id = $4 RETURNING s.*, c.id AS connection_id', [status, found, scanId, userId]); if (!rows[0]) return null; await pool.query('UPDATE source_connections SET scan_state = $1, last_scan_at = now() WHERE id = $2', [status === 'failed' ? 'error' : 'idle', rows[0].connection_id]); return { id: rows[0].id, userId, status: rows[0].status, startedAt: rows[0].started_at, completedAt: rows[0].completed_at, found: rows[0].found_count } },
     async persistParsedEvidence(userId, parsed) {
@@ -180,6 +204,32 @@ export const createPostgresRepository = ({ pool }) => {
         return { created: true, evidence: evidence.rows[0], subscription: await this.getSubscription(userId, subscriptionId) }
       } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
     },
+    // MVP-BETA-004 (#41, Product Owner policy on issue #41): disconnecting
+    // Gmail purges every Gmail-derived record but preserves the user, the
+    // auth identity, and (today, since manual subscriptions have no backend
+    // record at all - they live only in browser memory) the rest of the
+    // account is untouched by definition. Every table currently reachable
+    // from a Gmail scan gets an explicit DELETE here rather than relying on
+    // ON DELETE CASCADE alone - this is a surgical purge of one user's data,
+    // not a delete of the `users` row those cascades are rooted on, so
+    // nothing cascades unless it's declared for a table this function
+    // already touches directly.
+    //
+    // Two gaps existed here before this fix, found by inspecting every
+    // table's actual FK behavior rather than assuming CASCADE was enough:
+    // 1. subscription_candidates/candidate_evidence (FEATURE-002's ambiguous-
+    //    candidate review) were never purged. Every candidate is Gmail-
+    //    derived the same as every subscription is (there is no other
+    //    scan source), and a confirmed candidate's resolved_subscription_id
+    //    pointed at a subscription this function was about to delete with no
+    //    ON DELETE behavior on that FK (migration 012 fixes the column to
+    //    SET NULL) - reproduced against a real database, any user who had
+    //    ever confirmed a candidate got a foreign key violation on
+    //    disconnect and the whole transaction rolled back.
+    // 2. attention_item_dismissals (FEATURE-003) has no FK back to
+    //    subscriptions or price_change_events at all (item_key is a
+    //    synthetic string, not a foreign key - see migration 009) so it was
+    //    never cleaned up by any cascade and needs an explicit purge too.
     async disconnectConnection(userId) {
       const client = await pool.connect()
       try {
@@ -187,28 +237,34 @@ export const createPostgresRepository = ({ pool }) => {
         const connections = await client.query('SELECT id FROM source_connections WHERE user_id = $1 AND provider = $2', [userId, 'gmail'])
         const connectionIds = connections.rows.map(({ id }) => id)
         if (connectionIds.length) {
-          const subscriptions = await client.query('SELECT DISTINCT se.subscription_id FROM subscription_evidence se JOIN evidence e ON e.id = se.evidence_id JOIN source_messages sm ON sm.id = e.source_message_id WHERE sm.connection_id = ANY($1::uuid[])', [connectionIds])
-          const subscriptionIds = subscriptions.rows.map(({ subscription_id: id }) => id)
-          if (subscriptionIds.length) {
-            await client.query('DELETE FROM field_observations WHERE subscription_id = ANY($1::uuid[])', [subscriptionIds])
-            await client.query('DELETE FROM price_observations WHERE subscription_id = ANY($1::uuid[])', [subscriptionIds])
-            await client.query('DELETE FROM billing_events WHERE subscription_id = ANY($1::uuid[])', [subscriptionIds])
-            await client.query('DELETE FROM subscription_evidence WHERE subscription_id = ANY($1::uuid[])', [subscriptionIds])
-            await client.query('DELETE FROM subscriptions WHERE id = ANY($1::uuid[]) AND user_id = $2 AND source = $3', [subscriptionIds, userId, 'Gmail receipt'])
-          }
-          await client.query('DELETE FROM evidence WHERE source_message_id IN (SELECT id FROM source_messages WHERE connection_id = ANY($1::uuid[]))', [connectionIds])
-          await client.query('DELETE FROM source_messages WHERE connection_id = ANY($1::uuid[])', [connectionIds])
-          await client.query('DELETE FROM scan_runs WHERE connection_id = ANY($1::uuid[])', [connectionIds])
+          await client.query('DELETE FROM candidate_evidence WHERE candidate_id IN (SELECT id FROM subscription_candidates WHERE user_id = $1)', [userId])
+          await client.query('DELETE FROM subscription_candidates WHERE user_id = $1', [userId])
+          await client.query('DELETE FROM attention_item_dismissals WHERE user_id = $1', [userId])
           await client.query('DELETE FROM field_observations WHERE subscription_id IN (SELECT id FROM subscriptions WHERE user_id = $1 AND source = $2)', [userId, 'Gmail receipt'])
           await client.query('DELETE FROM price_observations WHERE subscription_id IN (SELECT id FROM subscriptions WHERE user_id = $1 AND source = $2)', [userId, 'Gmail receipt'])
           await client.query('DELETE FROM billing_events WHERE subscription_id IN (SELECT id FROM subscriptions WHERE user_id = $1 AND source = $2)', [userId, 'Gmail receipt'])
           await client.query('DELETE FROM subscription_evidence WHERE subscription_id IN (SELECT id FROM subscriptions WHERE user_id = $1 AND source = $2)', [userId, 'Gmail receipt'])
           await client.query('DELETE FROM subscriptions WHERE user_id = $1 AND source = $2', [userId, 'Gmail receipt'])
+          await client.query('DELETE FROM evidence WHERE source_message_id IN (SELECT id FROM source_messages WHERE connection_id = ANY($1::uuid[]))', [connectionIds])
+          await client.query('DELETE FROM source_messages WHERE connection_id = ANY($1::uuid[])', [connectionIds])
+          await client.query('DELETE FROM scan_runs WHERE connection_id = ANY($1::uuid[])', [connectionIds])
           await client.query('DELETE FROM source_connections WHERE id = ANY($1::uuid[])', [connectionIds])
         }
         await client.query('COMMIT')
         return { status: 'not_connected', scanStatus: 'idle' }
       } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+    },
+    // MVP-BETA-004 (#41): full account deletion. Every user-scoped table was
+    // individually verified (not assumed) to cascade from `users` via
+    // ON DELETE CASCADE, directly or transitively, except
+    // subscription_candidates.resolved_subscription_id - migration 012 fixed
+    // that gap the same disconnectConnection needed fixed. A single DELETE
+    // FROM users is therefore both correct and atomic: every dependent
+    // row is removed as part of the same statement's cascade resolution,
+    // so there is no window where a partial purge could be observed.
+    async deleteAccount(userId) {
+      const { rowCount } = await pool.query('DELETE FROM users WHERE id = $1', [userId])
+      return { deleted: rowCount > 0 }
     },
     // Rejected subscriptions are excluded from the default listing (and, by
     // extension, from any spend total derived from it) but are never deleted

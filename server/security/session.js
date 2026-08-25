@@ -18,7 +18,15 @@ export const createSessionManager = ({ ttlMs = 8 * 60 * 60 * 1000, now = () => D
     return null
   }
   const revoke = (token) => { if (token) sessions.delete(hashToken(token)) }
-  return { issue, resolve, revoke }
+  // MVP-BETA-004 (#41): this Map is the live session store regardless of
+  // PERSISTENCE_PROVIDER - the `sessions` DB table nothing here ever reads
+  // or writes (Postgres cascades it away for free on account deletion, but
+  // that cascade alone would never actually revoke a live token). Account
+  // deletion needs every session for a user gone, not just the one attached
+  // to the request that triggered it - a second concurrent device/tab must
+  // not keep working with a deleted account.
+  const revokeAllForUser = (userId) => { for (const [key, session] of sessions) if (session.userId === userId) sessions.delete(key) }
+  return { issue, resolve, revoke, revokeAllForUser }
 }
 
 export const SESSION_COOKIE = 'subtle_session'

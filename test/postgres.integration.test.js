@@ -37,6 +37,30 @@ const receipt = (sourceId, rawMerchant = 'billing', amount = 10, currency = 'USD
   excerpt: 'Netflix receipt',
 })
 
+// Unlike `receipt` above (cadence: null, used by tests that don't care about
+// derived price intelligence), this resolves a real billing_cycle - without
+// one, detectPriceChangeEvents has no cadence to annualize against and never
+// produces a price_change_events row at all, which the deletion/disconnect
+// tests below need populated to prove it actually gets purged.
+const receiptWithCadence = (sourceId, amount, canonicalService = 'Netflix', rawMerchant = 'billing') => ({
+  sourceId,
+  canonicalService,
+  rawMerchant,
+  amount,
+  currency: 'USD',
+  cadence: 'monthly',
+  nextRenewal: '2026-09-15',
+  receivedAt: '2026-08-19T09:00:00.000Z',
+  confidence: { score: 0.9, state: 'confirmed' },
+  fieldObservations: {
+    canonicalService: { value: canonicalService, provenance: 'confirmed' },
+    amount: { value: amount, provenance: 'confirmed' },
+    currency: { value: 'USD', provenance: 'confirmed' },
+    cadence: { value: 'monthly', provenance: 'confirmed' },
+  },
+  excerpt: `${canonicalService} receipt`,
+})
+
 integration('PostgreSQL migrations, ownership, idempotency, provenance, and purge work against a real database', async () => {
   const pool = await connectPool()
   try {
@@ -82,6 +106,150 @@ integration('PostgreSQL migrations, ownership, idempotency, provenance, and purg
 })
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+// MVP-BETA-004 (#41): disconnectConnection and deleteAccount, verified
+// against a real database rather than assumed correct from reading the FK
+// definitions. Migration 012 fixes a real bug found while inspecting the
+// schema: a confirmed candidate's resolved_subscription_id had no ON DELETE
+// behavior, so deleting the subscription it resolved to (exactly what
+// disconnect does) threw a foreign key violation and rolled back the whole
+// operation for any user who had ever confirmed one.
+integration('disconnectConnection purges every Gmail-derived record (including confirmed/pending candidates and dismissals) without a foreign key violation, and preserves the account', async () => {
+  const pool = await connectPool()
+  try {
+    await pool.query('DROP SCHEMA public CASCADE')
+    await pool.query('CREATE SCHEMA public')
+    await runMigrations({ pool })
+    const repository = createPostgresRepository({ pool })
+    const vault = createTokenVault({ secret: 'a'.repeat(32) })
+    const userA = await repository.createUser({ email: 'a@example.com', name: 'A' })
+    const userB = await repository.createUser({ email: 'b@example.com', name: 'B' })
+    for (const user of [userA, userB]) {
+      await repository.authorizeConnection(user.id, vault.encrypt('refresh-token'))
+      const first = await repository.persistParsedEvidence(user.id, receiptWithCadence(`${user.id}-msg-1`, 15))
+      await repository.persistParsedEvidence(user.id, receiptWithCadence(`${user.id}-msg-2`, 18))
+      await repository.applyCorrection(user.id, first.subscription.id, 'plan', 'Premium')
+      // A confirmed candidate - this is exactly the scenario that used to
+      // throw "violates foreign key constraint
+      // subscription_candidates_resolved_subscription_id_fkey".
+      await repository.persistCandidate(user.id, { sourceId: `${user.id}-cand-1`, canonicalService: 'Spotify', rawMerchant: 'billing', amount: 10, currency: 'USD', cadence: 'monthly', nextRenewal: null, receivedAt: '2026-08-19T09:00:00.000Z', excerpt: 'ambiguous' })
+      const confirmable = await repository.listCandidates(user.id)
+      await repository.confirmCandidate(user.id, confirmable[0].id, {})
+      // A second, never-resolved pending candidate, to prove that case is
+      // purged too, not only ones that became a subscription.
+      await repository.persistCandidate(user.id, { sourceId: `${user.id}-cand-2`, canonicalService: 'Dropbox', rawMerchant: 'billing', amount: 8, currency: 'USD', cadence: 'monthly', nextRenewal: null, receivedAt: '2026-08-19T09:00:00.000Z', excerpt: 'ambiguous 2' })
+      const attentionItems = await repository.listAttentionItems(user.id)
+      if (attentionItems.length) await repository.dismissAttentionItem(user.id, attentionItems[0].id)
+    }
+
+    const countsFor = async (userId) => {
+      const subs = await pool.query('SELECT id FROM subscriptions WHERE user_id = $1', [userId])
+      const subscriptionIds = subs.rows.map((row) => row.id)
+      const scoped = async (table, column = 'user_id') => (await pool.query(`SELECT count(*) FROM ${table} WHERE ${column} = $1`, [userId])).rows[0].count
+      const bySubscription = async (table) => subscriptionIds.length ? (await pool.query(`SELECT count(*) FROM ${table} WHERE subscription_id = ANY($1::uuid[])`, [subscriptionIds])).rows[0].count : '0'
+      return {
+        subscriptions: subs.rowCount,
+        evidence: Number(await scoped('evidence')),
+        subscriptionCorrections: Number(await scoped('subscription_corrections')),
+        subscriptionCandidates: Number(await scoped('subscription_candidates')),
+        priceChangeEvents: Number(await scoped('price_change_events')),
+        attentionDismissals: Number(await scoped('attention_item_dismissals')),
+        sourceConnections: Number(await scoped('source_connections')),
+        fieldObservations: Number(await bySubscription('field_observations')),
+        priceObservations: Number(await bySubscription('price_observations')),
+        billingEvents: Number(await bySubscription('billing_events')),
+        subscriptionEvidence: Number(await bySubscription('subscription_evidence')),
+        users: Number(await scoped('users', 'id')),
+      }
+    }
+
+    const beforeA = await countsFor(userA.id)
+    assert.ok(beforeA.subscriptions > 0 && beforeA.subscriptionCandidates === 2 && beforeA.priceChangeEvents > 0, 'test setup did not actually populate userA')
+
+    await assert.doesNotReject(repository.disconnectConnection(userA.id), 'disconnectConnection must not throw a foreign key violation for a user with a confirmed candidate')
+
+    const afterA = await countsFor(userA.id)
+    for (const [table, count] of Object.entries(afterA)) {
+      if (table === 'users') continue
+      assert.equal(count, 0, `expected ${table} to be fully purged for userA after disconnect, got ${count}`)
+    }
+    assert.equal(afterA.users, 1, 'disconnect must preserve the user account itself')
+
+    // userB is completely untouched by userA's disconnect.
+    const afterB = await countsFor(userB.id)
+    assert.ok(afterB.subscriptions > 0 && afterB.subscriptionCandidates === 2 && afterB.priceChangeEvents > 0, 'userB\'s data must be untouched by userA\'s disconnect')
+  } finally {
+    await pool.end()
+  }
+})
+
+integration('deleteAccount purges every user-scoped table including the user and identity rows, and never affects another account', async () => {
+  const pool = await connectPool()
+  try {
+    await pool.query('DROP SCHEMA public CASCADE')
+    await pool.query('CREATE SCHEMA public')
+    await runMigrations({ pool })
+    const repository = createPostgresRepository({ pool })
+    const vault = createTokenVault({ secret: 'a'.repeat(32) })
+    const userC = await repository.resolveOrCreateIdentity({ provider: 'google', subject: 'sub-delete-c', email: 'c@example.com', name: 'C' })
+    const userD = await repository.resolveOrCreateIdentity({ provider: 'google', subject: 'sub-delete-d', email: 'd@example.com', name: 'D' })
+    for (const user of [userC, userD]) {
+      await repository.authorizeConnection(user.id, vault.encrypt('refresh-token'))
+      const first = await repository.persistParsedEvidence(user.id, receiptWithCadence(`${user.id}-msg-1`, 15))
+      await repository.persistParsedEvidence(user.id, receiptWithCadence(`${user.id}-msg-2`, 18))
+      await repository.applyCorrection(user.id, first.subscription.id, 'plan', 'Premium')
+      await repository.persistCandidate(user.id, { sourceId: `${user.id}-cand-1`, canonicalService: 'Spotify', rawMerchant: 'billing', amount: 10, currency: 'USD', cadence: 'monthly', nextRenewal: null, receivedAt: '2026-08-19T09:00:00.000Z', excerpt: 'ambiguous' })
+      const confirmable = await repository.listCandidates(user.id)
+      await repository.confirmCandidate(user.id, confirmable[0].id, {})
+    }
+
+    const countAllFor = async (userId) => {
+      const results = {}
+      results.users = (await pool.query('SELECT count(*) FROM users WHERE id = $1', [userId])).rows[0].count
+      results.auth_identities = (await pool.query('SELECT count(*) FROM auth_identities WHERE user_id = $1', [userId])).rows[0].count
+      const directTables = ['source_connections', 'subscriptions', 'evidence', 'subscription_corrections', 'subscription_candidates', 'price_change_events', 'attention_item_dismissals']
+      for (const table of directTables) results[table] = (await pool.query(`SELECT count(*) FROM ${table} WHERE user_id = $1`, [userId])).rows[0].count
+      const subs = await pool.query('SELECT id FROM subscriptions WHERE user_id = $1', [userId])
+      const subscriptionIds = subs.rows.map((row) => row.id)
+      for (const table of ['scan_runs']) results[table] = '0' // connection-scoped, checked via source_connections above being zero
+      for (const table of ['source_messages']) results[table] = '0' // connection-scoped, same reasoning
+      for (const table of ['subscription_evidence', 'billing_events', 'price_observations', 'field_observations']) {
+        results[table] = subscriptionIds.length ? (await pool.query(`SELECT count(*) FROM ${table} WHERE subscription_id = ANY($1::uuid[])`, [subscriptionIds])).rows[0].count : '0'
+      }
+      results.correction_conflicts = '0' // cascades transitively from subscription_corrections, checked above
+      results.candidate_evidence = '0' // cascades transitively from subscription_candidates, checked above
+      return results
+    }
+
+    const before = await countAllFor(userC.id)
+    assert.ok(Number(before.subscriptions) > 0 && Number(before.subscription_candidates) === 1 && Number(before.auth_identities) === 1, 'test setup did not actually populate userC')
+
+    const result = await repository.deleteAccount(userC.id)
+    assert.equal(result.deleted, true)
+
+    const after = await countAllFor(userC.id)
+    for (const [table, count] of Object.entries(after)) assert.equal(Number(count), 0, `expected ${table} to be fully purged for userC after deleteAccount, got ${count}`)
+
+    // Deleting an already-deleted (or never-existed) account is a safe no-op.
+    const secondDelete = await repository.deleteAccount(userC.id)
+    assert.equal(secondDelete.deleted, false)
+
+    // userD is completely untouched.
+    const afterD = await countAllFor(userD.id)
+    assert.equal(Number(afterD.users), 1)
+    assert.ok(Number(afterD.subscriptions) > 0 && Number(afterD.subscription_candidates) === 1, 'userD\'s data must be untouched by userC\'s deletion')
+
+    // Re-authenticating with the deleted identity's Google subject creates a
+    // genuinely new account, never resurrecting the deleted one.
+    const resurrected = await repository.resolveOrCreateIdentity({ provider: 'google', subject: 'sub-delete-c', email: 'c@example.com', name: 'C' })
+    assert.notEqual(resurrected.id, userC.id)
+    const resurrectedCounts = await countAllFor(resurrected.id)
+    assert.equal(Number(resurrectedCounts.subscriptions), 0)
+    assert.equal(Number(resurrectedCounts.subscription_candidates), 0)
+  } finally {
+    await pool.end()
+  }
+})
 
 integration('resolveOrCreateIdentity maps a Google subject to an internal UUID user and de-duplicates concurrent first login', async () => {
   const pool = await connectPool()
