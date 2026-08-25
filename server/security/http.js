@@ -16,7 +16,18 @@ export const enforceSameOrigin = ({ enforce, origin }) => async (request, reply)
   if (!supplied || supplied !== origin) return reply.code(403).send({ error: { code: 'invalid_origin', message: 'Request origin rejected' } })
 }
 
-export const createRateLimiter = ({ limit = 60, windowMs = 60_000, now = () => Date.now() } = {}) => {
+// Browser E2E projects intentionally drive many independent sessions through
+// one loopback IP in a few seconds. That synthetic traffic can exhaust the
+// real 60-request production limiter and turn unrelated responsive/a11y tests
+// into 429 failures. Allow an explicit higher ceiling only under NODE_ENV=test;
+// production/development behavior remains 60 even if E2E_RATE_LIMIT is set.
+const defaultRateLimit = () => {
+  if (process.env.NODE_ENV !== 'test') return 60
+  const configured = Number(process.env.E2E_RATE_LIMIT)
+  return Number.isFinite(configured) && configured > 0 ? configured : 60
+}
+
+export const createRateLimiter = ({ limit = defaultRateLimit(), windowMs = 60_000, now = () => Date.now() } = {}) => {
   const clients = new Map()
   return async (request, reply) => {
     const key = request.ip

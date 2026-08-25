@@ -10,7 +10,7 @@
   --ink:#181a2a;
   --ink-soft:#3a3d55;
   --muted:#6b7086;
-  --muted-soft:#9a9fb3;
+  --muted-soft:#686d82;
   --paper:#f5f5fb;
   --surface:#ffffff;
   --border:#e6e5f2;
@@ -22,15 +22,15 @@
   --purple-soft:#efebff;
   --purple-soft-deep:#ded7ff;
 
-  --coral:#e2632f;
+  --coral:#bd4318;
   --coral-soft:#fdece2;
-  --coral-ink:#b84f22;
+  --coral-ink:#b2491d;
 
   --success:#1a9c6b;
   --success-soft:#e3f7ee;
-  --warning:#b3790c;
+  --warning:#985f00;
   --warning-soft:#fdf1da;
-  --danger:#d6403f;
+  --danger:#c53131;
   --danger-soft:#fdeae9;
 
   --line:var(--border);
