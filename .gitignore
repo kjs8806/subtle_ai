@@ -10,3 +10,7 @@ playwright/.cache/
 .DS_Store
 public/_validation-scratch.html
 .claude/
+# SEC-055-05: google-github-actions/auth writes a temporary Application
+# Default Credentials file into $GITHUB_WORKSPACE (the repo root) by
+# default, matching this glob - must never be committed.
+gha-creds-*.json

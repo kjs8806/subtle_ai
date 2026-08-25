@@ -1,0 +1,271 @@
+name: Deploy (Cloud Run)
+
+# MVP-BETA-007 (#44): manual-dispatch only, deliberately. This never runs on
+# push or pull_request - docs/engineering/DEPLOYMENT.md's existing release
+# gate is explicit that "automation may prepare branches and PRs but may not
+# deploy, merge, release, or bypass protections," and Security-sensitive
+# production release requires Founder approval during the supervised phase.
+# This workflow is the reproducible *mechanism* a human invokes (via the
+# Actions tab, on a specific commit/ref) - it is never triggered by an
+# agent or by CI itself. The `production-beta` GitHub Environment below can
+# additionally be configured with required reviewers, giving a second,
+# platform-enforced approval gate before the deploy job actually runs.
+#
+# SEC-055-02 (Security Manager remediation on PR #55, review of head
+# 96c3662): workflow_dispatch lets a human pick ANY branch, tag, or commit
+# to run from - without an explicit check, a feature branch whose tests
+# happen to pass could reach production the same way an approved main
+# commit would. The `authorize` job below runs first and hard-fails (not
+# silently skips) unless the dispatched ref is exactly the protected
+# `main` branch, before any job that touches the production-beta
+# environment. It also captures github.sha exactly once, as the single
+# immutable commit identity every later job (validate, build-and-push,
+# migrate, deploy) checks out, tags its image with, or labels its
+# revision with - so a branch update mid-run can never cause a later job
+# to silently pick up a different commit than the one that was actually
+# authorized.
+#
+# SEC-055-05 (Security Manager remediation on PR #55, review of head
+# 5fc07eb): google-github-actions/auth writes a temporary Application
+# Default Credentials file into $GITHUB_WORKSPACE (the repo root) by
+# default, matching gha-creds-*.json - and the Dockerfile's build stage
+# does `COPY . .`. `build-and-push` below now builds the image BEFORE
+# authenticating to Google at all (building never needs GCP credentials),
+# and .dockerignore/.gitignore both exclude the gha-creds-*.json pattern
+# as defense in depth. Authentication happens only immediately before the
+# Artifact Registry push that actually needs it.
+#
+# This workflow has not been run against a real Google Cloud project or
+# Neon database from this repository - see docs/engineering/DEPLOYMENT.md's
+# "Known limitations" section. Before the first real use: create the
+# Environment, populate the repository variables/secrets it references
+# below, and confirm each job in a low-stakes dry run.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy" to confirm you intend to deploy this exact commit to the public beta environment'
+        required: true
+
+permissions:
+  contents: read
+  # id-token: write is NOT granted workflow-wide (SEC-055-05 least-privilege
+  # hardening) - only build-and-push, migrate, and deploy actually perform
+  # Workload Identity Federation auth, and each grants it for itself below.
+
+concurrency:
+  group: deploy-production-beta
+  cancel-in-progress: false # never cancel a deploy that's already touching the live database/revision
+
+jobs:
+  authorize:
+    if: github.event.inputs.confirm == 'deploy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      sha: ${{ steps.capture.outputs.sha }}
+    steps:
+      - name: Require the protected main branch
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "::error::Refusing to deploy: this workflow was dispatched against '${{ github.ref }}', not the protected 'main' branch. Only commits on main may reach production-beta - re-run workflow_dispatch with 'main' selected as the branch."
+            exit 1
+          fi
+      - name: Capture the immutable deploy commit
+        id: capture
+        run: echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+  validate:
+    needs: authorize
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: subtle_ai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d subtle_ai_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --package-lock=false @playwright/test@1.62.1
+      - run: npx playwright install --with-deps chromium
+      - name: Run tests
+        run: npm test
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/subtle_ai_test
+      - name: Run PostgreSQL integration tests
+        run: npm run test:postgres
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/subtle_ai_test
+      - name: Run application-runtime PostgreSQL persistence tests
+        run: npm run test:runtime
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/subtle_ai_test
+      - name: Run browser smoke suite
+        run: npm run test:smoke
+      - name: Build application
+        run: npm run build
+
+  build-and-push:
+    needs: [authorize, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production-beta
+    permissions:
+      contents: read
+      id-token: write # required for keyless Workload Identity Federation auth to Google Cloud
+    # Repository/Environment variables this job reads (Settings -> Environments
+    # -> production-beta -> Variables), none of them secret:
+    #   GCP_PROJECT_ID            e.g. subtle-ai-beta
+    #   GCP_REGION                the Cloud Run region documented in DEPLOYMENT.md
+    #   ARTIFACT_REGISTRY_REPO    e.g. subtle-ai
+    # Secrets this job reads (Settings -> Environments -> production-beta -> Secrets):
+    #   GCP_WORKLOAD_IDENTITY_PROVIDER   full WIF provider resource name for the DEPLOY service account
+    #   GCP_SERVICE_ACCOUNT              deploy service account email - build/push/deploy/migrate only.
+    #                                    Distinct from the Cloud Run RUNTIME service account (see the
+    #                                    `deploy` job below and DEPLOYMENT.md "Service accounts") - this
+    #                                    identity is never used to run the application itself.
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.sha }}
+      - id: image
+        run: echo "image=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.ARTIFACT_REGISTRY_REPO }}/subtle-ai:${{ needs.authorize.outputs.sha }}" >> "$GITHUB_OUTPUT"
+      # SEC-055-05: build BEFORE authenticating to Google - `docker build .`
+      # never needs GCP credentials, and building first guarantees no
+      # gha-creds-*.json file exists on disk yet when `COPY . .` runs in the
+      # Dockerfile's build stage (.dockerignore also excludes that pattern
+      # as defense in depth - see the file for why). Authentication happens
+      # immediately before the Artifact Registry push that actually needs it.
+      - name: Build image
+        run: docker build -t "${{ steps.image.outputs.image }}" .
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2.2.1
+      - run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+      - name: Push image
+        run: docker push "${{ steps.image.outputs.image }}"
+
+  migrate:
+    needs: [authorize, validate, build-and-push]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production-beta
+    permissions:
+      contents: read
+      id-token: write # required for keyless Workload Identity Federation auth to Google Cloud
+    # SEC-055-04 (Security Manager remediation): DATABASE_URL is fetched
+    # directly from Secret Manager, in-step, using this job's own WIF
+    # identity (the same deploy service account as build-and-push/deploy,
+    # which already requires roles/secretmanager.secretAccessor on
+    # DATABASE_URL to reference it in the deploy job's --set-secrets) -
+    # never persisted as a second, separately-rotated long-lived Neon
+    # credential in GitHub Environment Secrets. See DEPLOYMENT.md
+    # "Database secret custody" for the accepted decision and rationale.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --omit=dev
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2.2.1
+      - name: Run database migrations
+        run: |
+          DATABASE_URL="$(gcloud secrets versions access latest --secret=DATABASE_URL --project "${{ vars.GCP_PROJECT_ID }}")"
+          echo "::add-mask::$DATABASE_URL"
+          export DATABASE_URL
+          npm run migrate
+
+  deploy:
+    needs: [authorize, validate, build-and-push, migrate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production-beta
+    permissions:
+      id-token: write # required for keyless Workload Identity Federation auth to Google Cloud - this job never checks out the repo, so contents: read is not needed
+    # Additional Environment variable this job reads:
+    #   CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT   email of the dedicated Cloud Run RUNTIME service account
+    #                                        (SEC-055-01) - see DEPLOYMENT.md "Service accounts". Never
+    #                                        the same identity as GCP_SERVICE_ACCOUNT above.
+    steps:
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2.2.1
+      # SEC-055-01 (Security Manager remediation): --service-account pins
+      # the Cloud Run RUNTIME identity to a dedicated, least-privilege
+      # service account (CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT) that is
+      # distinct from GCP_SERVICE_ACCOUNT above (the deploy/WIF identity
+      # GitHub Actions authenticates as, used only to build/push/deploy/
+      # migrate). Omitting --service-account would fall back to the
+      # project's default compute service account, which typically holds
+      # broad Editor-equivalent project permissions - the running
+      # application must never hold more than
+      # roles/secretmanager.secretAccessor on its own five runtime
+      # secrets. See DEPLOYMENT.md "Service accounts".
+      #
+      # --update-labels records the exact deployed commit on the Cloud Run
+      # service/revision, matching what DEPLOYMENT.md's "Rollback" section
+      # already documents reading back via `gcloud run services describe
+      # --format 'value(metadata.labels.commit-sha)'`.
+      #
+      # MVP-BETA-007 (#44) cost/scale safeguards: --min-instances=0 (scale to
+      # zero, cold starts accepted for the initial beta) and --max-instances
+      # bounds worst-case concurrent Postgres connections
+      # (max-instances * DB_POOL_MAX, see server/config/env.js) against
+      # Neon's free-tier connection ceiling. --no-cpu-throttling is
+      # deliberately NOT set (default CPU throttling outside request
+      # processing is the cheaper, scale-to-zero-friendly behavior this
+      # beta wants). GMAIL_PROVIDER=google and PERSISTENCE_PROVIDER=postgres
+      # are set explicitly here rather than baked into the image so they're
+      # visible in this workflow, not just implied by the Dockerfile - and
+      # because server/config/env.js's production fail-closed validation
+      # means the revision simply won't start if either is missing or wrong.
+      - name: Deploy Cloud Run revision
+        run: |
+          gcloud run deploy "${{ vars.CLOUD_RUN_SERVICE }}" \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --region "${{ vars.GCP_REGION }}" \
+            --image "${{ needs.build-and-push.outputs.image }}" \
+            --platform managed \
+            --service-account "${{ vars.CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}" \
+            --min-instances 0 \
+            --max-instances "${{ vars.CLOUD_RUN_MAX_INSTANCES }}" \
+            --memory 512Mi \
+            --cpu 1 \
+            --allow-unauthenticated \
+            --update-labels "commit-sha=${{ needs.authorize.outputs.sha }}" \
+            --set-env-vars "NODE_ENV=production,GMAIL_PROVIDER=google,PERSISTENCE_PROVIDER=postgres,PUBLIC_ORIGIN=${{ vars.PUBLIC_ORIGIN }},GOOGLE_OIDC_REDIRECT_URI=${{ vars.GOOGLE_OIDC_REDIRECT_URI }},GOOGLE_GMAIL_REDIRECT_URI=${{ vars.GOOGLE_GMAIL_REDIRECT_URI }}" \
+            --set-secrets "DATABASE_URL=DATABASE_URL:latest,SESSION_SECRET=SESSION_SECRET:latest,TOKEN_ENCRYPTION_KEY=TOKEN_ENCRYPTION_KEY:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest"
+      - name: Smoke-test the deployed revision
+        run: |
+          URL=$(gcloud run services describe "${{ vars.CLOUD_RUN_SERVICE }}" --project "${{ vars.GCP_PROJECT_ID }}" --region "${{ vars.GCP_REGION }}" --format 'value(status.url)')
+          echo "Deployed: $URL"
+          curl -sf "$URL/api/v1/health" | grep -q '"status":"ok"'
+          curl -sf "$URL/api/v1/health/ready" | grep -q '"status":"ok"'
