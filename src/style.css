@@ -10,7 +10,7 @@
   --ink:#181a2a;
   --ink-soft:#3a3d55;
   --muted:#6b7086;
-  --muted-soft:#686d82;
+  --muted-soft:#5f6478;
   --paper:#f5f5fb;
   --surface:#ffffff;
   --border:#e6e5f2;
@@ -24,13 +24,13 @@
 
   --coral:#bd4318;
   --coral-soft:#fdece2;
-  --coral-ink:#b2491d;
+  --coral-ink:#a64218;
 
   --success:#1a9c6b;
   --success-soft:#e3f7ee;
-  --warning:#985f00;
+  --warning:#8b5700;
   --warning-soft:#fdf1da;
-  --danger:#c53131;
+  --danger:#b92c2d;
   --danger-soft:#fdeae9;
 
   --line:var(--border);
@@ -185,7 +185,7 @@ button,a,input,select{font:inherit}
 .search-field{position:relative;display:flex;flex:1;align-items:center;min-width:220px;max-width:360px}
 .search-field svg{position:absolute;left:12px;color:var(--muted-soft);pointer-events:none}
 .search-field input{width:100%;padding:10px 14px 10px 38px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--ink);font-size:13.5px}
-.search-field input::placeholder{color:var(--muted-soft)}
+.search-field input::placeholder{color:var(--muted-soft);opacity:1}
 .toolbar-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .filter-control{position:relative}
 .filter-count{display:inline-grid;min-width:16px;height:16px;margin-left:6px;padding:0 4px;place-items:center;border-radius:var(--radius-pill);background:var(--purple);color:#fff;font:700 10px 'DM Mono',monospace}
