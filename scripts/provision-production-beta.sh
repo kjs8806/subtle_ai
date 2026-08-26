@@ -15,9 +15,19 @@
 # a real Google OAuth client) and are marked accordingly.
 #
 # Prerequisites on the machine running this script:
-#   - gcloud CLI, authenticated as a user with Owner/Editor on the target
-#     GCP organization or an existing project creator role
-#   - gh CLI, authenticated with admin access to kjs8806/subtle_ai
+#   - gcloud CLI - installed automatically by the preflight section below if
+#     missing, but YOU must still run `gcloud auth login` yourself first
+#     (an interactive browser flow the script cannot do for you), as a user
+#     with Owner/Editor on the target GCP organization or an existing
+#     project creator role
+#   - gh CLI, logged in via `gh auth login` as a real user with admin access
+#     to kjs8806/subtle_ai. On GitHub Codespaces specifically: a
+#     GITHUB_TOKEN environment variable is injected into every shell by
+#     default, `gh` prefers it over any stored login, and it is a
+#     restricted token that CANNOT manage repo Environments (section 10
+#     fails with "Resource not accessible by integration" if it's used) -
+#     the preflight section below unsets it for this script's own process,
+#     but you still need to have run `gh auth login` at least once first.
 #   - A Neon account (console.neon.tech) - Neon has no gcloud equivalent;
 #     the database itself is provisioned through Neon's own console/CLI
 #   - openssl (for generating SESSION_SECRET / TOKEN_ENCRYPTION_KEY)
@@ -25,6 +35,54 @@
 # Exit on any error - do not continue past a failed step without
 # understanding why it failed.
 set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Preflight - install gcloud if it's missing, and make sure `gh` will
+# actually authenticate as a real user rather than a restricted token.
+#
+# GitHub Codespaces (and Actions runners) inject a GITHUB_TOKEN/GH_TOKEN
+# environment variable by default. `gh` always prefers that env var over
+# any stored `gh auth login` credentials - but that injected token is a
+# restricted App-installation token that CANNOT manage repo Environments
+# (section 10 below fails with "Resource not accessible by integration"
+# if it's left in place). Unsetting it here only affects this script's own
+# process, not your interactive shell, and lets `gh` fall back to a real
+# stored login instead.
+# ---------------------------------------------------------------------------
+unset GITHUB_TOKEN GH_TOKEN 2>/dev/null || true
+
+if ! command -v gcloud >/dev/null 2>&1; then
+  echo "==> gcloud not found - installing the Google Cloud SDK to ~/google-cloud-sdk ..."
+  curl -sSL https://sdk.cloud.google.com | bash -s -- --disable-prompts --install-dir="${HOME}"
+  # shellcheck disable=SC1091
+  source "${HOME}/google-cloud-sdk/path.bash.inc"
+fi
+
+if ! gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null | grep -q .; then
+  echo "ERROR: gcloud is installed but not authenticated." >&2
+  echo "Run 'gcloud auth login' (it will print a URL - open it in any browser)," >&2
+  echo "then re-run this script." >&2
+  exit 1
+fi
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "ERROR: gh (GitHub CLI) not found. Install it - see https://cli.github.com -" >&2
+  echo "on Codespaces it is normally preinstalled; a missing 'gh' usually means a" >&2
+  echo "minimal/custom devcontainer image (try: sudo apt install gh -y)." >&2
+  exit 1
+fi
+
+if ! gh auth status >/dev/null 2>&1; then
+  echo "ERROR: gh is not authenticated as a real user account." >&2
+  echo "Run 'gh auth login' - choose GitHub.com -> HTTPS -> Login with a web browser -" >&2
+  echo "then re-run this script. (If you previously saw \"Resource not accessible by" >&2
+  echo "integration\", this is that same problem: GITHUB_TOKEN was masking the fact" >&2
+  echo "that no real login existed yet. It's been unset above, but you still need to" >&2
+  echo "actually log in once.)" >&2
+  exit 1
+fi
+
+echo "==> Preflight OK: gcloud authenticated as $(gcloud config get-value account 2>/dev/null), gh authenticated as $(gh api user --jq .login 2>/dev/null)"
 
 # ---------------------------------------------------------------------------
 # 0. Configuration - review and edit every value in this section before
