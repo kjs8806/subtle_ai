@@ -269,3 +269,33 @@ jobs:
           echo "Deployed: $URL"
           curl -sf "$URL/api/v1/health" | grep -q '"status":"ok"'
           curl -sf "$URL/api/v1/health/ready" | grep -q '"status":"ok"'
+      # MVP-BETA-007 production incident (2026-08-28): /api/v1/health and
+      # /api/v1/health/ready above never touch Google at all, so a deploy with
+      # a wrong/rotated GOOGLE_CLIENT_SECRET (or a client ID pointed at the
+      # wrong OAuth client) reported a fully healthy, "successful" deploy
+      # while every real user's sign-in was broken - discovered only once a
+      # human tried to sign in. Google validates client_id/client_secret
+      # BEFORE it ever looks at the grant itself, so a token request with a
+      # deliberately bogus refresh_token distinguishes bad credentials
+      # (invalid_client - the failure this incident actually was) from a
+      # merely-invalid token (invalid_grant - the expected, harmless outcome
+      # for real credentials) without needing a live user, a browser, or
+      # Google's consent screen. Fetched fresh from Secret Manager (:latest)
+      # rather than reused from the `deploy` step above, so this checks
+      # exactly the credential pair this revision was just deployed with.
+      - name: Verify Google OAuth client credentials
+        run: |
+          CLIENT_ID="$(gcloud secrets versions access latest --secret=GOOGLE_CLIENT_ID --project "${{ vars.GCP_PROJECT_ID }}")"
+          CLIENT_SECRET="$(gcloud secrets versions access latest --secret=GOOGLE_CLIENT_SECRET --project "${{ vars.GCP_PROJECT_ID }}")"
+          echo "::add-mask::$CLIENT_SECRET"
+          curl -s -o /tmp/oauth_check.json https://oauth2.googleapis.com/token \
+            -d client_id="$CLIENT_ID" \
+            -d client_secret="$CLIENT_SECRET" \
+            -d grant_type=refresh_token \
+            -d refresh_token=deploy-workflow-credential-check
+          if grep -q '"error"[[:space:]]*:[[:space:]]*"invalid_client"' /tmp/oauth_check.json; then
+            echo "::error::Google rejected GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET as invalid_client - every real sign-in on this revision will fail. Fix the secret in Secret Manager and re-run this workflow."
+            cat /tmp/oauth_check.json
+            exit 1
+          fi
+          echo "Google accepted the deployed OAuth client credentials."
