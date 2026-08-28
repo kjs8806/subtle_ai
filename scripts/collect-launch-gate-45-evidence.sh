@@ -43,6 +43,24 @@ SERVICE_URL=$(echo "${SERVICE_JSON}" | python3 -c "import json,sys; print(json.l
 ACTIVE_REVISION=$(echo "${SERVICE_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['status']['latestReadyRevisionName'])")
 COMMIT_SHA=$(echo "${SERVICE_JSON}" | python3 -c "import json,sys; print(json.load(sys.stdin)['metadata']['labels'].get('commit-sha','MISSING'))")
 IMAGE_URI=$(echo "${SERVICE_JSON}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['spec']['template']['spec']['containers'][0]['image'])")
+# enforceSameOrigin (server/security/http.js) checks the Origin header against
+# PUBLIC_ORIGIN specifically, NOT against whatever URL a request happens to
+# land on - if a custom domain is mapped, PUBLIC_ORIGIN is that domain, not
+# the raw .run.app URL Cloud Run's own `status.url` reports. Sections 8 and
+# 12 below test origin enforcement, so they must target this value, not
+# SERVICE_URL, or the "correct origin" case is actually a mismatched-origin
+# case and every result comes back as a false 403.
+PUBLIC_ORIGIN_URL=$(echo "${SERVICE_JSON}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+env = d['spec']['template']['spec']['containers'][0].get('env', [])
+match = [e['value'] for e in env if e.get('name') == 'PUBLIC_ORIGIN' and 'value' in e]
+print(match[0] if match else '')
+")
+if [ -z "${PUBLIC_ORIGIN_URL}" ]; then
+  echo "WARNING: could not read PUBLIC_ORIGIN from the deployed env vars - falling back to the raw Cloud Run URL for origin-enforcement tests (sections 8, 12). Results from those sections will be unreliable if a custom domain is actually mapped." >&2
+  PUBLIC_ORIGIN_URL="${SERVICE_URL}"
+fi
 
 echo "Public URL:        ${SERVICE_URL}"
 echo "GCP project:       ${GCP_PROJECT_ID}"
@@ -56,6 +74,14 @@ echo
 echo "Traffic split (100% must point to the active revision above):"
 gcloud run services describe "${CLOUD_RUN_SERVICE}" --project "${GCP_PROJECT_ID}" --region "${GCP_REGION}" \
   --format="table(status.traffic[].revisionName, status.traffic[].percent)"
+
+TRAFFIC_PCT_ON_ACTIVE=$(gcloud run services describe "${CLOUD_RUN_SERVICE}" --project "${GCP_PROJECT_ID}" --region "${GCP_REGION}" \
+  --format="value(status.traffic[].percent)" --filter="status.traffic[].revisionName=${ACTIVE_REVISION}" 2>/dev/null || true)
+if [ "${TRAFFIC_PCT_ON_ACTIVE}" != "100" ]; then
+  echo "  *** WARNING: latestReadyRevisionName (${ACTIVE_REVISION}) does NOT have 100% traffic. ***"
+  echo "  *** Real traffic may be served by an older revision. Do not assume section 1's 'Active revision' ***"
+  echo "  *** above is what users actually hit - cross-check the table printed just above this warning. ***"
+fi
 
 echo
 echo "--> Manually verify commit ${COMMIT_SHA} is reachable from protected main:"
@@ -159,22 +185,25 @@ echo "    scoped to the runtime SA resource (not project-wide) - see docs/engine
 ########################################
 hr "8. CSRF / SAME-ORIGIN / CORS"
 ########################################
-echo "Testing POST /api/v1/auth/logout with correct, missing, and foreign Origin."
-echo "(Chosen because it is idempotent and safe regardless of outcome - no data is affected either way.)"
+echo "Testing POST /api/v1/auth/logout with correct, missing, and foreign Origin, against the"
+echo "real production origin (${PUBLIC_ORIGIN_URL}) - NOT the raw Cloud Run URL, since"
+echo "enforceSameOrigin checks the Origin header against PUBLIC_ORIGIN specifically, and"
+echo "testing from the raw .run.app URL would make even a correct request look mismatched."
+echo "(Chosen because logout is idempotent and safe regardless of outcome - no data is affected either way.)"
 
 echo
-echo "-- Correct origin (${SERVICE_URL}) --"
-curl -s -o /dev/null -w "HTTP %{http_code}\n" -X POST "${SERVICE_URL}/api/v1/auth/logout" \
-  -H "Origin: ${SERVICE_URL}" -H "Content-Type: application/json"
+echo "-- Correct origin (${PUBLIC_ORIGIN_URL}) --"
+curl -s -o /dev/null -w "HTTP %{http_code}\n" -X POST "${PUBLIC_ORIGIN_URL}/api/v1/auth/logout" \
+  -H "Origin: ${PUBLIC_ORIGIN_URL}" -H "Content-Type: application/json"
 
 echo
 echo "-- Missing origin --"
-curl -s -o /dev/null -w "HTTP %{http_code}\n" -X POST "${SERVICE_URL}/api/v1/auth/logout" \
+curl -s -o /dev/null -w "HTTP %{http_code}\n" -X POST "${PUBLIC_ORIGIN_URL}/api/v1/auth/logout" \
   -H "Content-Type: application/json"
 
 echo
 echo "-- Foreign origin (https://evil.example) --"
-curl -s -o /dev/null -w "HTTP %{http_code}\n" -X POST "${SERVICE_URL}/api/v1/auth/logout" \
+curl -s -o /dev/null -w "HTTP %{http_code}\n" -X POST "${PUBLIC_ORIGIN_URL}/api/v1/auth/logout" \
   -H "Origin: https://evil.example" -H "Content-Type: application/json"
 
 echo
@@ -184,7 +213,7 @@ echo "origin must return 403 {\"error\":{\"code\":\"invalid_origin\"}} BEFORE an
 
 echo
 echo "CORS headers on a cross-origin GET (should carry no Access-Control-Allow-* granting a foreign origin credentialed access):"
-curl -s -D - -o /dev/null "${SERVICE_URL}/api/v1/health" -H "Origin: https://evil.example" | grep -i "access-control" || echo "  (no Access-Control-* headers present - expected for a same-origin-only API)"
+curl -s -D - -o /dev/null "${PUBLIC_ORIGIN_URL}/api/v1/health" -H "Origin: https://evil.example" | grep -i "access-control" || echo "  (no Access-Control-* headers present - expected for a same-origin-only API)"
 
 ########################################
 hr "12. MOCK/TEST-PATH PROHIBITION"
@@ -196,12 +225,12 @@ echo "at all if NODE_ENV=production and either of the other two is wrong - a run
 echo
 echo "Attempting to force mock behavior via client-supplied input (must have no effect):"
 curl -s -o /dev/null -w "  POST /api/v1/sources/gmail/authorize with X-Gmail-Provider: mock header -> HTTP %{http_code} (expect 401, unauthenticated - never a mock connect)\n" \
-  -X POST "${SERVICE_URL}/api/v1/sources/gmail/authorize" -H "X-Gmail-Provider: mock" -H "Origin: ${SERVICE_URL}"
+  -X POST "${PUBLIC_ORIGIN_URL}/api/v1/sources/gmail/authorize" -H "X-Gmail-Provider: mock" -H "Origin: ${PUBLIC_ORIGIN_URL}"
 
 echo
 echo "Checking for any accidental test-only route exposure:"
 for path in /api/v1/test /api/v1/debug /api/v1/_test /api/v1/mock; do
-  code=$(curl -s -o /dev/null -w "%{http_code}" "${SERVICE_URL}${path}")
+  code=$(curl -s -o /dev/null -w "%{http_code}" "${PUBLIC_ORIGIN_URL}${path}")
   echo "  GET ${path} -> HTTP ${code} (expect 404)"
 done
 
