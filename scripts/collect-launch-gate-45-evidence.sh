@@ -194,17 +194,16 @@ echo "(Chosen because logout is idempotent and safe regardless of outcome - no d
 echo
 echo "-- Correct origin (${PUBLIC_ORIGIN_URL}) --"
 curl -s -o /dev/null -w "HTTP %{http_code}\n" -X POST "${PUBLIC_ORIGIN_URL}/api/v1/auth/logout" \
-  -H "Origin: ${PUBLIC_ORIGIN_URL}" -H "Content-Type: application/json"
+  -H "Origin: ${PUBLIC_ORIGIN_URL}"
 
 echo
 echo "-- Missing origin --"
-curl -s -o /dev/null -w "HTTP %{http_code}\n" -X POST "${PUBLIC_ORIGIN_URL}/api/v1/auth/logout" \
-  -H "Content-Type: application/json"
+curl -s -o /dev/null -w "HTTP %{http_code}\n" -X POST "${PUBLIC_ORIGIN_URL}/api/v1/auth/logout"
 
 echo
 echo "-- Foreign origin (https://evil.example) --"
 curl -s -o /dev/null -w "HTTP %{http_code}\n" -X POST "${PUBLIC_ORIGIN_URL}/api/v1/auth/logout" \
-  -H "Origin: https://evil.example" -H "Content-Type: application/json"
+  -H "Origin: https://evil.example"
 
 echo
 echo "Expected per server/security/http.js enforceSameOrigin: correct origin proceeds to the route's own"
