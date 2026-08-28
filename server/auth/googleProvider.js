@@ -40,7 +40,7 @@ export const createGoogleProvider = ({ clientId, clientSecret, oidcRedirectUri, 
   }
   const user = async (accessToken) => {
     const response = await fetchImpl('https://openidconnect.googleapis.com/v1/userinfo', { headers: { authorization: `Bearer ${accessToken}` } })
-    if (!response.ok) throw new Error('Google identity lookup failed')
+    if (!response.ok) throw new Error(`Google identity lookup failed: ${response.status} ${await response.text().catch(() => '')}`)
     return response.json()
   }
   // A gmail.readonly-only access token carries no OIDC claims, so Google's
@@ -50,7 +50,14 @@ export const createGoogleProvider = ({ clientId, clientSecret, oidcRedirectUri, 
   // mailbox this token belongs to, via its email address.
   const emailForGmailToken = async (accessToken) => {
     const response = await fetchImpl('https://gmail.googleapis.com/gmail/v1/users/me/profile', { headers: { authorization: `Bearer ${accessToken}` } })
-    if (!response.ok) throw new Error('Google Gmail identity lookup failed')
+    // Same rationale as exchange() above: a generic message here left the
+    // 2026-08-28 "Gmail couldn't be connected" production incident
+    // unguessable from logs alone - it could have meant the Gmail API isn't
+    // enabled on the project (403), an insufficient/mismatched scope, or a
+    // genuine transport failure, and only Google's own response body says
+    // which. Safe to log in full: Google's response to us, never an echo of
+    // the bearer token we sent.
+    if (!response.ok) throw new Error(`Google Gmail identity lookup failed: ${response.status} ${await response.text().catch(() => '')}`)
     return response.json()
   }
   const start = ({ state, scope, redirectUri }) => ({ url: authorization(scope, state, redirectUri) })
