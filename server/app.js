@@ -149,14 +149,17 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
   const redirectToApp = (reply, params = {}, hash = '') => reply.redirect(`/${Object.keys(params).length ? `?${new URLSearchParams(params)}` : ''}${hash}`)
   app.get('/api/v1/auth/google/callback', async (request, reply) => {
     const { state: queryState, code } = request.query || {}
-    const stateRecord = typeof queryState === 'string' ? await oauthStates.consume(queryState) : null
     reply.clearCookie('subtle_oauth_state', { path: '/' })
-    if (typeof queryState !== 'string' || typeof code !== 'string' || !queryState || !code || queryState !== request.cookies.subtle_oauth_state || !stateRecord) return redirectToApp(reply, { auth_error: 'invalid_oauth_state' })
-    // A thrown provider error (e.g. a network failure mid-exchange) must redirect
-    // like every other outcome here, never fall through to the generic JSON 500
-    // handler - that would be exactly the bare-page problem this route exists to
-    // avoid, and could leak upstream error detail into the response besides.
+    // A thrown error here - the OAuth state lookup (a real Postgres query,
+    // see oauthStateStore.js) or the provider exchange below (e.g. a network
+    // failure mid-exchange) - must redirect like every other outcome on this
+    // route, never fall through to the generic JSON 500 handler. That would
+    // be exactly the bare-page problem this route exists to avoid, and could
+    // leak upstream error detail into the response besides. The state lookup
+    // therefore lives inside this try, not before it.
     try {
+      const stateRecord = typeof queryState === 'string' ? await oauthStates.consume(queryState) : null
+      if (typeof queryState !== 'string' || typeof code !== 'string' || !queryState || !code || queryState !== request.cookies.subtle_oauth_state || !stateRecord) return redirectToApp(reply, { auth_error: 'invalid_oauth_state' })
       const result = await provider.exchangeAuthorizationCode({ code })
       if (result.status !== 'authorized') return redirectToApp(reply, { auth_error: result.status || 'authorization_failed' })
       let authenticatedUserId
@@ -212,12 +215,14 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
     // for it.
     const redirectToSources = (params = {}) => redirectToApp(reply, params, '#/sources')
     const { state: queryState, code } = request.query || {}
-    const state = typeof queryState === 'string' ? await oauthStates.consume(queryState) : null
     reply.clearCookie('subtle_gmail_oauth_state', { path: '/' })
-    if (typeof queryState !== 'string' || typeof code !== 'string' || !state || state.purpose !== 'gmail' || state.userId !== request.user.id || queryState !== request.cookies.subtle_gmail_oauth_state) return redirectToSources({ gmail_error: 'invalid_oauth_state' })
-    // See the OIDC callback above: a thrown provider error must redirect like
-    // every other outcome here, never fall through to the generic JSON 500 handler.
+    // See the OIDC callback above: a thrown error - including the OAuth
+    // state lookup itself, a real Postgres query - must redirect like every
+    // other outcome here, never fall through to the generic JSON 500
+    // handler, so the lookup lives inside this try.
     try {
+      const state = typeof queryState === 'string' ? await oauthStates.consume(queryState) : null
+      if (typeof queryState !== 'string' || typeof code !== 'string' || !state || state.purpose !== 'gmail' || state.userId !== request.user.id || queryState !== request.cookies.subtle_gmail_oauth_state) return redirectToSources({ gmail_error: 'invalid_oauth_state' })
       const result = await provider.exchangeGmailAuthorizationCode({ code })
       if (result.status !== 'authorized') return redirectToSources({ gmail_error: result.status || 'authorization_failed' })
       // Fail closed: the Gmail-authorized account must be present and must exactly
