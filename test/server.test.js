@@ -3,6 +3,7 @@ import test from 'node:test'
 import { buildApp } from '../server/app.js'
 import { createFakeGmailProvider } from '../server/gmail/fakeProvider.js'
 import { createMemoryRepository } from '../server/persistence/memoryRepository.js'
+import { createOAuthStateStore } from '../server/security/oauthStateStore.js'
 
 // Both OAuth callbacks are reached via a real top-level browser navigation, so
 // they always redirect back to '/' (the Gmail callback appends '#/sources' so
@@ -250,6 +251,27 @@ test('gmail identity mismatch does not connect the source', async () => {
   assert.equal(source.json().status, 'not_connected')
 })
 
+test('a failure during the Gmail OAuth state lookup itself redirects with gmail_error instead of a bare 500', async () => {
+  // The sign-in flow below (authorize()) also consumes an OAuth state, so
+  // only the second consume() call - the Gmail-connect one this test is
+  // actually about - is made to fail; the real store handles the first.
+  const real = createOAuthStateStore()
+  let consumeCalls = 0
+  const oauthStates = { create: real.create, consume: async (state) => { consumeCalls += 1; if (consumeCalls > 1) throw new Error('connection terminated unexpectedly'); return real.consume(state) } }
+  const app = buildApp({ oauthStates })
+  const session = await authorize(app)
+  const headers = { cookie: `subtle_session=${session}` }
+  const start = await app.inject({ method: 'POST', url: '/api/v1/sources/gmail/authorize', headers })
+  const state = start.cookies.find(({ name }) => name === 'subtle_gmail_oauth_state').value
+  const response = await app.inject({
+    method: 'GET',
+    url: `/api/v1/sources/gmail/callback?state=${state}&code=mock-success`,
+    headers: { cookie: `subtle_session=${session}; subtle_gmail_oauth_state=${state}` },
+  })
+  assert.equal(response.statusCode, 302)
+  assert.equal(errorFromRedirect(response, 'gmail_error'), 'authorization_failed')
+})
+
 test('secure mode issues session and oauth-state cookies with HttpOnly, Secure, and SameSite=Lax', async () => {
   const app = buildApp({ production: true, publicOrigin: 'https://subtle.example' })
   const start = await app.inject({ method: 'GET', url: '/api/v1/auth/google/start' })
@@ -339,6 +361,27 @@ test('oauth state cannot be reused', async () => {
   assert.equal(first.headers.location, '/')
   assert.equal(second.statusCode, 302)
   assert.equal(errorFromRedirect(second, 'auth_error'), 'invalid_oauth_state')
+})
+
+// Codex review finding on PR #62: oauthStates.consume() is a real database
+// query in production (see server/security/oauthStateStore.js's Postgres
+// implementation) and can throw - e.g. a transient connection failure. This
+// callback is reached via a real top-level browser navigation, so a thrown
+// error here must still redirect with auth_error like every other failure
+// mode, never fall through to Fastify's generic JSON 500 handler and strand
+// the user on a bare error page.
+test('a failure during the OAuth state lookup itself redirects with auth_error instead of a bare 500', async () => {
+  const oauthStates = { ...createOAuthStateStore(), consume: async () => { throw new Error('connection terminated unexpectedly') } }
+  const app = buildApp({ oauthStates })
+  const start = await app.inject({ method: 'GET', url: '/api/v1/auth/google/start' })
+  const state = start.cookies.find(({ name }) => name === 'subtle_oauth_state').value
+  const response = await app.inject({
+    method: 'GET',
+    url: `/api/v1/auth/google/callback?state=${state}&code=mock-success`,
+    cookies: { subtle_oauth_state: state },
+  })
+  assert.equal(response.statusCode, 302)
+  assert.equal(errorFromRedirect(response, 'auth_error'), 'authorization_failed')
 })
 
 test('GET /api/v1/attention requires a session, then surfaces a durable price change and a dismissible renewal', async () => {

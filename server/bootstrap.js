@@ -6,6 +6,8 @@ import { createMemoryRepository } from './persistence/memoryRepository.js'
 import { createPostgresRepository } from './persistence/postgresRepository.js'
 import { runMigrations } from './persistence/migrations.js'
 import { createTokenVault } from './security/tokenVault.js'
+import { createPostgresSessionManager } from './security/session.js'
+import { createPostgresOAuthStateStore } from './security/oauthStateStore.js'
 
 // buildApp is passed in (rather than imported) so this module never depends on
 // server/app.js — app.js is the one that imports createRuntime to start itself,
@@ -64,8 +66,17 @@ export const createRuntime = async (buildApp, settings = config, overrides = {},
     throw new Error(`PostgreSQL migration failed: ${error.message}`)
   }
   const repository = createPostgresRepository({ pool })
+  // MVP-BETA-007 (#44) production incident: sessions and OAuth state must be
+  // shared across every Cloud Run instance, not held in one process's
+  // memory - see server/security/session.js and
+  // server/security/oauthStateStore.js for the full rationale. This is the
+  // only place either Postgres-backed implementation is actually
+  // constructed; buildApp's own defaults (in-memory) remain correct for
+  // local dev, tests, and the persistenceProvider === 'memory' branch above.
+  const sessions = createPostgresSessionManager({ pool })
+  const oauthStates = createPostgresOAuthStateStore({ pool })
   // Passed through so /api/v1/health/ready can verify actual database
   // connectivity, not just that the process is running - see server/app.js.
-  const app = buildApp({ repository, pool, ...runtimeOverrides })
+  const app = buildApp({ repository, pool, sessions, oauthStates, ...runtimeOverrides })
   return { app, pool, close: async () => { await app.close(); await pool.end() } }
 }

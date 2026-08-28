@@ -4,6 +4,8 @@ import { Pool } from 'pg'
 import { runMigrations } from '../server/persistence/migrations.js'
 import { createPostgresRepository } from '../server/persistence/postgresRepository.js'
 import { createTokenVault } from '../server/security/tokenVault.js'
+import { createPostgresSessionManager } from '../server/security/session.js'
+import { createPostgresOAuthStateStore } from '../server/security/oauthStateStore.js'
 
 const connectionString = process.env.DATABASE_URL
 const integration = connectionString ? test : test.skip
@@ -370,6 +372,100 @@ integration('currency persists correctly across subscriptions, evidence, billing
       /violates check constraint/,
       'price_observations should reject an unsupported currency value',
     )
+  } finally {
+    await pool.end()
+  }
+})
+
+// MVP-BETA-007 (#44) production incident: session tokens and OAuth state
+// used to live only in an in-process Map, which never survives a request
+// landing on a different Cloud Run instance than the one that created the
+// state - see server/security/session.js and
+// server/security/oauthStateStore.js. These tests exercise the
+// Postgres-backed implementations directly against the real schema;
+// test/runtimePersistence.integration.test.js's "cross-instance" test
+// proves the same thing end-to-end through the actual HTTP routes.
+integration('Postgres-backed session manager: issue, resolve, expiry, revoke, and revokeAllForUser work against the real sessions table', async () => {
+  const pool = await connectPool()
+  try {
+    await pool.query('DROP SCHEMA public CASCADE')
+    await pool.query('CREATE SCHEMA public')
+    await runMigrations({ pool })
+    const repository = createPostgresRepository({ pool })
+    const userA = await repository.createUser({ email: 'session-a@example.com', name: 'A' })
+    const userB = await repository.createUser({ email: 'session-b@example.com', name: 'B' })
+
+    let clock = 1_000
+    const sessions = createPostgresSessionManager({ pool, ttlMs: 500, now: () => clock })
+
+    const token = await sessions.issue(userA.id)
+    assert.equal(typeof token, 'string')
+    assert.ok(token.length > 0)
+    const resolved = await sessions.resolve(token)
+    assert.equal(resolved.userId, userA.id)
+
+    // A second, independently constructed manager sharing the same pool -
+    // this is what two different Cloud Run instances actually look like -
+    // must resolve the exact same token.
+    const sessionsOnAnotherInstance = createPostgresSessionManager({ pool, ttlMs: 500, now: () => clock })
+    const resolvedElsewhere = await sessionsOnAnotherInstance.resolve(token)
+    assert.equal(resolvedElsewhere.userId, userA.id)
+
+    clock += 600 // past the 500ms ttl
+    assert.equal(await sessions.resolve(token), null, 'an expired session must not resolve')
+    assert.equal((await pool.query('SELECT count(*) FROM sessions WHERE token_hash IS NOT NULL')).rows[0].count, '0', 'resolving an expired session deletes it')
+
+    const tokenB1 = await sessions.issue(userB.id)
+    const tokenB2 = await sessions.issue(userB.id)
+    await sessions.revoke(tokenB1)
+    assert.equal(await sessions.resolve(tokenB1), null)
+    assert.notEqual(await sessions.resolve(tokenB2), null, 'revoking one session must not revoke another for the same user')
+
+    const tokenB3 = await sessions.issue(userB.id)
+    await sessions.revokeAllForUser(userB.id)
+    assert.equal(await sessions.resolve(tokenB2), null)
+    assert.equal(await sessions.resolve(tokenB3), null)
+  } finally {
+    await pool.end()
+  }
+})
+
+integration('Postgres-backed OAuth state store: create/consume is single-use, survives a fresh instance, expires, and preserves the Gmail-connect purpose/userId shape', async () => {
+  const pool = await connectPool()
+  try {
+    await pool.query('DROP SCHEMA public CASCADE')
+    await pool.query('CREATE SCHEMA public')
+    await runMigrations({ pool })
+    const repository = createPostgresRepository({ pool })
+    const user = await repository.createUser({ email: 'oauth-state@example.com', name: 'A' })
+
+    let clock = 1_000
+    const store = createPostgresOAuthStateStore({ pool, now: () => clock })
+    await store.create('sign-in-state', { expiresAt: clock + 500 })
+
+    // Simulates the callback landing on a different instance than /start.
+    const storeOnAnotherInstance = createPostgresOAuthStateStore({ pool, now: () => clock })
+    const consumed = await storeOnAnotherInstance.consume('sign-in-state')
+    assert.deepEqual(consumed, { expiresAt: clock + 500, userId: null, purpose: null })
+
+    assert.equal(await store.consume('sign-in-state'), null, 'a state must not be usable twice')
+    assert.equal(await store.consume('never-created'), null)
+
+    await store.create('gmail-state', { expiresAt: clock + 500, userId: user.id, purpose: 'gmail' })
+    const gmailConsumed = await store.consume('gmail-state')
+    assert.equal(gmailConsumed.userId, user.id)
+    assert.equal(gmailConsumed.purpose, 'gmail')
+
+    await store.create('expiring-state', { expiresAt: clock + 100 })
+    clock += 200
+    assert.equal(await store.consume('expiring-state'), null, 'an expired state must not be consumable even before its own TTL check runs client-side')
+
+    // The opportunistic cleanup in create() must not disturb a still-valid,
+    // not-yet-consumed state belonging to a different token.
+    await store.create('long-lived-state', { expiresAt: clock + 10_000 })
+    await store.create('another-write-to-trigger-cleanup', { expiresAt: clock + 10_000 })
+    const stillThere = await store.consume('long-lived-state')
+    assert.notEqual(stillThere, null)
   } finally {
     await pool.end()
   }
