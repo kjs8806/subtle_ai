@@ -17,6 +17,7 @@ const testUsers = {
   b: '211348800987654321000',
   idempotency: '337722991100223344556',
   concurrent: '445566778899001122334',
+  crossInstance: '667788990011223344556',
 }
 
 const baseConnectionString = process.env.DATABASE_URL
@@ -236,6 +237,43 @@ integration('server runtime persists through restart, isolates accounts, purges 
     const subs = await runtimeF.app.inject({ method: 'GET', url: '/api/v1/subscriptions', headers: headersF })
     assert.equal(subs.json().subscriptions.length, 1)
     await runtimeF.close()
+  })
+
+  await t.test('cross-instance: OAuth state created on one live instance is consumable on a second, and the session it issues resolves on a third - the exact failure mode that broke real sign-in on Cloud Run (MVP-BETA-007 production incident)', async () => {
+    // Unlike the restart tests above (which close runtimeA before opening
+    // runtimeB), this deliberately keeps THREE instances alive at once and
+    // splits a single OAuth round trip and one authenticated request across
+    // them - Cloud Run runs multiple instances with no session affinity
+    // configured, so the callback for a /start request, or any later
+    // request bearing the resulting session cookie, can land on any of
+    // them. If sessions/oauthStates were ever process-local again (see
+    // server/security/session.js, server/security/oauthStateStore.js),
+    // this test fails exactly the way production did: a 302 to
+    // /?auth_error=invalid_oauth_state instead of a real session.
+    const instanceA = await createRuntime(buildApp, settings, { provider: createTestProvider() })
+    const instanceB = await createRuntime(buildApp, settings, { provider: createTestProvider() })
+    const instanceC = await createRuntime(buildApp, settings, { provider: createTestProvider() })
+    try {
+      const start = await instanceA.app.inject({ method: 'GET', url: '/api/v1/auth/google/start' })
+      const state = start.cookies.find(({ name }) => name === 'subtle_oauth_state').value
+
+      const callback = await instanceB.app.inject({
+        method: 'GET',
+        url: `/api/v1/auth/google/callback?state=${state}&code=mock-success:${testUsers.crossInstance}`,
+        cookies: { subtle_oauth_state: state },
+      })
+      assert.equal(callback.statusCode, 302)
+      assert.equal(callback.headers.location, '/', 'a real success redirects to / with no auth_error - the bug redirected here too, but with ?auth_error=invalid_oauth_state')
+      const session = callback.cookies.find(({ name }) => name === 'subtle_session').value
+      assert.ok(session, 'a session cookie must actually be issued')
+
+      const me = await instanceC.app.inject({ method: 'GET', url: '/api/v1/session', headers: { cookie: `subtle_session=${session}` } })
+      assert.equal(me.json().authenticated, true, 'the session issued on instance B must resolve on instance C')
+    } finally {
+      await instanceA.close()
+      await instanceB.close()
+      await instanceC.close()
+    }
   })
 
   await t.test('migration failure aborts startup and leaves the database in a state that a subsequent valid startup can recover', async () => {

@@ -10,6 +10,7 @@ import { createGoogleProvider } from './auth/googleProvider.js'
 import { createFakeGmailProvider } from './gmail/fakeProvider.js'
 import { createMemoryRepository } from './persistence/memoryRepository.js'
 import { SESSION_COOKIE, createSessionManager } from './security/session.js'
+import { createOAuthStateStore } from './security/oauthStateStore.js'
 import { createTokenVault } from './security/tokenVault.js'
 import { createRateLimiter, enforceSameOrigin, securityHeaders } from './security/http.js'
 import { parseReceipt } from '../src/services/receiptPipeline.js'
@@ -50,14 +51,13 @@ const withRetries = async (fn, attempts = 3, delayMs = 25) => {
   throw lastError
 }
 
-export const buildApp = ({ repository = createMemoryRepository(), provider = config.gmailProvider === 'google' ? createGoogleProvider({ clientId: config.googleClientId, clientSecret: config.googleClientSecret, oidcRedirectUri: config.googleOidcRedirectUri, gmailRedirectUri: config.googleGmailRedirectUri }) : createFakeGmailProvider(), gmailProvider = config.gmailProvider, sessions = createSessionManager(), tokenVault = config.tokenEncryptionKey ? createTokenVault({ secret: config.tokenEncryptionKey }) : null, production = config.production, publicOrigin = config.publicOrigin, now = () => Date.now(), pool = null } = {}) => {
+export const buildApp = ({ repository = createMemoryRepository(), provider = config.gmailProvider === 'google' ? createGoogleProvider({ clientId: config.googleClientId, clientSecret: config.googleClientSecret, oidcRedirectUri: config.googleOidcRedirectUri, gmailRedirectUri: config.googleGmailRedirectUri }) : createFakeGmailProvider(), gmailProvider = config.gmailProvider, sessions = createSessionManager(), oauthStates = createOAuthStateStore(), tokenVault = config.tokenEncryptionKey ? createTokenVault({ secret: config.tokenEncryptionKey }) : null, production = config.production, publicOrigin = config.publicOrigin, now = () => Date.now(), pool = null } = {}) => {
   // Real Google auth is always served over HTTPS (Codespaces' forwarded-port proxy
   // included), regardless of NODE_ENV, so cookie/origin hardening must not be gated
   // solely on the NODE_ENV=production flag - GMAIL_PROVIDER=google activates it too.
   const secure = production || gmailProvider === 'google'
   const logger = production ? { redact: ['req.headers.authorization', 'req.headers.cookie', 'res.headers.set-cookie', '*.refreshToken', '*.ciphertext', '*.body'] } : false
   const app = Fastify({ logger, bodyLimit: 64 * 1024 })
-  const oauthStates = new Map()
   app.register(cookie)
   // MVP-BETA-007 (#44): approved architecture is ONE Cloud Run container
   // serving both the built Vite PWA and the /api/v1 API same-origin (no
@@ -89,7 +89,7 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
   app.addHook('onRequest', createRateLimiter())
   app.addHook('onRequest', enforceSameOrigin({ enforce: secure, origin: publicOrigin }))
   app.addHook('preHandler', async (request) => {
-    const session = sessions.resolve(request.cookies[SESSION_COOKIE])
+    const session = await sessions.resolve(request.cookies[SESSION_COOKIE])
     request.user = session?.userId ? await repository.getUser(session.userId) : null
   })
   app.setErrorHandler((error, request, reply) => {
@@ -137,7 +137,7 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
   app.get('/api/v1/session', async (request) => ({ authenticated: Boolean(request.user), user: request.user }))
   app.get('/api/v1/auth/google/start', async (request, reply) => {
     const state = randomUUID()
-    oauthStates.set(state, now() + 10 * 60 * 1000)
+    await oauthStates.create(state, { expiresAt: now() + 10 * 60 * 1000 })
     reply.setCookie('subtle_oauth_state', state, { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: 600 })
     return provider.createAuthorizationRequest({ state })
   })
@@ -149,10 +149,9 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
   const redirectToApp = (reply, params = {}, hash = '') => reply.redirect(`/${Object.keys(params).length ? `?${new URLSearchParams(params)}` : ''}${hash}`)
   app.get('/api/v1/auth/google/callback', async (request, reply) => {
     const { state: queryState, code } = request.query || {}
-    const expiresAt = typeof queryState === 'string' ? oauthStates.get(queryState) : undefined
-    if (typeof queryState === 'string') oauthStates.delete(queryState)
+    const stateRecord = typeof queryState === 'string' ? await oauthStates.consume(queryState) : null
     reply.clearCookie('subtle_oauth_state', { path: '/' })
-    if (typeof queryState !== 'string' || typeof code !== 'string' || !queryState || !code || queryState !== request.cookies.subtle_oauth_state || !expiresAt || expiresAt <= now()) return redirectToApp(reply, { auth_error: 'invalid_oauth_state' })
+    if (typeof queryState !== 'string' || typeof code !== 'string' || !queryState || !code || queryState !== request.cookies.subtle_oauth_state || !stateRecord) return redirectToApp(reply, { auth_error: 'invalid_oauth_state' })
     // A thrown provider error (e.g. a network failure mid-exchange) must redirect
     // like every other outcome here, never fall through to the generic JSON 500
     // handler - that would be exactly the bare-page problem this route exists to
@@ -175,7 +174,7 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
       } else {
         authenticatedUserId = userId
       }
-      const token = sessions.issue(authenticatedUserId)
+      const token = await sessions.issue(authenticatedUserId)
       reply.setCookie(SESSION_COOKIE, token, { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: 8 * 60 * 60 })
       // Gmail authorization is intentionally a separate, explicit step from
       // application sign-in (see docs/product/features/FEATURE-001.md) - the
@@ -189,7 +188,7 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
     }
   })
   app.post('/api/v1/auth/logout', { preHandler: requireUser }, async (request, reply) => {
-    sessions.revoke(request.cookies[SESSION_COOKIE])
+    await sessions.revoke(request.cookies[SESSION_COOKIE])
     reply.clearCookie(SESSION_COOKIE, { path: '/' })
     return { status: 'logged_out' }
   })
@@ -197,7 +196,7 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
   app.get('/api/v1/sources/gmail', { preHandler: requireUser }, async (request) => repository.getConnection(request.user.id))
   app.post('/api/v1/sources/gmail/authorize', { preHandler: requireUser }, async (request, reply) => {
     const state = randomUUID()
-    oauthStates.set(state, { expiresAt: now() + 10 * 60 * 1000, userId: request.user.id, purpose: 'gmail' })
+    await oauthStates.create(state, { expiresAt: now() + 10 * 60 * 1000, userId: request.user.id, purpose: 'gmail' })
     reply.setCookie('subtle_gmail_oauth_state', state, { httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: 600 })
     if (gmailProvider === 'mock') return { ...(await repository.authorizeConnection(request.user.id)), status: 'connected' }
     return provider.createGmailAuthorizationRequest({ state })
@@ -213,10 +212,9 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
     // for it.
     const redirectToSources = (params = {}) => redirectToApp(reply, params, '#/sources')
     const { state: queryState, code } = request.query || {}
-    const state = typeof queryState === 'string' ? oauthStates.get(queryState) : undefined
-    if (typeof queryState === 'string') oauthStates.delete(queryState)
+    const state = typeof queryState === 'string' ? await oauthStates.consume(queryState) : null
     reply.clearCookie('subtle_gmail_oauth_state', { path: '/' })
-    if (typeof queryState !== 'string' || typeof code !== 'string' || !state || state.purpose !== 'gmail' || state.userId !== request.user.id || state.expiresAt <= now() || queryState !== request.cookies.subtle_gmail_oauth_state) return redirectToSources({ gmail_error: 'invalid_oauth_state' })
+    if (typeof queryState !== 'string' || typeof code !== 'string' || !state || state.purpose !== 'gmail' || state.userId !== request.user.id || queryState !== request.cookies.subtle_gmail_oauth_state) return redirectToSources({ gmail_error: 'invalid_oauth_state' })
     // See the OIDC callback above: a thrown provider error must redirect like
     // every other outcome here, never fall through to the generic JSON 500 handler.
     try {
@@ -513,7 +511,7 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
       catch (error) { request.log.error({ err: error }, 'Gmail token revocation failed during account deletion; proceeding with deletion anyway') }
     }
     await repository.deleteAccount(request.user.id)
-    sessions.revokeAllForUser(request.user.id)
+    await sessions.revokeAllForUser(request.user.id)
     reply.clearCookie(SESSION_COOKIE, { path: '/' })
     return { status: 'deleted' }
   })
