@@ -190,21 +190,18 @@ Do not paste the cookie's actual value into the report — flag names/values onl
 
 ### 9. Disconnect Gmail (User A, with real data present)
 
+User A for this run: `kjs8806@gmail.com`, `user_id = 3ef0222d-2f8e-47bb-8f16-e6668d8dd77d`.
+
+Correction to the expected result below: `disconnectConnection` in `server/persistence/postgresRepository.js` (lines 280-303) doesn't just leave the connection at a soft `revoked_pending_purge` state — once `markGmailRevoked` confirms Google-side revocation, `disconnectConnection` runs and **hard-deletes** the `source_connections` row itself, along with every Gmail-sourced `subscriptions`/`evidence`/`subscription_candidates`/`source_messages`/`scan_runs` row for that user (`subscription_corrections` cascades automatically via its FK). So the correct expectation is **zero rows**, not a row with a `revoked_pending_purge` state.
+
 1. With Gmail connected and at least one Gmail-derived subscription/candidate present, click **Disconnect Gmail**.
 2. Confirm the UI reports success only after a definitive outcome (not optimistically). **PENDING**
 3. **Google side**: visit `myaccount.google.com/permissions` as User A and confirm Subtle AI's access has actually been revoked. **PENDING**
-4. **Local connection state**: `GET /api/v1/sources/gmail` → status is disconnected. **PENDING**
-5. **Encrypted credential removed**: re-run the DB query from section 6 step 6 — `authorization_state` should now be `revoked_pending_purge` (or a further-purged state) and `has_encrypted_token` should be `false` for this user. **PENDING**
-6. **Gmail-derived data purged**: confirm Gmail-sourced subscriptions/evidence/candidates/corrections/attention items tied to that connection are gone from both the UI and the database, per the #41 purge policy:
-   ```sql
-   SELECT count(*) FROM subscriptions WHERE user_id = '<User A uuid>';
-   SELECT count(*) FROM evidence WHERE user_id = '<User A uuid>';
-   SELECT count(*) FROM subscription_candidates WHERE user_id = '<User A uuid>';
-   SELECT count(*) FROM subscription_corrections WHERE user_id = '<User A uuid>';
-   ```
-   Compare against the same counts captured immediately before disconnecting. **PENDING**
-7. **Account survives**: `GET /api/v1/session` still shows User A authenticated; the account itself was not deleted. **PENDING**
-8. **Manual/non-Gmail data survives**: if User A has any manually-added subscription (not Gmail-sourced), confirm it's still present after disconnect. **PENDING**
+4. **Local connection state**: `GET /api/v1/sources/gmail` → status is disconnected. **PENDING** (DB-level evidence below is consistent with this, but the API response itself hasn't been captured)
+5. **Encrypted credential removed**: **PASS** — re-running the section 6 query post-disconnect returns **0 rows** for `source_connections WHERE user_id = '3ef0222d-2f8e-47bb-8f16-e6668d8dd77d' AND provider = 'gmail'` (the row itself is gone, which is a stronger result than merely nulling the token).
+6. **Gmail-derived data purged**: `subscriptions`, `evidence`, `subscription_candidates`, `subscription_corrections` all returned **`count = 0`** for this user post-disconnect. **Caveat, not yet resolved**: no "before" counts were captured, so this doesn't yet prove purging actually removed real data versus there having been nothing to purge in the first place. Need confirmation: was a scan actually run and did it discover at least one subscription/candidate for this account before disconnecting?
+7. **Account survives**: **PASS** — `SELECT id FROM users WHERE id = '3ef0222d-2f8e-47bb-8f16-e6668d8dd77d'` still returns 1 row after disconnect, confirming this was a genuine disconnect and not an account deletion.
+8. **Manual/non-Gmail data survives**: **PENDING** — not yet tested; would need a manually-added (non-Gmail) subscription present before disconnect to verify `disconnectConnection`'s `WHERE ... AND source = 'Gmail receipt'` scoping actually spares it.
 9. **Scanning blocked until reconnect**: `POST /api/v1/sources/gmail/scan` → `409 source_not_connected`. **PENDING**
 10. **User B unaffected**: confirm User B's own Gmail connection/data (if any) is untouched by User A's disconnect. **PENDING**
 11. **Ambiguous revocation never reports false success**: this is a code-level guarantee (see `server/auth/googleProvider.js`'s `revokeConnection` — a thrown/network-level failure returns `revocation_ambiguous`, never `disconnected`) — confirm by reading the `POST /api/v1/sources/gmail/disconnect` response body's status field if a failure can be safely induced (e.g. temporarily revoking network access is not recommended against production; if not independently reproducible, mark as **code-reviewed, not live-reproduced** rather than fabricating a live test). **PENDING**
