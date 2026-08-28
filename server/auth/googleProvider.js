@@ -16,7 +16,16 @@ export const createGoogleProvider = ({ clientId, clientSecret, oidcRedirectUri, 
   }
   const exchange = async (code, redirectUri) => {
     const response = await fetchImpl('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri, grant_type: 'authorization_code' }) })
-    if (!response.ok) throw new Error('Google authorization exchange failed')
+    if (!response.ok) {
+      // Google's error body (e.g. {"error":"redirect_uri_mismatch",...}) is the
+      // only way to tell a redirect_uri mismatch apart from a bad client_secret
+      // or a reused/expired code - all three otherwise throw the exact same
+      // generic message, making production failures unguessable from logs
+      // alone. Safe to include in full: it's Google's response to us, never
+      // an echo of anything we sent (the client_secret above never appears in it).
+      const body = await response.text().catch(() => '')
+      throw new Error(`Google authorization exchange failed: ${response.status} ${body}`)
+    }
     return response.json()
   }
   const refresh = async (refreshToken) => {

@@ -56,7 +56,18 @@ export const buildApp = ({ repository = createMemoryRepository(), provider = con
   // included), regardless of NODE_ENV, so cookie/origin hardening must not be gated
   // solely on the NODE_ENV=production flag - GMAIL_PROVIDER=google activates it too.
   const secure = production || gmailProvider === 'google'
-  const logger = production ? { redact: ['req.headers.authorization', 'req.headers.cookie', 'res.headers.set-cookie', '*.refreshToken', '*.ciphertext', '*.body'] } : false
+  // Cloud Run's structured-logging ingestion only promotes a log entry's
+  // severity (and therefore `severity>=ERROR`-style log filters) from a
+  // top-level `severity` field with one of its own enum values - it does not
+  // understand pino's default numeric `level` (e.g. 50 for error), so
+  // without this every error logged here was silently landing as `DEFAULT`
+  // severity in Cloud Logging, invisible to any severity-filtered query.
+  const PINO_LEVEL_TO_GCP_SEVERITY = { trace: 'DEBUG', debug: 'DEBUG', info: 'INFO', warn: 'WARNING', error: 'ERROR', fatal: 'CRITICAL' }
+  const logger = production ? {
+    redact: ['req.headers.authorization', 'req.headers.cookie', 'res.headers.set-cookie', '*.refreshToken', '*.ciphertext', '*.body'],
+    messageKey: 'message',
+    formatters: { level: (label) => ({ severity: PINO_LEVEL_TO_GCP_SEVERITY[label] || 'DEFAULT' }) },
+  } : false
   const app = Fastify({ logger, bodyLimit: 64 * 1024 })
   app.register(cookie)
   // MVP-BETA-007 (#44): approved architecture is ONE Cloud Run container
