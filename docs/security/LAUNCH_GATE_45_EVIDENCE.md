@@ -2,7 +2,7 @@
 
 ## Status of this document
 
-**NOT YET EXECUTED.** This is the evidence-collection protocol and report template, prepared by the Implementation Engineer. It was authored in a sandboxed session with no live `gcloud`, Neon, or browser/OAuth credentials — nothing below has actually been run against the deployed environment yet. Someone with real access must execute Part A (script) and Part B (manual protocol), record the actual results in place of the `PENDING` placeholders, and only then is this ready for the Security Manager's independent review.
+**PARTIALLY EXECUTED.** Part A (sections 1, 2, 3, 8, 12, 13) has been run against the real deployed environment and results are recorded below. Part B (sections 4–7, 9, 10 — real browser + two Google test accounts) and the Neon retention check are still `PENDING`, along with one open discrepancy (traffic split, see "Open items" below) that should be resolved before this goes to the Security Manager. This was executed by a human with real `gcloud` access, pasted back into a sandboxed Claude Code session (which has no live GCP/Neon/browser credentials of its own) for compilation.
 
 **This report is not a self-approval of #45.** Per the gate's own requirement, only the Security Manager issues the final verdict.
 
@@ -19,11 +19,91 @@ export GCP_SERVICE_ACCOUNT='subtle-ai-deploy@subtle-ai-beta.iam.gserviceaccount.
 ./scripts/collect-launch-gate-45-evidence.sh > /tmp/gate45-automated-evidence.txt
 ```
 
-This covers sections **1, 2, 3, 8, 11 (search commands), 12, 13** of the evidence request. Paste the full output below:
+This covers sections **1, 2, 3, 8, 11 (search commands), 12, 13** of the evidence request.
 
-```
-PENDING — paste scripts/collect-launch-gate-45-evidence.sh output here
-```
+### 1. Deployed artifact identity
+
+| Item | Value |
+| --- | --- |
+| Public URL | `https://subtle-ai-4jv5hmj22a-uc.a.run.app` (direct Cloud Run URL; `https://subtleai.net` is the mapped custom domain and canonical `PUBLIC_ORIGIN`, confirmed reachable in section 2) |
+| GCP project | `subtle-ai-beta` |
+| Region | `us-central1` |
+| Service name | `subtle-ai` |
+| `latestReadyRevisionName` | `subtle-ai-00009-tnc` |
+| Image URI | `us-central1-docker.pkg.dev/subtle-ai-beta/subtle-ai/subtle-ai:0b4bfaff3da95df7f7f04fc7a3b2dede84c0e4e2` |
+| Commit SHA label | `0b4bfaff3da95df7f7f04fc7a3b2dede84c0e4e2` |
+| Commit reachable from protected `main`? | **PASS** — verified directly (`git merge-base --is-ancestor 0b4bfaf origin/main` → true) |
+| 100% traffic on `latestReadyRevisionName`? | **FAIL — see "Open items" below.** Traffic is actually 100% on the older revision `subtle-ai-00005-2mn`; `subtle-ai-00009-tnc` (the revision `latestReadyRevisionName` reports, `Ready: True`, and the one our own post-deploy OAuth-credential check validated) is receiving 0% (`None` in the raw traffic table). |
+
+### 2. Cloud Run configuration
+
+| Check | Result |
+| --- | --- |
+| Runtime service account | `subtle-ai-runtime@subtle-ai-beta.iam.gserviceaccount.com` |
+| Distinct from deploy identity? | **PASS** — deploy identity is `subtle-ai-deploy@subtle-ai-beta.iam.gserviceaccount.com`, a different service account (see section 3) |
+| `NODE_ENV` | `production` — **PASS** |
+| `GMAIL_PROVIDER` | `google` — **PASS** |
+| `PERSISTENCE_PROVIDER` | `postgres` — **PASS** |
+| `PUBLIC_ORIGIN` | `https://subtleai.net` — matches the deployed custom domain — **PASS** |
+| `GOOGLE_OIDC_REDIRECT_URI` | `https://subtleai.net/api/v1/auth/google/callback` — matches `PUBLIC_ORIGIN` + the exact route in `server/app.js` — **PASS** |
+| `GOOGLE_GMAIL_REDIRECT_URI` | `https://subtleai.net/api/v1/sources/gmail/callback` — **PASS** |
+| Secrets are Secret Manager references, not plaintext | **PASS** — all five (`DATABASE_URL`, `SESSION_SECRET`, `TOKEN_ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`) resolve via `secretKeyRef` to `<name>:latest`, no `value` field |
+| HTTPS reachable | **PASS** — `GET /api/v1/health` → `200` |
+| `minScale` | annotation absent (Cloud Run's default, i.e. 0 / scale-to-zero) — matches the approved beta configuration (`--min-instances 0` in `deploy.yml`) |
+| `maxScale` | `3` — matches `CLOUD_RUN_MAX_INSTANCES` in `deploy.yml` |
+
+### 3. IAM and Secret Manager
+
+| Item | Value |
+| --- | --- |
+| Deploy service account | `subtle-ai-deploy@subtle-ai-beta.iam.gserviceaccount.com` ("Subtle AI deploy (GitHub Actions WIF)") |
+| Runtime service account | `subtle-ai-runtime@subtle-ai-beta.iam.gserviceaccount.com` ("Subtle AI Cloud Run runtime") |
+| Runtime SA project-level bindings | **Empty** (no rows returned) — **PASS**, confirms no project-wide Editor/Owner/broad role; its only real grants are the per-secret `secretAccessor` bindings below |
+| Deploy SA project-level bindings | **PENDING re-run** — the script's fallback path only listed service accounts because `GCP_SERVICE_ACCOUNT` wasn't exported before this run; re-run with `export GCP_SERVICE_ACCOUNT='subtle-ai-deploy@subtle-ai-beta.iam.gserviceaccount.com'` set to confirm `roles/run.admin`, `roles/artifactregistry.writer`, and `roles/iam.serviceAccountUser` scoped to the runtime SA resource specifically |
+| Secret Manager secret names | `DATABASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`, `TOKEN_ENCRYPTION_KEY` — exactly the 5 expected, no extras — **PASS** |
+| Per-secret IAM bindings | Every one of the 5 secrets grants `roles/secretmanager.secretAccessor` to exactly `subtle-ai-deploy@...` and `subtle-ai-runtime@...`, and no other principal — **PASS** |
+
+### 8. CSRF / same-origin / CORS
+
+Tested against the real production origin (`https://subtleai.net`), correcting an initial script bug that targeted the raw Cloud Run URL instead:
+
+| Origin sent | Result | Expected | Verdict |
+| --- | --- | --- | --- |
+| Correct (`https://subtleai.net`) | `401` (unauthenticated — the route's own check, reached only after passing origin enforcement) | Pass through to route auth check | **PASS** |
+| Missing | `403 invalid_origin` | Rejected before route logic | **PASS** |
+| Foreign (`https://evil.example`) | `403 invalid_origin` | Rejected before route logic | **PASS** |
+| Cross-origin CORS headers | None present | No `Access-Control-Allow-*` granting foreign-origin credentialed access | **PASS** |
+
+**Overall: PASS.**
+
+### 12. Mock/test-path prohibition
+
+| Check | Result |
+| --- | --- |
+| `NODE_ENV`/`GMAIL_PROVIDER`/`PERSISTENCE_PROVIDER` correct | **PASS** (section 2) — `validateConfig` refuses to boot at all otherwise, so a running revision is itself proof |
+| `X-Gmail-Provider: mock` header forcing mock behavior | **PASS** — `401` (unauthenticated), no mock connection made; the header has no effect |
+| `/api/v1/test`, `/api/v1/debug`, `/api/v1/_test`, `/api/v1/mock` | **PASS** — all `404` |
+| Rate-limit override (`E2E_RATE_LIMIT`) | Not independently HTTP-testable; **PASS by construction** — `server/security/http.js` only honors it when `NODE_ENV=test`, and section 2 already confirms `NODE_ENV=production` |
+
+### 13. Health / readiness
+
+| Endpoint | Result |
+| --- | --- |
+| `GET /api/v1/health` | `200 {"status":"ok"}` — generic, no config/secret leakage — **PASS** |
+| `GET /api/v1/health/ready` | `200 {"status":"ok"}` — DB reachable, generic body — **PASS** |
+
+### 11. Logging review
+
+Search commands were provided; **results still PENDING** — these need to be run against the time window covering the Part B manual test session (sign-in, Gmail connect, scan, disconnect, delete-account), not in isolation, so there's real authentication/token/receipt activity in the log window to actually check. Re-run once Part B is executed.
+
+### Open items from Part A — resolve before Security Manager review
+
+1. **Traffic split (real finding, §1).** `subtle-ai-00009-tnc` is `latestReadyRevisionName`, `Ready: True`, and the revision our own post-deploy OAuth-credential check (added in PR #64) validated as having a working `GOOGLE_CLIENT_SECRET` at 08:19:12Z — but 100% of live traffic is still on the older `subtle-ai-00005-2mn`. `gcloud run deploy` (used verbatim in `deploy.yml`, no `--no-traffic`) atomically shifts traffic on success, and the "Deploy Cloud Run revision" step for the run that created `00009` (workflow run `33154367375`) reported `success` at 08:19:03Z — so traffic was almost certainly shifted correctly at that moment, and something moved it back afterward, outside that deploy. Functionally low-risk right now: PR #64 changed only `.github/workflows/deploy.yml` and documentation, no application code, so `00005` and `00009` serve byte-identical app behavior. Still needs resolving as a process-integrity question before sign-off:
+   - Pull the audit trail: `gcloud logging read 'resource.type=cloud_run_revision AND resource.labels.service_name=subtle-ai AND protoPayload.methodName="google.cloud.run.v2.Services.UpdateService"' --project=subtle-ai-beta --freshness=6h --format='value(timestamp,protoPayload.authenticationInfo.principalEmail,protoPayload.request)'` to identify who/what moved traffic and when.
+   - Fix: `gcloud run services update-traffic subtle-ai --to-latest --project=subtle-ai-beta --region=us-central1`.
+   - **PENDING** — audit log not yet pulled, traffic not yet re-routed as of this writing.
+2. **Deploy SA IAM bindings (§3).** Re-run the script with `GCP_SERVICE_ACCOUNT` exported to get the actual bindings table rather than the fallback service-account listing. **PENDING.**
+3. **Repo identity check.** The evidence-collection commands were run from a local clone reporting `origin` as `https://github.com/kjs8806/subscription_app`, not `subtle_ai`. Confirm this is the same repository (e.g. a rename GitHub is redirecting) and not a stale/divergent clone, since section 1's commit-traceability claim depends on `origin/main` actually being the authoritative branch: `git remote -v` and compare the repo's actual name/id against `kjs8806/subtle_ai`. **PENDING.**
 
 ---
 
@@ -149,24 +229,24 @@ Use a dedicated throwaway Google test account for this — **never** a real prod
 
 | Item | Result |
 | --- | --- |
-| Deployed URL | PENDING (Part A §1) |
-| Active revision / commit SHA | PENDING (Part A §1) — must be verified as reachable from protected `main` |
-| Cloud Run configuration | PENDING (Part A §2) |
-| IAM result | PENDING (Part A §3) |
-| Secret Manager result | PENDING (Part A §3) |
+| Deployed URL | `https://subtle-ai-4jv5hmj22a-uc.a.run.app` (custom domain `https://subtleai.net` mapped and confirmed as `PUBLIC_ORIGIN`) |
+| Active revision / commit SHA | `subtle-ai-00009-tnc` / `0b4bfaff3da95df7f7f04fc7a3b2dede84c0e4e2` — **PASS** on `main`-traceability, **FAIL/OPEN** on traffic (100% still on `00005-2mn` — see "Open items" above) |
+| Cloud Run configuration | **PASS** (Part A §2) |
+| IAM result | **PASS** on runtime SA; deploy SA bindings **PENDING re-run** (Part A §3) |
+| Secret Manager result | **PASS** — exactly 5 secrets, `secretAccessor` scoped to exactly the 2 expected service accounts each (Part A §3) |
 | OIDC result | PENDING (Part B §4) |
 | Session-cookie result | PENDING (Part B §5) |
 | Gmail OAuth result | PENDING (Part B §6) |
 | Token-custody result | PENDING (Part B §6) |
 | Account-isolation result | PENDING (Part B §7) |
-| CSRF/CORS result | PENDING (Part A §8) |
+| CSRF/CORS result | **PASS** (Part A §8) |
 | Disconnect Gmail result | PENDING (Part B §9) |
 | Delete Account result | PENDING (Part B §10) |
-| Logging result | PENDING (Part A §11 — search commands; requires human read of output) |
-| Mock/test-path result | PENDING (Part A §12) |
-| Health/readiness result | PENDING (Part A §13) |
+| Logging result | PENDING (Part A §11 — must run against the Part B test window, not in isolation) |
+| Mock/test-path result | **PASS** (Part A §12) |
+| Health/readiness result | **PASS** (Part A §13) |
 | Neon backup/PITR retention result | PENDING (see section above) |
-| Discrepancies found | PENDING |
-| CI/deployment evidence links | Deploy workflow runs: PR #62 (session/OAuth-state fix), PR #63 (log severity + OAuth error detail), PR #64 (post-deploy credential verification) — see `.github/workflows/deploy.yml` run history in the repository's Actions tab |
+| Discrepancies found | (1) Traffic split not following `latestReadyRevisionName` — open, see above. (2) Deploy SA IAM bindings not yet captured (script re-run needed). (3) Local clone's `origin` reports as `kjs8806/subscription_app`, not `subtle_ai` — needs a one-line confirmation it's the same repo. |
+| CI/deployment evidence links | Deploy workflow runs: PR #62 (session/OAuth-state fix), PR #63 (log severity + OAuth error detail), PR #64 (post-deploy credential verification) — see `.github/workflows/deploy.yml` run history in the repository's Actions tab. Runs `33150129466`, `33151173544`, `33152183869`, `33154367375` all `conclusion: success`. |
 
-**Verdict: NOT SELF-APPROVED.** This package is prepared for the Security Manager's independent review per the #45 gate requirement. Do not treat any PENDING row as passing.
+**Verdict: NOT SELF-APPROVED.** Part A's automated checks are largely clean (Cloud Run config, IAM/Secret Manager scoping, CSRF/origin enforcement, mock-path prohibition, health/readiness all PASS), but this is **not ready for Security Manager review yet** — the traffic-split discrepancy is unresolved, Part B (the parts requiring a real browser and two Google test accounts: OIDC, session cookies, Gmail OAuth/token custody, account isolation, disconnect, delete-account) has not been executed at all, and the Neon retention item remains open. Do not treat any PENDING row as passing, and do not read the PASS rows above as a full gate clearance on their own.
