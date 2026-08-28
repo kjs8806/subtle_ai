@@ -147,16 +147,22 @@ Do not paste the cookie's actual value into the report — flag names/values onl
 3. After granting access and landing back on Sources: confirm status shows **Connected**, and that the connected mailbox shown matches User A's sign-in email. **PENDING**
 4. Trigger a real scan. Confirm at least one subscription/candidate is discovered (or confirm the mailbox's genuine empty state if it has no matching receipts — either is acceptable evidence the scan pipeline ran for real). **PENDING**
 5. Trigger a new Cloud Run revision (or wait for a natural scale-to-zero + cold start) and reload the Sources/Subscriptions page as User A — confirm the discovered data is still present (proves it's DB-persisted, not held in server memory). **PENDING**
-6. Database evidence (run against the real production `DATABASE_URL`, from a shell with Neon access — **never** print the connection string itself):
+6. Database evidence — real schema (`migrations/001_feature_001.sql`, `005_feature_001_token_contract.sql`), never print `DATABASE_URL` or the ciphertext itself:
+   ```bash
+   export DATABASE_URL="$(gcloud secrets versions access latest --secret=DATABASE_URL --project=subtle-ai-beta)"
+   psql "$DATABASE_URL"
+   ```
    ```sql
-   -- Confirm the Gmail connection is scoped to a real user_id, not a global row
-   SELECT user_id, status, connected_at FROM gmail_connections WHERE user_id = '<User A's uuid>';
+   -- Resolve the test user's id from their sign-in email
+   SELECT u.id FROM users u JOIN auth_identities ai ON ai.user_id = u.id WHERE ai.email = 'testuser@gmail.com';
 
-   -- Confirm no plaintext refresh token column exists / is populated - only ciphertext
-   -- (do not select or paste the ciphertext column's actual bytes into this report;
-   -- confirm only that the column is non-null and that no separate plaintext column exists)
-   SELECT user_id, (refresh_token_ciphertext IS NOT NULL) AS has_encrypted_token
-   FROM gmail_connections WHERE user_id = '<User A's uuid>';
+   -- Confirm the connection is scoped to that user_id, and check token presence WITHOUT printing it
+   SELECT user_id, authorization_state,
+          (encrypted_refresh_token IS NOT NULL) AS has_encrypted_token,
+          length(encrypted_refresh_token)       AS ciphertext_length
+   FROM source_connections
+   WHERE user_id = '<uuid-from-above>' AND provider = 'gmail';
+   -- Expect: authorization_state = 'connected', has_encrypted_token = true, ciphertext_length > 0.
    ```
    Record only PASS/FAIL for "encrypted token present, no plaintext column/value anywhere". **PENDING**
 7. Confirm via a `GET /api/v1/sources/gmail` response body (browser Network tab) that no token material — encrypted or otherwise — is ever present in an API response to the browser. **PENDING**
@@ -188,8 +194,15 @@ Do not paste the cookie's actual value into the report — flag names/values onl
 2. Confirm the UI reports success only after a definitive outcome (not optimistically). **PENDING**
 3. **Google side**: visit `myaccount.google.com/permissions` as User A and confirm Subtle AI's access has actually been revoked. **PENDING**
 4. **Local connection state**: `GET /api/v1/sources/gmail` → status is disconnected. **PENDING**
-5. **Encrypted credential removed**: re-run the DB query from section 6 step 6 — the encrypted token column should now be null/absent for this user. **PENDING**
-6. **Gmail-derived data purged**: confirm Gmail-sourced subscriptions/evidence/candidates/corrections/attention items tied to that connection are gone from both the UI and (via SQL) the database, per the #41 purge policy. **PENDING**
+5. **Encrypted credential removed**: re-run the DB query from section 6 step 6 — `authorization_state` should now be `revoked_pending_purge` (or a further-purged state) and `has_encrypted_token` should be `false` for this user. **PENDING**
+6. **Gmail-derived data purged**: confirm Gmail-sourced subscriptions/evidence/candidates/corrections/attention items tied to that connection are gone from both the UI and the database, per the #41 purge policy:
+   ```sql
+   SELECT count(*) FROM subscriptions WHERE user_id = '<User A uuid>';
+   SELECT count(*) FROM evidence WHERE user_id = '<User A uuid>';
+   SELECT count(*) FROM subscription_candidates WHERE user_id = '<User A uuid>';
+   SELECT count(*) FROM subscription_corrections WHERE user_id = '<User A uuid>';
+   ```
+   Compare against the same counts captured immediately before disconnecting. **PENDING**
 7. **Account survives**: `GET /api/v1/session` still shows User A authenticated; the account itself was not deleted. **PENDING**
 8. **Manual/non-Gmail data survives**: if User A has any manually-added subscription (not Gmail-sourced), confirm it's still present after disconnect. **PENDING**
 9. **Scanning blocked until reconnect**: `POST /api/v1/sources/gmail/scan` → `409 source_not_connected`. **PENDING**
@@ -203,7 +216,17 @@ Use a dedicated throwaway Google test account for this — **never** a real prod
 1. Populate the throwaway account with representative data (sign in, connect Gmail, run a scan or add a manual subscription).
 2. Delete the account through the deployed UI (Settings → Delete Account) or `DELETE /api/v1/account`.
 3. Confirm all active sessions for that account are invalid immediately after — re-use of the pre-deletion session cookie against `GET /api/v1/session` returns `authenticated: false`. **PENDING**
-4. Confirm via SQL that the user row and all user-scoped rows (subscriptions, evidence, candidates, corrections, attention items, gmail_connections) are gone, per the #41 deletion scope — **do not** paste row contents, just row counts before/after. **PENDING**
+4. Confirm via SQL that the user row and all user-scoped rows are gone, per the #41 deletion scope — **do not** paste row contents, just row counts before/after:
+   ```sql
+   SELECT count(*) FROM users WHERE id = '<throwaway uuid>';  -- expect 0
+   SELECT count(*) FROM source_connections WHERE user_id = '<throwaway uuid>';  -- expect 0
+   SELECT count(*) FROM subscriptions WHERE user_id = '<throwaway uuid>';  -- expect 0
+   SELECT count(*) FROM evidence WHERE user_id = '<throwaway uuid>';  -- expect 0
+   SELECT count(*) FROM subscription_candidates WHERE user_id = '<throwaway uuid>';  -- expect 0
+   SELECT count(*) FROM subscription_corrections WHERE user_id = '<throwaway uuid>';  -- expect 0
+   SELECT count(*) FROM sessions WHERE user_id = '<throwaway uuid>';  -- expect 0
+   ```
+   All of these should cascade automatically from the `users` row's `ON DELETE CASCADE` foreign keys (see `migrations/001_feature_001.sql`, `008_feature_002_corrections.sql`). **PENDING**
 5. Sign in again with the same Google account afterward — confirm it creates a **fresh** account with no resurrected data from before deletion. **PENDING**
 6. Confirm User A/User B remain completely intact throughout (row counts unaffected). **PENDING**
 
