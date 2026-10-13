@@ -384,7 +384,10 @@ test('a failure during the OAuth state lookup itself redirects with auth_error i
   assert.equal(errorFromRedirect(response, 'auth_error'), 'authorization_failed')
 })
 
-test('GET /api/v1/attention requires a session, then surfaces a durable price change and a dismissible renewal', async () => {
+test('GET /api/v1/attention requires a session, then surfaces a durable price change and a dismissible renewal', async (t) => {
+  // Keep the clock within the fixed mock mailbox's renewal window. Using
+  // the wall clock makes these receipts expire and eventually breaks CI.
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-08-25T12:00:00.000Z') })
   const app = buildApp()
   const unauthenticated = await app.inject({ method: 'GET', url: '/api/v1/attention' })
   assert.equal(unauthenticated.statusCode, 401)
