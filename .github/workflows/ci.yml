@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   validate:
-    name: Fast PR gate
+    name: validate
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
