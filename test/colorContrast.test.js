@@ -27,6 +27,7 @@ test('small-text color token pairings meet WCAG AA contrast', () => {
     ['navigation badge', '#ffffff', tokens.coral],
     ['muted copy on surface', tokens['muted-soft'], tokens.surface],
     ['muted copy on paper', tokens['muted-soft'], tokens.paper],
+    ['success badges and status pills', tokens.success, tokens['success-soft']],
   ]
 
   for (const [usage, foreground, background] of pairs) {
